@@ -18,28 +18,52 @@ const BG_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
 
 // ─── Helpers ───
 
-/** Read PNG tEXt chunk with keyword "chara" → base64 JSON */
+const CHARA_KEYWORDS = new Set(["ccv3", "chara"]);
+
+/** Read PNG tEXt/iTXt chunks with keyword "ccv3" or "chara" → base64 JSON. Prefers ccv3 (V3). */
 function extractCharaFromPng(buf: Buffer): Record<string, unknown> | null {
   // PNG signature: 8 bytes
   if (buf.length < 8) return null;
+  const found = new Map<string, Record<string, unknown>>();
   let offset = 8; // skip signature
 
   while (offset < buf.length - 8) {
     const length = buf.readUInt32BE(offset);
     const type = buf.subarray(offset + 4, offset + 8).toString("ascii");
+    const payload = buf.subarray(offset + 8, offset + 8 + length);
 
     if (type === "tEXt") {
-      const payload = buf.subarray(offset + 8, offset + 8 + length);
       const nullIdx = payload.indexOf(0);
       if (nullIdx >= 0) {
         const keyword = payload.subarray(0, nullIdx).toString("ascii");
-        if (keyword === "chara") {
+        if (CHARA_KEYWORDS.has(keyword) && !found.has(keyword)) {
           const b64 = payload.subarray(nullIdx + 1).toString("ascii");
           try {
             const json = Buffer.from(b64, "base64").toString("utf-8");
-            return JSON.parse(json);
-          } catch {
-            return null;
+            found.set(keyword, JSON.parse(json));
+          } catch { /* skip malformed */ }
+        }
+      }
+    } else if (type === "iTXt") {
+      const nullIdx = payload.indexOf(0);
+      if (nullIdx >= 0) {
+        const keyword = payload.subarray(0, nullIdx).toString("ascii");
+        if (CHARA_KEYWORDS.has(keyword) && !found.has(keyword)) {
+          const compressionFlag = payload[nullIdx + 1];
+          const langEnd = payload.indexOf(0, nullIdx + 3);
+          if (langEnd >= 0) {
+            const transEnd = payload.indexOf(0, langEnd + 1);
+            if (transEnd >= 0 && compressionFlag === 0) {
+              const text = payload.subarray(transEnd + 1).toString("utf-8");
+              try {
+                found.set(keyword, JSON.parse(text));
+              } catch {
+                try {
+                  const decoded = Buffer.from(text, "base64").toString("utf-8");
+                  found.set(keyword, JSON.parse(decoded));
+                } catch { /* skip */ }
+              }
+            }
           }
         }
       }
@@ -47,8 +71,10 @@ function extractCharaFromPng(buf: Buffer): Record<string, unknown> | null {
 
     // Move past length(4) + type(4) + data(length) + crc(4)
     offset += 12 + length;
+    if (type === "IEND") break;
   }
-  return null;
+
+  return found.get("ccv3") ?? found.get("chara") ?? null;
 }
 
 /** Try multiple possible ST data folder layouts */
@@ -106,7 +132,7 @@ export interface STBulkScanResult {
   presets: { path: string; name: string }[];
   lorebooks: { path: string; name: string }[];
   backgrounds: { path: string; name: string }[];
-  personas: { path: string; name: string }[];
+  personas: { path: string; name: string; description: string }[];
 }
 
 export async function scanSTFolder(rootPath: string): Promise<STBulkScanResult> {
@@ -309,6 +335,21 @@ export async function scanSTFolder(rootPath: string): Promise<STBulkScanResult> 
   }
 
   // 7. User Personas — PNG/JPG files in User Avatars/
+  // SillyTavern stores persona display names in power_user.personas
+  // and descriptions in power_user.persona_descriptions within settings.json
+  let stPersonaNames: Record<string, string> = {};
+  let stPersonaDescs: Record<string, { description?: string } | string> = {};
+  const settingsPath = join(dataDir, "settings.json");
+  if (existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(await readFile(settingsPath, "utf-8"));
+      stPersonaNames = settings?.power_user?.personas ?? {};
+      stPersonaDescs = settings?.power_user?.persona_descriptions ?? {};
+    } catch {
+      // skip – import avatars with filename-based names
+    }
+  }
+
   const PERSONA_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
   for (const folder of ["User Avatars", "user avatars"]) {
     const avatarDir = join(dataDir, folder);
@@ -318,8 +359,13 @@ export async function scanSTFolder(rootPath: string): Promise<STBulkScanResult> 
       if (!e.isFile()) continue;
       const ext = extname(e.name).toLowerCase();
       if (PERSONA_EXTS.has(ext)) {
-        const name = basename(e.name, ext);
-        personas.push({ path: join(avatarDir, e.name), name });
+        // Use display name from settings, fall back to filename without extension
+        const fallbackName = basename(e.name, ext);
+        const displayName = stPersonaNames[e.name] ?? fallbackName;
+        // Get description from settings
+        const descEntry = stPersonaDescs[e.name];
+        const description = typeof descEntry === "string" ? descEntry : (descEntry?.description ?? "");
+        personas.push({ path: join(avatarDir, e.name), name: displayName, description });
       }
     }
     break;
@@ -355,10 +401,25 @@ export interface STBulkImportResult {
   errors: string[];
 }
 
+/** Progress event emitted during bulk import */
+export interface ImportProgress {
+  /** Which category is being imported */
+  category: string;
+  /** Name of the item currently being imported */
+  item: string;
+  /** Current index (1-based) within this category */
+  current: number;
+  /** Total items in this category */
+  total: number;
+  /** Cumulative counts so far */
+  imported: STBulkImportResult["imported"];
+}
+
 export async function runSTBulkImport(
   rootPath: string,
   options: STBulkImportOptions,
   db: DB,
+  onProgress?: (progress: ImportProgress) => void,
 ): Promise<STBulkImportResult> {
   const scanResult = await scanSTFolder(rootPath);
   if (!scanResult.success || !scanResult.dataDir) {
@@ -375,7 +436,11 @@ export async function runSTBulkImport(
 
   // Import characters
   if (options.characters) {
+    const total = scanResult.characters.length;
+    let idx = 0;
     for (const ch of scanResult.characters) {
+      idx++;
+      onProgress?.({ category: "Characters", item: ch.name, current: idx, total, imported });
       try {
         if (ch.format === "png") {
           const buf = await readFile(ch.path);
@@ -422,7 +487,11 @@ export async function runSTBulkImport(
   // are grouped together (like ST "chat files" / branches).
   if (options.chats) {
     const charGroupIds = new Map<string, string>();
+    const total = scanResult.chats.length;
+    let idx = 0;
     for (const ct of scanResult.chats) {
+      idx++;
+      onProgress?.({ category: "Chats", item: ct.characterName, current: idx, total, imported });
       try {
         const content = await readFile(ct.path, "utf-8");
         const charId = charNameToId.get(ct.characterName.toLowerCase().trim()) ?? null;
@@ -445,7 +514,11 @@ export async function runSTBulkImport(
   // Import group chats
   if (options.groupChats) {
     const gcGroupIds = new Map<string, string>();
+    const total = scanResult.groupChats.length;
+    let idx = 0;
     for (const gc of scanResult.groupChats) {
+      idx++;
+      onProgress?.({ category: "Group Chats", item: gc.groupName, current: idx, total, imported });
       try {
         const content = await readFile(gc.path, "utf-8");
         // Build speaker→characterId map from member names
@@ -473,7 +546,11 @@ export async function runSTBulkImport(
 
   // Import presets
   if (options.presets) {
+    const total = scanResult.presets.length;
+    let idx = 0;
     for (const pr of scanResult.presets) {
+      idx++;
+      onProgress?.({ category: "Presets", item: pr.name, current: idx, total, imported });
       try {
         const raw = JSON.parse(await readFile(pr.path, "utf-8"));
         await importSTPreset(raw, db, pr.name);
@@ -486,7 +563,11 @@ export async function runSTBulkImport(
 
   // Import lorebooks
   if (options.lorebooks) {
+    const total = scanResult.lorebooks.length;
+    let idx = 0;
     for (const lb of scanResult.lorebooks) {
+      idx++;
+      onProgress?.({ category: "Lorebooks", item: lb.name, current: idx, total, imported });
       try {
         const raw = JSON.parse(await readFile(lb.path, "utf-8"));
         await importSTLorebook(raw, db, { fallbackName: lb.name });
@@ -503,7 +584,11 @@ export async function runSTBulkImport(
     if (!existsSync(BG_DIR)) {
       await mkdir(BG_DIR, { recursive: true });
     }
+    const total = scanResult.backgrounds.length;
+    let idx = 0;
     for (const bg of scanResult.backgrounds) {
+      idx++;
+      onProgress?.({ category: "Backgrounds", item: bg.name, current: idx, total, imported });
       try {
         const ext = extname(bg.name).toLowerCase();
         const destName = `${randomUUID()}${ext}`;
@@ -522,14 +607,18 @@ export async function runSTBulkImport(
     if (!existsSync(AVATAR_DIR)) {
       await mkdir(AVATAR_DIR, { recursive: true });
     }
+    const total = scanResult.personas.length;
+    let idx = 0;
     for (const p of scanResult.personas) {
+      idx++;
+      onProgress?.({ category: "Personas", item: p.name, current: idx, total, imported });
       try {
         // Copy avatar image
         const ext = extname(p.path).toLowerCase();
         const destName = `${randomUUID()}${ext}`;
         await copyFile(p.path, join(AVATAR_DIR, destName));
         const avatarPath = `/api/avatars/file/${destName}`;
-        await storage.createPersona(p.name, "", avatarPath);
+        await storage.createPersona(p.name, p.description, avatarPath);
         imported.personas++;
       } catch (err) {
         errors.push(`Persona "${p.name}": ${(err as Error).message}`);

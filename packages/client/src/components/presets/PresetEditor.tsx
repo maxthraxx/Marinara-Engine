@@ -53,7 +53,7 @@ import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { api } from "../../lib/api-client";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
-import type { PromptSection, PromptGroup, ChoiceBlock, WrapFormat, MarkerType } from "@rpg-engine/shared";
+import type { PromptSection, PromptGroup, ChoiceBlock, WrapFormat, MarkerType } from "@marinara-engine/shared";
 
 /** Intercept Tab in a textarea to insert 2 spaces instead of changing focus. */
 function handleTextareaTab(e: React.KeyboardEvent<HTMLTextAreaElement>, value: string, setValue: (v: string) => void) {

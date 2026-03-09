@@ -7,8 +7,8 @@ import {
   updateLorebookSchema,
   createLorebookEntrySchema,
   updateLorebookEntrySchema,
-} from "@rpg-engine/shared";
-import type { ExportEnvelope } from "@rpg-engine/shared";
+} from "@marinara-engine/shared";
+import type { ExportEnvelope } from "@marinara-engine/shared";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
 
 export async function lorebooksRoutes(app: FastifyInstance) {

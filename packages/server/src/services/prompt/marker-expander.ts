@@ -3,7 +3,7 @@
 // sections into actual content at assembly time.
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
-import type { MarkerConfig, ChatMLMessage, CharacterData, WrapFormat, RPGStatsConfig } from "@rpg-engine/shared";
+import type { MarkerConfig, ChatMLMessage, CharacterData, WrapFormat, RPGStatsConfig } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createAgentsStorage } from "../storage/agents.storage.js";
 import { processLorebooks } from "../lorebook/index.js";
@@ -28,6 +28,8 @@ export interface MarkerContext {
   chatMessages: ChatMLMessage[];
   chatSummary: string | null;
   wrapFormat: WrapFormat;
+  /** When false, agent_data markers expand to empty strings */
+  enableAgents: boolean;
 }
 
 /** Expanded marker result. */
@@ -287,6 +289,7 @@ function expandChatSummary(ctx: MarkerContext): ExpandedMarker {
 // ── Agent Data ─────────────────────────────────
 
 async function expandAgentData(config: MarkerConfig, ctx: MarkerContext): Promise<ExpandedMarker> {
+  if (!ctx.enableAgents) return { content: "" };
   const agentType = config.agentType;
   if (!agentType) return { content: "" };
 

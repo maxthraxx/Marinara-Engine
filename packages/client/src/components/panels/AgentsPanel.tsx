@@ -22,7 +22,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { useAgentConfigs, useToggleAgent, useDeleteAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useCustomTools, useDeleteCustomTool, type CustomToolRow } from "../../hooks/use-custom-tools";
 import { useRegexScripts, useDeleteRegexScript, type RegexScriptRow } from "../../hooks/use-regex-scripts";
-import { BUILT_IN_AGENTS, type AgentCategory } from "@rpg-engine/shared";
+import { BUILT_IN_AGENTS, type AgentCategory } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 
 export function AgentsPanel() {

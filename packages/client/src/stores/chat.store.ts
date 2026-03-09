@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import type { Chat, Message, ChatMode } from "@rpg-engine/shared";
+import type { Chat, Message, ChatMode } from "@marinara-engine/shared";
 import { useAgentStore } from "./agent.store";
 import { useGameStateStore } from "./game-state.store";
 

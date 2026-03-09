@@ -18,7 +18,7 @@ import {
   Eye,
   Brain,
 } from "lucide-react";
-import type { Message } from "@rpg-engine/shared";
+import type { Message } from "@marinara-engine/shared";
 import { memo, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, type ReactNode } from "react";
 import type { CharacterMap } from "./ChatArea";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
@@ -177,7 +177,7 @@ function highlightDialogue(text: string, dialogueColor?: string): ReactNode[] {
 
 /** Check whether text contains meaningful HTML tags. */
 const HTML_TAG_RE =
-  /<(?:div|span|style|table|p|br|img|a|ul|ol|li|h[1-6]|em|strong|b|i|pre|code|section|article|header|footer|nav|button|input|form|label|select|option|textarea|canvas|svg|video|audio|source|iframe|hr|blockquote|details|summary|figure|figcaption|main|aside|mark|small|sub|sup|del|ins|abbr|time|progress|meter|output|dialog|template|slot|ruby|rt|rp|bdi|bdo|wbr|area|map|track|embed|object|param|picture|portal|datalist|fieldset|legend|optgroup|caption|col|colgroup|thead|tbody|tfoot|th|td|dl|dt|dd|kbd|samp|var|cite|dfn|q|s|u)\b[^>]*>/i;
+  /<(?:div|span|style|table|p|br|img|a|ul|ol|li|h[1-6]|em|strong|b|i|pre|code|section|article|header|footer|nav|button|input|form|label|select|option|textarea|canvas|svg|video|audio|source|iframe|hr|blockquote|details|summary|figure|figcaption|main|aside|mark|small|sub|sup|del|ins|abbr|time|progress|meter|output|dialog|template|slot|ruby|rt|rp|bdi|bdo|wbr|area|map|track|embed|object|param|picture|portal|datalist|fieldset|legend|optgroup|caption|col|colgroup|thead|tbody|tfoot|th|td|dl|dt|dd|kbd|samp|var|cite|dfn|q|s|u|font|center)\b[^>]*>/i;
 
 /**
  * Render message content, handling both plain text with dialogue highlighting
@@ -221,9 +221,19 @@ function renderContent(text: string, dialogueColor?: string, speakerColorMap?: M
     ALLOW_DATA_ATTR: true,
   });
 
-  // Apply dialogue bolding inside sanitised HTML
+  // Apply dialogue bolding inside sanitised HTML, but skip text already
+  // wrapped in a <font color="..."> tag so author-specified colors take priority.
   const boldColor = dialogueColor ?? "white";
-  const withDialogue = clean.replace(/(?<![=\w])"([^"<>]+)"/g, `<strong style="color:${boldColor}">"$1"</strong>`);
+  const withDialogue = clean.replace(/(?<![=\w])"([^"<>]+)"/g, (match, inner, offset) => {
+    // Find the last opening tag before this match — if it's an unclosed <font color=...>, skip
+    const before = clean.slice(0, offset);
+    const lastFontOpen = before.lastIndexOf("<font ");
+    if (lastFontOpen !== -1) {
+      const lastFontClose = before.lastIndexOf("</font>");
+      if (lastFontClose < lastFontOpen) return match; // we're inside a <font> tag
+    }
+    return `<strong style="color:${boldColor}">"${inner}"</strong>`;
+  });
 
   // Convert *** horizontal rules to <hr> tags in HTML path
   const withHr = withDialogue.replace(
@@ -777,7 +787,7 @@ export const ChatMessage = memo(function ChatMessage({
       )}
       style={{ animationDelay: `${Math.min(index * 30, 200)}ms`, animationFillMode: "backwards" }}
     >
-      <div className={cn("flex max-w-[72%] gap-2", isUser && "flex-row-reverse", editing && "w-[72%]")}>
+      <div className={cn("flex max-w-[72%] gap-2", isUser && "flex-row-reverse", editing && "w-[85%] max-w-[85%]")}>
         {/* Avatar — only show for first in group */}
         {(!isUser || avatarUrl) && (
           <div className={cn("flex-shrink-0 self-end", isGrouped && "invisible")}>
@@ -806,7 +816,7 @@ export const ChatMessage = memo(function ChatMessage({
           </div>
         )}
 
-        <div className={cn("flex flex-col gap-0.5", isUser ? "items-end" : "items-start")}>
+        <div className={cn("flex flex-col gap-0.5", isUser ? "items-end" : "items-start", editing && "w-full")}>
           {/* Name — only for first in group */}
           {!isGrouped && !isUser && (
             <span
@@ -840,6 +850,7 @@ export const ChatMessage = memo(function ChatMessage({
               isGrouped && !isUser && "rounded-bl-2xl rounded-tl-md",
               isStreaming && "ring-2 ring-[var(--primary)]/20",
               isConversationStart && "ring-1 ring-amber-500/30",
+              editing && "w-full",
             )}
             style={{ fontSize: chatFontSize, lineHeight: 1.5, ...(boxBgColor ? { backgroundColor: boxBgColor } : {}) }}
           >

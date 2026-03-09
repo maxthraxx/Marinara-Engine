@@ -48,7 +48,7 @@ import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { api } from "../../lib/api-client";
 import { ColorPicker } from "../ui/ColorPicker";
-import type { CharacterData, RPGStatsConfig } from "@rpg-engine/shared";
+import type { CharacterData, RPGStatsConfig } from "@marinara-engine/shared";
 
 // ── Tabs ──
 const TABS = [

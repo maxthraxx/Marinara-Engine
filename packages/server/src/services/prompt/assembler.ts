@@ -13,9 +13,9 @@ import type {
   MarkerConfig,
   WrapFormat,
   GenerationParameters,
-} from "@rpg-engine/shared";
-import { resolveMacros } from "@rpg-engine/shared";
-import type { MacroContext } from "@rpg-engine/shared";
+} from "@marinara-engine/shared";
+import { resolveMacros } from "@marinara-engine/shared";
+import type { MacroContext } from "@marinara-engine/shared";
 import { wrapContent, wrapGroup } from "./format-engine.js";
 import { expandMarker, type MarkerContext } from "./marker-expander.js";
 import { mergeAdjacentMessages, squashLeadingSystemMessages } from "./merger.js";
@@ -95,6 +95,8 @@ export interface AssemblerInput {
   chatMessages: ChatMLMessage[];
   /** Current chat summary text (if any) */
   chatSummary?: string | null;
+  /** Whether agents are enabled for this chat */
+  enableAgents?: boolean;
 }
 
 /** Output of the assembler. */
@@ -188,6 +190,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     chatMessages: input.chatMessages,
     chatSummary: input.chatSummary ?? null,
     wrapFormat,
+    enableAgents: input.enableAgents ?? true,
   };
 
   // ── Phase 1: Resolve sections in preset order ──

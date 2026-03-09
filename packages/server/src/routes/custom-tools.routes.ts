@@ -2,7 +2,7 @@
 // Routes: Custom Tools
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { createCustomToolSchema, updateCustomToolSchema } from "@rpg-engine/shared";
+import { createCustomToolSchema, updateCustomToolSchema } from "@marinara-engine/shared";
 import { createCustomToolsStorage } from "../services/storage/custom-tools.storage.js";
 
 export async function customToolsRoutes(app: FastifyInstance) {

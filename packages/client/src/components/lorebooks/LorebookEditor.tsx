@@ -40,7 +40,7 @@ import {
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { api } from "../../lib/api-client";
-import type { Lorebook, LorebookEntry, LorebookCategory } from "@rpg-engine/shared";
+import type { Lorebook, LorebookEntry, LorebookCategory } from "@marinara-engine/shared";
 
 // ── Types ──
 const TABS = [

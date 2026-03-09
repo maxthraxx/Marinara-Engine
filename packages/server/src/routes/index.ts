@@ -20,6 +20,8 @@ import { spritesRoutes } from "./sprites.routes.js";
 import { adminRoutes } from "./admin.routes.js";
 import { regexScriptsRoutes } from "./regex-scripts.routes.js";
 import { encounterRoutes } from "./encounter.routes.js";
+import { fontsRoutes } from "./fonts.routes.js";
+import { galleryRoutes } from "./gallery.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(chatsRoutes, { prefix: "/api/chats" });
@@ -40,4 +42,6 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(adminRoutes, { prefix: "/api/admin" });
   await app.register(regexScriptsRoutes, { prefix: "/api/regex-scripts" });
   await app.register(encounterRoutes, { prefix: "/api/encounter" });
+  await app.register(fontsRoutes, { prefix: "/api/fonts" });
+  await app.register(galleryRoutes, { prefix: "/api/gallery" });
 }

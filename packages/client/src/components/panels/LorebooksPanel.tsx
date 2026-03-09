@@ -3,10 +3,10 @@
 // Category tabs, search, click-to-edit, AI generate
 // ──────────────────────────────────────────────
 import { useState, useMemo } from "react";
-import { Plus, Upload, Sparkles, BookOpen, Search, Globe, Users, UserRound, ScrollText, Layers } from "lucide-react";
+import { Plus, Upload, Sparkles, BookOpen, Search, Globe, Users, UserRound, ScrollText, Layers, ArrowUpDown } from "lucide-react";
 import { useUIStore } from "../../stores/ui.store";
 import { useLorebooks, useDeleteLorebook } from "../../hooks/use-lorebooks";
-import type { Lorebook, LorebookCategory } from "@rpg-engine/shared";
+import type { Lorebook, LorebookCategory } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 
 const CATEGORIES: Array<{ id: LorebookCategory | "all"; label: string; icon: typeof Globe }> = [
@@ -30,6 +30,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 export function LorebooksPanel() {
   const [activeCategory, setActiveCategory] = useState<LorebookCategory | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sort, setSort] = useState<"name-asc" | "name-desc" | "newest" | "oldest" | "tokens">("name-asc");
 
   const { data: lorebooks, isLoading } = useLorebooks(activeCategory === "all" ? undefined : activeCategory);
   const deleteLorebook = useDeleteLorebook();
@@ -46,11 +47,29 @@ export function LorebooksPanel() {
     );
   }, [lorebooks, searchQuery]);
 
+  const sorted = useMemo(() => {
+    const list = [...filtered];
+    switch (sort) {
+      case "name-asc":
+        return list.sort((a, b) => a.name.localeCompare(b.name));
+      case "name-desc":
+        return list.sort((a, b) => b.name.localeCompare(a.name));
+      case "newest":
+        return list.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+      case "oldest":
+        return list.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+      case "tokens":
+        return list.sort((a, b) => (b.tokenBudget ?? 0) - (a.tokenBudget ?? 0));
+      default:
+        return list;
+    }
+  }, [filtered, sort]);
+
   // Group by category for "all" view
   const grouped = useMemo(() => {
     if (activeCategory !== "all") return null;
     const map = new Map<string, Lorebook[]>();
-    for (const lb of filtered) {
+    for (const lb of sorted) {
       const cat = lb.category || "uncategorized";
       const list = map.get(cat) ?? [];
       list.push(lb);
@@ -84,19 +103,36 @@ export function LorebooksPanel() {
         </button>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search
-          size={13}
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
-        />
-        <input
-          type="text"
-          placeholder="Search lorebooks…"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full rounded-xl bg-[var(--secondary)] py-2 pl-8 pr-3 text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-        />
+      {/* Search + Sort */}
+      <div className="flex gap-1.5">
+        <div className="relative flex-1">
+          <Search
+            size={13}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
+          />
+          <input
+            type="text"
+            placeholder="Search lorebooks\u2026"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl bg-[var(--secondary)] py-2 pl-8 pr-3 text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+          />
+        </div>
+        <div className="relative">
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as typeof sort)}
+            className="h-full appearance-none rounded-xl border border-[var(--border)] bg-[var(--secondary)] py-2 pl-2.5 pr-7 text-[11px] outline-none transition-colors focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
+            title="Sort order"
+          >
+            <option value="name-asc">A-Z</option>
+            <option value="name-desc">Z-A</option>
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="tokens">Token Budget</option>
+          </select>
+          <ArrowUpDown size={10} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+        </div>
       </div>
 
       {/* Category tabs */}
@@ -132,7 +168,7 @@ export function LorebooksPanel() {
       )}
 
       {/* Empty state */}
-      {!isLoading && filtered.length === 0 && (
+      {!isLoading && sorted.length === 0 && (
         <div className="flex flex-col items-center gap-2 py-8 text-center">
           <div className="animate-float flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400/20 to-orange-500/20">
             <BookOpen size={20} className="text-amber-400" />
@@ -144,7 +180,7 @@ export function LorebooksPanel() {
       )}
 
       {/* Lorebook list */}
-      {!isLoading && filtered.length > 0 && (
+      {!isLoading && sorted.length > 0 && (
         <div className="stagger-children flex flex-col gap-1">
           {activeCategory === "all" && grouped
             ? // Grouped view
@@ -170,7 +206,7 @@ export function LorebooksPanel() {
                 );
               })
             : // Flat view
-              filtered.map((lb: Lorebook) => (
+              sorted.map((lb: Lorebook) => (
                 <LorebookRow
                   key={lb.id}
                   lorebook={lb}

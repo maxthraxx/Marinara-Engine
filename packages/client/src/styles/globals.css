@@ -118,7 +118,7 @@
 
   /* ── Font ──
      The app's primary typeface. Change this to swap fonts globally. */
-  --font-y2k: "Straight Quotes", "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-y2k: "Straight Quotes", var(--font-user, "Inter"), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
   /* ── Font size ──
      Base size; overridden at runtime by the Settings panel. */

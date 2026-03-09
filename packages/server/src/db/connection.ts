@@ -22,7 +22,7 @@ function createDB(dbPath: string) {
 
 export function getDB() {
   if (!db) {
-    const dbUrl = process.env.DATABASE_URL ?? "file:./data/rpg-engine.db";
+    const dbUrl = process.env.DATABASE_URL ?? "file:./data/marinara-engine.db";
     const dbPath = dbUrl.replace(/^file:/, "");
     db = createDB(dbPath);
   }

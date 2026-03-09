@@ -23,6 +23,7 @@ import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { ChatSettingsDrawer } from "./ChatSettingsDrawer";
 import { ChatFilesDrawer } from "./ChatFilesDrawer";
+import { ChatGalleryDrawer } from "./ChatGalleryDrawer";
 import { PeekPromptModal } from "./PeekPromptModal";
 import { RoleplayHUD } from "./RoleplayHUD";
 import { WeatherEffects } from "./WeatherEffects";
@@ -36,6 +37,7 @@ import {
   Theater,
   Settings2,
   FolderOpen,
+  Image,
   Swords,
   ChevronUp,
   Loader2,
@@ -49,6 +51,7 @@ import { EncounterModal } from "./EncounterModal";
 import { useEncounter } from "../../hooks/use-encounter";
 import { useEncounterStore } from "../../stores/encounter.store";
 import { SummaryPopover } from "./SummaryPopover";
+import { APP_VERSION } from "@marinara-engine/shared";
 
 /** Map characterId → { name, avatarUrl, colors } */
 export type CharacterMap = Map<
@@ -84,6 +87,7 @@ export function ChatArea() {
   const isLoadingMoreRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
 
   const { data: chat } = useChat(activeChatId);
   const {
@@ -491,6 +495,10 @@ export function ChatArea() {
             <HelpCircle size={12} />
             Replay Tutorial
           </button>
+
+          <p className="mt-2 text-[10px] tracking-wide text-[var(--muted-foreground)]/30">
+            v{APP_VERSION}
+          </p>
         </div>
       </div>
     );
@@ -567,6 +575,13 @@ export function ChatArea() {
                   <FlipHorizontal2 size={16} />
                 </button>
               )}
+              <button
+                onClick={() => setGalleryOpen(true)}
+                className="rounded-lg p-1.5 text-white/50 transition-all hover:bg-white/10 hover:text-white/80"
+                title="Gallery"
+              >
+                <Image size={16} />
+              </button>
               <button
                 onClick={() => setSettingsOpen(true)}
                 className="rounded-lg p-1.5 text-white/50 transition-all hover:bg-white/10 hover:text-white/80"
@@ -704,6 +719,8 @@ export function ChatArea() {
           {chat && <ChatSettingsDrawer chat={chat} open={settingsOpen} onClose={() => setSettingsOpen(false)} />}
           {/* Chat files drawer */}
           {chat && <ChatFilesDrawer chat={chat} open={filesOpen} onClose={() => setFilesOpen(false)} />}
+          {/* Gallery drawer */}
+          {chat && <ChatGalleryDrawer chat={chat} open={galleryOpen} onClose={() => setGalleryOpen(false)} />}
         </div>
 
         {/* Sprite sidebar — right (only if expression agent enabled) */}
@@ -794,6 +811,13 @@ export function ChatArea() {
               title="Manage Chat Files"
             >
               <FolderOpen size={16} />
+            </button>
+            <button
+              onClick={() => setGalleryOpen(true)}
+              className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+              title="Gallery"
+            >
+              <Image size={16} />
             </button>
             <button
               onClick={() => setSettingsOpen(true)}
@@ -919,6 +943,8 @@ export function ChatArea() {
         {chat && <ChatSettingsDrawer chat={chat} open={settingsOpen} onClose={() => setSettingsOpen(false)} />}
         {/* Chat files drawer */}
         {chat && <ChatFilesDrawer chat={chat} open={filesOpen} onClose={() => setFilesOpen(false)} />}
+        {/* Gallery drawer */}
+        {chat && <ChatGalleryDrawer chat={chat} open={galleryOpen} onClose={() => setGalleryOpen(false)} />}
       </div>
 
       {/* Sprite sidebar — right (only if expression agent enabled) */}

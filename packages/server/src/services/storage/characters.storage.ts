@@ -5,7 +5,7 @@ import { eq, desc } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { characters, personas, characterGroups } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
-import type { CharacterData } from "@rpg-engine/shared";
+import type { CharacterData } from "@marinara-engine/shared";
 
 export function createCharactersStorage(db: DB) {
   return {

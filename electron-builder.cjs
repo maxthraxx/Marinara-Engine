@@ -1,10 +1,10 @@
 /**
- * electron-builder configuration for RPG Engine
+ * electron-builder configuration for Marinara Engine
  * @type {import('electron-builder').Configuration}
  */
 module.exports = {
-  appId: "com.rpg-engine.app",
-  productName: "RPG Engine",
+  appId: "com.marinara-engine.app",
+  productName: "Marinara Engine",
   copyright: "Copyright © 2026 Marianna",
 
   directories: {
@@ -45,8 +45,8 @@ module.exports = {
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
-    shortcutName: "RPG Engine",
-    artifactName: "RPG-Engine-Setup-${version}.${ext}",
+    shortcutName: "Marinara Engine",
+    artifactName: "Marinara-Engine-Setup-${version}.${ext}",
   },
 
   // ── macOS ──
@@ -61,7 +61,7 @@ module.exports = {
     category: "public.app-category.entertainment",
   },
   dmg: {
-    artifactName: "RPG-Engine-${version}-${arch}.${ext}",
+    artifactName: "Marinara-Engine-${version}-${arch}.${ext}",
   },
 
   // ── Linux ──
@@ -74,7 +74,7 @@ module.exports = {
     ],
     icon: "electron/resources/icon.png",
     category: "Game",
-    artifactName: "RPG-Engine-${version}.${ext}",
+    artifactName: "Marinara-Engine-${version}.${ext}",
   },
 
   // Don't use asar for the server code — it needs native modules (better-sqlite3)

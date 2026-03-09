@@ -9,7 +9,7 @@ import { useLorebooks, useCreateLorebook } from "../../hooks/use-lorebooks";
 import { useUIStore } from "../../stores/ui.store";
 import { Sparkles, Loader2, Wand2, CheckCircle, AlertCircle, ChevronDown, BookOpen, Plus } from "lucide-react";
 import { api } from "../../lib/api-client";
-import type { Lorebook } from "@rpg-engine/shared";
+import type { Lorebook } from "@marinara-engine/shared";
 
 interface Props {
   open: boolean;

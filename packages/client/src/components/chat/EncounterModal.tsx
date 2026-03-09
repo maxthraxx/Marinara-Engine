@@ -30,7 +30,7 @@ import type {
   CombatAttack,
   NarrativeStyle,
   EncounterSettings,
-} from "@rpg-engine/shared";
+} from "@marinara-engine/shared";
 
 // ──────────────────────────────────────────────
 // Sub-components

@@ -4,7 +4,7 @@
 // and returns activated entries respecting all
 // matching rules (regex, whole-word, case, selective).
 // ──────────────────────────────────────────────
-import type { LorebookEntry, SelectiveLogic, ActivationCondition, LorebookSchedule } from "@rpg-engine/shared";
+import type { LorebookEntry, SelectiveLogic, ActivationCondition, LorebookSchedule } from "@marinara-engine/shared";
 
 /** Minimal message shape needed for scanning. */
 export interface ScanMessage {

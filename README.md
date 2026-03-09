@@ -1,12 +1,44 @@
 # 🍝 Marinara Engine
 
-### Alpha Release 1.0.0
+### Release 1.1.0
 
 **An AI-powered chat & roleplay engine** — with conversation, roleplay, and visual novel modes, a full character & sprite system, 18 built-in AI agents, turn-based combat, lorebooks, and more.
 
 Everything runs locally. No accounts, no cloud, no telemetry. Connect to any OpenAI-compatible API (OpenAI, Anthropic, Google, OpenRouter, Mistral, Cohere, or any custom endpoint).
 
 > **⚠️ Alpha Software** — This is an early release. Expect rough edges, missing features, and breaking changes between versions. Bug reports and feedback are very welcome!
+
+---
+
+## Changelog
+
+### v1.1.0
+
+**New Features:**
+- **Gallery System** — A per-chat image gallery for storing and viewing generated/uploaded images. Accessible via a dedicated Gallery button on the chat bar.
+- **Image Generation Provider** — New provider type supporting 10 sources (OpenAI DALL-E, Stability AI, Together AI, NovelAI, Pollinations, Stable Horde, AUTOMATIC1111/Forge, ComfyUI, Draw Things, Block Entropy).
+- **Auto-Update Launcher** — The start scripts now automatically pull the latest version from Git on every launch. No more manual `git pull`.
+- **Version Indicator** — Current version displayed at the bottom of the sidebar.
+
+**Improvements:**
+- **Agent Prompt Rewrite** — All 18 built-in agent prompts rewritten with improved clarity, tighter instructions, and consistent style.
+- **Font System** — Custom font selection for the chat UI.
+- **Chat Sorting** — Sort chats by name, date, or mode with persistent sort labels.
+- **Chat Message Editing** — Full-width edit mode for chat messages.
+- **V3 Character Card Import** — Support for the latest character card specification.
+- **Bulk Import Progress** — Progress indicator when importing multiple characters.
+- **HTML Rendering** — Inline HTML/CSS/JS rendering in chat messages for immersive elements.
+- **Typewriter Speed Control** — Adjustable streaming text speed.
+- **Agent Data Toggle** — Show/hide agent data panels per chat.
+
+**Bug Fixes:**
+- Fixed SillyTavern character and chat import failures.
+- Fixed persona import not loading correctly.
+- Fixed preset save errors when creating new presets.
+- Fixed font color override not applying in some themes.
+- Fixed streaming toggle not persisting across sessions.
+- Fixed regeneration producing duplicate messages.
+- Fixed server restart leaving stale connections.
 
 ---
 
@@ -77,14 +109,14 @@ All agents are disabled by default — enable only the ones you want. You can al
 
 ### Option A: Desktop App (Recommended)
 
-Download the latest installer from the [Releases](https://github.com/your-repo/rpg-engine/releases) page:
+Download the latest installer from the [Releases](https://github.com/SpicyMarinara/marinara-engine/releases) page:
 
 | Platform | File |
 |----------|------|
-| Windows | `RPG-Engine-Setup-1.0.0.exe` |
-| macOS (Apple Silicon) | `RPG-Engine-1.0.0-arm64.dmg` |
-| macOS (Intel) | `RPG-Engine-1.0.0-x64.dmg` |
-| Linux | `RPG-Engine-1.0.0.AppImage` |
+| Windows | `Marinara-Engine-Setup-1.1.0.exe` |
+| macOS (Apple Silicon) | `Marinara-Engine-1.1.0-arm64.dmg` |
+| macOS (Intel) | `Marinara-Engine-1.1.0-x64.dmg` |
+| Linux | `Marinara-Engine-1.1.0.AppImage` |
 
 Just run the installer and launch — everything is bundled.
 
@@ -96,39 +128,64 @@ If you'd rather not run an installer, you can run Marinara directly from source.
 
 #### Prerequisites
 
-- **[Node.js v20+](https://nodejs.org/)** — download from [nodejs.org](https://nodejs.org/en/download)
-- **[pnpm](https://pnpm.io/)** — install via `corepack enable` (included with Node.js) or `npm install -g pnpm`
-- **[Git](https://git-scm.com/)** — to clone the repo
+You need **Node.js** and **Git** installed before running Marinara Engine. pnpm is handled automatically by the start script.
+
+**Install Node.js v20+:**
+
+| Platform | How to Install |
+|----------|---------------|
+| Windows | Download the installer from [nodejs.org](https://nodejs.org/en/download) and run it |
+| macOS | `brew install node` or download from [nodejs.org](https://nodejs.org/en/download) |
+| Linux (Ubuntu/Debian) | `curl -fsSL https://deb.nodesource.com/setup_22.x \| sudo bash - && sudo apt install -y nodejs` |
+| Linux (Fedora) | `sudo dnf install -y nodejs` |
+| Linux (Arch) | `sudo pacman -S nodejs npm` |
+
+**Install Git:**
+
+| Platform | How to Install |
+|----------|---------------|
+| Windows | Download from [git-scm.com](https://git-scm.com/download/win) and run the installer |
+| macOS | `brew install git` or install Xcode Command Line Tools: `xcode-select --install` |
+| Linux (Ubuntu/Debian) | `sudo apt install -y git` |
+| Linux (Fedora) | `sudo dnf install -y git` |
+| Linux (Arch) | `sudo pacman -S git` |
+
+Verify both are installed:
+```bash
+node -v   # should show v20 or higher
+git -v    # should show git version 2.x+
+```
 
 #### Quick Start
 
 **Windows:**
 ```
-git clone https://github.com/your-repo/rpg-engine.git
-cd rpg-engine
+git clone https://github.com/SpicyMarinara/marinara-engine.git
+cd marinara-engine
 start.bat
 ```
 
 **macOS / Linux:**
 ```bash
-git clone https://github.com/your-repo/rpg-engine.git
-cd rpg-engine
+git clone https://github.com/SpicyMarinara/marinara-engine.git
+cd marinara-engine
 chmod +x start.sh
 ./start.sh
 ```
 
 The start script will:
-1. Check that Node.js and pnpm are installed
-2. Install all dependencies (first run only)
-3. Build the application
-4. Initialize the database
-5. Start the server and open `http://localhost:7860` in your browser
+1. **Auto-update** from Git (if a `.git` folder is detected)
+2. Check that Node.js and pnpm are installed
+3. Install all dependencies (first run only)
+4. Build the application
+5. Initialize the database
+6. Start the server and open `http://localhost:7860` in your browser
 
 #### Manual Setup
 
 ```bash
-git clone https://github.com/your-repo/rpg-engine.git
-cd rpg-engine
+git clone https://github.com/SpicyMarinara/marinara-engine.git
+cd marinara-engine
 pnpm install
 pnpm build
 pnpm db:push
@@ -139,6 +196,9 @@ Then open **http://localhost:7860**. That's it — no account, no cloud, everyth
 
 #### Updating
 
+If you use the start scripts (`start.sh` / `start.bat`), **updates are automatic** — the launcher pulls the latest version from Git every time you start.
+
+To update manually:
 ```bash
 git pull
 pnpm install
@@ -184,7 +244,7 @@ Copy `.env.example` to `.env` to customize:
 |----------|---------|-------------|
 | `PORT` | `7860` | Server port |
 | `HOST` | `0.0.0.0` | Bind address |
-| `DATABASE_URL` | `file:./data/rpg-engine.db` | SQLite database path |
+| `DATABASE_URL` | `file:./data/marinara-engine.db` | SQLite database path |
 | `ENCRYPTION_KEY` | *(empty)* | AES key for API key encryption (generate with `openssl rand -hex 32`) |
 | `LOG_LEVEL` | `info` | Logging verbosity |
 | `CORS_ORIGINS` | `http://localhost:5173` | Allowed CORS origins |
@@ -194,7 +254,7 @@ Copy `.env.example` to `.env` to customize:
 ## Project Structure
 
 ```
-rpg-engine/
+marinara-engine/
 ├── packages/
 │   ├── shared/      # TypeScript types, schemas, constants
 │   ├── server/      # Fastify API + SQLite database + AI agents
@@ -216,10 +276,6 @@ rpg-engine/
 | Build | Vite 6, pnpm workspaces |
 
 ---
-
-## License
-
-[AGPL-3.0](LICENSE)
 
 ## License
 

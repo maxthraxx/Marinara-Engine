@@ -5,7 +5,7 @@ import { eq, and, ne, desc } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { gameStateSnapshots } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
-import type { GameState } from "@rpg-engine/shared";
+import type { GameState } from "@marinara-engine/shared";
 
 export function createGameStateStorage(db: DB) {
   return {

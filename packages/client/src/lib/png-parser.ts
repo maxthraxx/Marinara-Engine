@@ -1,11 +1,23 @@
 // ──────────────────────────────────────────────
 // Utility: Parse SillyTavern PNG character cards
-// Extracts JSON from the tEXt chunk with key "chara"
+// Extracts JSON from tEXt/iTXt chunks with key "chara" or "ccv3"
+// Supports V2 and V3 character card specs
 // ──────────────────────────────────────────────
 
+const CHARA_KEYWORDS = new Set(["ccv3", "chara"]);
+
+/** Find the first null byte in a Uint8Array starting from `from`. */
+function findNull(data: Uint8Array, from: number): number {
+  for (let i = from; i < data.length; i++) {
+    if (data[i] === 0) return i;
+  }
+  return -1;
+}
+
 /**
- * Reads a PNG file's tEXt chunks and extracts the "chara" field,
- * which SillyTavern uses to embed base64-encoded character JSON.
+ * Reads a PNG file's text chunks and extracts character card JSON.
+ * Checks for V3 "ccv3" keyword first, then falls back to V2 "chara".
+ * Supports both tEXt and iTXt chunk types.
  * Returns the parsed JSON object and the raw PNG as a base64 data URL.
  */
 export async function parsePngCharacterCard(
@@ -22,7 +34,9 @@ export async function parsePngCharacterCard(
     }
   }
 
-  // Walk chunks looking for tEXt with keyword "chara"
+  // Collect character data from all matching chunks; prefer "ccv3" over "chara"
+  const found = new Map<string, Record<string, unknown>>();
+
   let offset = 8; // skip signature
   while (offset < bytes.length) {
     // Read chunk length (4 bytes, big-endian)
@@ -33,32 +47,46 @@ export async function parsePngCharacterCard(
     const type = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
     offset += 4;
 
+    const chunkData = bytes.slice(offset, offset + length);
+
     if (type === "tEXt") {
       // tEXt chunk: keyword\0text
-      const chunkData = bytes.slice(offset, offset + length);
-
-      // Find null separator between keyword and text
-      let nullIndex = -1;
-      for (let i = 0; i < chunkData.length; i++) {
-        if (chunkData[i] === 0) {
-          nullIndex = i;
-          break;
+      const nullIdx = findNull(chunkData, 0);
+      if (nullIdx > 0) {
+        const keyword = new TextDecoder().decode(chunkData.slice(0, nullIdx));
+        if (CHARA_KEYWORDS.has(keyword) && !found.has(keyword)) {
+          const textData = new TextDecoder().decode(chunkData.slice(nullIdx + 1));
+          const jsonStr = atob(textData);
+          found.set(keyword, JSON.parse(jsonStr) as Record<string, unknown>);
         }
       }
-
-      if (nullIndex > 0) {
-        const keyword = new TextDecoder().decode(chunkData.slice(0, nullIndex));
-
-        if (keyword === "chara") {
-          const textData = new TextDecoder().decode(chunkData.slice(nullIndex + 1));
-          // Decode base64 → JSON string
-          const jsonStr = atob(textData);
-          const json = JSON.parse(jsonStr) as Record<string, unknown>;
-
-          // Also create a data URL for the image
-          const imageDataUrl = await fileToDataUrl(file);
-
-          return { json, imageDataUrl };
+    } else if (type === "iTXt") {
+      // iTXt chunk: keyword\0 compressionFlag compressionMethod languageTag\0 translatedKeyword\0 text
+      const nullIdx = findNull(chunkData, 0);
+      if (nullIdx > 0) {
+        const keyword = new TextDecoder().decode(chunkData.slice(0, nullIdx));
+        if (CHARA_KEYWORDS.has(keyword) && !found.has(keyword)) {
+          const compressionFlag = chunkData[nullIdx + 1];
+          // Skip compressionMethod (1 byte), then find two more null-separated fields
+          const langEnd = findNull(chunkData, nullIdx + 3);
+          if (langEnd >= 0) {
+            const transEnd = findNull(chunkData, langEnd + 1);
+            if (transEnd >= 0) {
+              const textBytes = chunkData.slice(transEnd + 1);
+              if (compressionFlag === 0) {
+                // Uncompressed UTF-8
+                const text = new TextDecoder().decode(textBytes);
+                // iTXt may be raw JSON or base64-encoded
+                try {
+                  found.set(keyword, JSON.parse(text) as Record<string, unknown>);
+                } catch {
+                  const decoded = atob(text);
+                  found.set(keyword, JSON.parse(decoded) as Record<string, unknown>);
+                }
+              }
+              // Compressed iTXt is rare; skip for now
+            }
+          }
         }
       }
     }
@@ -70,7 +98,14 @@ export async function parsePngCharacterCard(
     if (type === "IEND") break;
   }
 
-  throw new Error("No character data found in PNG — this doesn't appear to be a SillyTavern character card");
+  // Prefer ccv3 (V3 full data) over chara (V2 / backward-compat)
+  const json = found.get("ccv3") ?? found.get("chara");
+  if (!json) {
+    throw new Error("No character data found in PNG — this doesn't appear to be a SillyTavern character card");
+  }
+
+  const imageDataUrl = await fileToDataUrl(file);
+  return { json, imageDataUrl };
 }
 
 function fileToDataUrl(file: File): Promise<string> {

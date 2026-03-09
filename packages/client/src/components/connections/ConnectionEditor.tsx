@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
-import { PROVIDERS, MODEL_LISTS, type APIProvider } from "@rpg-engine/shared";
+import { PROVIDERS, MODEL_LISTS, IMAGE_GENERATION_SOURCES, type APIProvider } from "@marinara-engine/shared";
 
 /** Links where users can obtain API keys for each provider */
 const API_KEY_LINKS: Partial<Record<APIProvider, { label: string; url: string }>> = {
@@ -502,10 +502,46 @@ export function ConnectionEditor() {
 
           {/* ── Model Selection ── */}
           <FieldGroup
-            label="Model"
+            label={localProvider === "image_generation" ? "Service" : "Model"}
             icon={<Server size={14} className="text-sky-400" />}
-            help="The specific AI model to use. Larger models are smarter but slower and more expensive. Smaller models are faster and cheaper."
+            help={localProvider === "image_generation"
+              ? "Select the image generation service you want to use. Each service has different capabilities, styles, and pricing."
+              : "The specific AI model to use. Larger models are smarter but slower and more expensive. Smaller models are faster and cheaper."}
           >
+            {localProvider === "image_generation" ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-1 gap-1.5">
+                  {IMAGE_GENERATION_SOURCES.map((src) => (
+                    <button
+                      key={src.id}
+                      onClick={() => {
+                        setLocalModel(src.id);
+                        setLocalBaseUrl(src.defaultBaseUrl);
+                        markDirty();
+                      }}
+                      className={cn(
+                        "flex w-full flex-col gap-0.5 rounded-xl px-3 py-2.5 text-left transition-all",
+                        localModel === src.id
+                          ? "bg-sky-400/15 text-sky-400 ring-1 ring-sky-400/30"
+                          : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{src.name}</span>
+                        {localModel === src.id && <Check size={12} />}
+                        {!src.requiresApiKey && (
+                          <span className="rounded-md bg-emerald-400/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-400">
+                            No key needed
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] opacity-70">{src.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+            <>
             <div className="relative">
               <div
                 onClick={() => setShowModelDropdown(!showModelDropdown)}
@@ -710,9 +746,12 @@ export function ConnectionEditor() {
                 </span>
               </div>
             )}
+            </>
+            )}
           </FieldGroup>
 
           {/* ── Max Context ── */}
+          {localProvider !== "image_generation" && (
           <FieldGroup
             label="Max Context Window"
             icon={<Zap size={14} className="text-sky-400" />}
@@ -734,6 +773,7 @@ export function ConnectionEditor() {
               This is auto-set when selecting a model from the list. Override manually if needed.
             </p>
           </FieldGroup>
+          )}
 
           {/* ── Prompt Caching (Anthropic only) ── */}
           {localProvider === "anthropic" && (
@@ -766,6 +806,7 @@ export function ConnectionEditor() {
           )}
 
           {/* ── Test Section ── */}
+          {localProvider !== "image_generation" && (
           <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-4">
             <h3 className="text-sm font-semibold">Connection Tests</h3>
             <div className="flex gap-2">
@@ -812,6 +853,7 @@ export function ConnectionEditor() {
               </TestResultCard>
             )}
           </div>
+          )}
         </div>
       </div>
     </div>

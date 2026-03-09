@@ -10,7 +10,7 @@ import type {
   UpdateLorebookInput,
   CreateLorebookEntryInput,
   UpdateLorebookEntryInput,
-} from "@rpg-engine/shared";
+} from "@marinara-engine/shared";
 
 /** Parse DB row booleans ("true"/"false") → real booleans and JSON strings → objects. */
 function parseLorebookRow(row: Record<string, unknown>) {

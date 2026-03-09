@@ -1,0 +1,111 @@
+// ──────────────────────────────────────────────
+// Routes: Chat Gallery (upload, list, delete, serve)
+// ──────────────────────────────────────────────
+import type { FastifyInstance } from "fastify";
+import { existsSync, mkdirSync, unlinkSync, readdirSync } from "fs";
+import { join, extname } from "path";
+import { pipeline } from "stream/promises";
+import { createWriteStream } from "fs";
+import { createGalleryStorage } from "../services/storage/gallery.storage.js";
+import { newId } from "../utils/id-generator.js";
+
+const GALLERY_DIR = join(process.cwd(), "data", "gallery");
+const ALLOWED_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
+
+function ensureDir(chatId: string) {
+  const dir = join(GALLERY_DIR, chatId);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+export async function galleryRoutes(app: FastifyInstance) {
+  const storage = createGalleryStorage(app.db);
+
+  // List all images for a chat
+  app.get<{ Params: { chatId: string } }>("/:chatId", async (req) => {
+    const { chatId } = req.params;
+    const images = await storage.listByChatId(chatId);
+    return images.map((img) => ({
+      ...img,
+      url: `/api/gallery/file/${chatId}/${encodeURIComponent(img.filePath.split("/").pop()!)}`,
+    }));
+  });
+
+  // Upload an image to a chat's gallery
+  app.post<{ Params: { chatId: string } }>("/:chatId/upload", async (req, reply) => {
+    const { chatId } = req.params;
+    const data = await req.file();
+    if (!data) {
+      return reply.status(400).send({ error: "No file uploaded" });
+    }
+
+    const ext = extname(data.filename).toLowerCase();
+    if (!ALLOWED_EXTS.has(ext)) {
+      return reply.status(400).send({ error: `Unsupported file type: ${ext}` });
+    }
+
+    const dir = ensureDir(chatId);
+    const filename = `${newId()}${ext}`;
+    const filePath = join(dir, filename);
+
+    await pipeline(data.file, createWriteStream(filePath));
+
+    // Parse optional metadata from fields
+    const fields = data.fields as Record<string, { value?: string } | undefined>;
+    const prompt = fields?.prompt?.value ?? "";
+    const provider = fields?.provider?.value ?? "";
+    const model = fields?.model?.value ?? "";
+    const width = fields?.width?.value ? parseInt(fields.width.value, 10) : undefined;
+    const height = fields?.height?.value ? parseInt(fields.height.value, 10) : undefined;
+
+    const image = await storage.create({
+      chatId,
+      filePath: `${chatId}/${filename}`,
+      prompt,
+      provider,
+      model,
+      width: Number.isFinite(width) ? width : undefined,
+      height: Number.isFinite(height) ? height : undefined,
+    });
+
+    return {
+      ...image,
+      url: `/api/gallery/file/${chatId}/${encodeURIComponent(filename)}`,
+    };
+  });
+
+  // Serve a gallery image
+  app.get<{ Params: { chatId: string; filename: string } }>("/file/:chatId/:filename", async (req, reply) => {
+    const { chatId, filename } = req.params;
+    if (filename.includes("..") || filename.includes("/") || chatId.includes("..") || chatId.includes("/")) {
+      return reply.status(400).send({ error: "Invalid path" });
+    }
+
+    const filePath = join(GALLERY_DIR, chatId, filename);
+    if (!existsSync(filePath)) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+
+    return reply.sendFile(filename, join(GALLERY_DIR, chatId));
+  });
+
+  // Delete a gallery image
+  app.delete<{ Params: { id: string } }>("/:id", async (req, reply) => {
+    const { id } = req.params;
+    const image = await storage.getById(id);
+    if (!image) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+
+    // Remove file from disk
+    const filePath = join(GALLERY_DIR, image.filePath);
+    if (existsSync(filePath)) {
+      unlinkSync(filePath);
+    }
+
+    await storage.remove(id);
+    return { success: true };
+  });
+}

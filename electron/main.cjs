@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────
-// Electron Main Process — RPG Engine Desktop
+// Electron Main Process — Marinara Engine Desktop
 // ──────────────────────────────────────────────
 const { app, BrowserWindow, shell, dialog } = require("electron");
 const { spawn } = require("child_process");
@@ -41,7 +41,7 @@ function startServer() {
       PORT: String(PORT),
       HOST: "127.0.0.1",
       NODE_ENV: "production",
-      DATABASE_URL: `file:${path.join(getDataPath(), "rpg-engine.db")}`,
+      DATABASE_URL: `file:${path.join(getDataPath(), "marinara-engine.db")}`,
     };
 
     // Electron itself is a Node.js runtime — use a child fork
@@ -121,7 +121,7 @@ function createWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    title: "RPG Engine",
+    title: "Marinara Engine",
     icon: path.join(__dirname, "icon.png"),
     backgroundColor: "#0a0a0f",
     webPreferences: {
@@ -159,7 +159,7 @@ app.on("ready", async () => {
   } catch (err) {
     console.error("Failed to start:", err);
     dialog.showErrorBox(
-      "RPG Engine — Startup Error",
+      "Marinara Engine — Startup Error",
       `Failed to start the server:\n${err.message}\n\nPlease check if port ${PORT} is already in use.`,
     );
     app.quit();

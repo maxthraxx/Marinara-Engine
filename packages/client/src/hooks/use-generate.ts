@@ -9,7 +9,7 @@ import { useAgentStore } from "../stores/agent.store";
 import { useGameStateStore } from "../stores/game-state.store";
 import { useUIStore } from "../stores/ui.store";
 import { chatKeys } from "./use-chats";
-import type { Message } from "@rpg-engine/shared";
+import type { Message } from "@marinara-engine/shared";
 
 /**
  * Hook that handles streaming generation.
@@ -66,15 +66,16 @@ export function useGenerate() {
       // immediately, we feed them character-by-character from a queue
       // at a controlled rate so the text "types out" smoothly.
       // Uses requestAnimationFrame + adaptive rate for fluid animation.
-      let fullBuffer = ""; // What the user sees
+      const streamingEnabled = useUIStore.getState().enableStreaming;
+      let fullBuffer = ""; // What the user sees (or accumulates silently when streaming is off)
       let pendingText = ""; // Tokens waiting to be typed out
       let typingActive = false;
       let typewriterDone: (() => void) | null = null;
       let rafId = 0;
 
-      const MIN_CHARS = 2; // Minimum characters per frame
-      const MAX_CHARS = 12; // Maximum characters per frame
-      const RAMP_THRESHOLD = 80; // Start ramping up speed at this queue length
+      const MIN_CHARS = 1; // Minimum characters per frame
+      const MAX_CHARS = 8; // Maximum characters per frame
+      const RAMP_THRESHOLD = 120; // Start ramping up speed at this queue length
 
       const startTypewriter = () => {
         if (typingActive) return;
@@ -109,8 +110,13 @@ export function useGenerate() {
         for await (const event of api.streamEvents("/generate", { ...params, debugMode })) {
           switch (event.type) {
             case "token": {
-              pendingText += event.data as string;
-              startTypewriter();
+              if (streamingEnabled) {
+                pendingText += event.data as string;
+                startTypewriter();
+              } else {
+                // Accumulate silently — don't update the UI until done
+                fullBuffer += event.data as string;
+              }
               break;
             }
 
@@ -226,8 +232,8 @@ export function useGenerate() {
 
               // If this isn't the first character, flush the previous one's content
               if (turn.index > 0) {
-                // Drain typewriter for the previous character
-                if (pendingText.length > 0 || typingActive) {
+                // Drain typewriter for the previous character (only if streaming)
+                if (streamingEnabled && (pendingText.length > 0 || typingActive)) {
                   await new Promise<void>((resolve) => {
                     if (pendingText.length === 0 && !typingActive) {
                       resolve();
@@ -275,14 +281,16 @@ export function useGenerate() {
               // Consistency Editor replaced the message — update displayed text
               const rw = event.data as { editedText?: string; changes?: Array<{ description: string }> };
               if (rw.editedText) {
-                // Drain any pending typewriter first
-                if (pendingText.length > 0 || typingActive) {
-                  cancelAnimationFrame(rafId);
-                  pendingText = "";
-                  typingActive = false;
+                if (streamingEnabled) {
+                  // Drain any pending typewriter first
+                  if (pendingText.length > 0 || typingActive) {
+                    cancelAnimationFrame(rafId);
+                    pendingText = "";
+                    typingActive = false;
+                  }
+                  setStreamBuffer(rw.editedText);
                 }
                 fullBuffer = rw.editedText;
-                setStreamBuffer(fullBuffer);
               }
               break;
             }
@@ -294,8 +302,8 @@ export function useGenerate() {
           }
         }
 
-        // Wait for typewriter to finish draining pending text
-        if (pendingText.length > 0 || typingActive) {
+        // Wait for typewriter to finish draining pending text (streaming mode only)
+        if (streamingEnabled && (pendingText.length > 0 || typingActive)) {
           await new Promise<void>((resolve) => {
             if (pendingText.length === 0 && !typingActive) {
               resolve();

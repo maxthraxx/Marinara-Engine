@@ -3,7 +3,7 @@
 // Creates Marinara's general-purpose roleplay preset on first boot.
 // ──────────────────────────────────────────────
 import type { DB } from "./connection.js";
-import type { MarkerConfig } from "@rpg-engine/shared";
+import type { MarkerConfig } from "@marinara-engine/shared";
 import { createPromptsStorage } from "../services/storage/prompts.storage.js";
 
 type Storage = ReturnType<typeof createPromptsStorage>;

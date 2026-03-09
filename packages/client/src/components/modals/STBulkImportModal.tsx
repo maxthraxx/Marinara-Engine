@@ -54,6 +54,14 @@ interface ImportResult {
   errors: string[];
 }
 
+interface ImportProgress {
+  category: string;
+  item: string;
+  current: number;
+  total: number;
+  imported: ImportResult["imported"];
+}
+
 type Phase = "input" | "scanning" | "preview" | "importing" | "done";
 
 export function STBulkImportModal({ open, onClose }: Props) {
@@ -61,6 +69,7 @@ export function STBulkImportModal({ open, onClose }: Props) {
   const [phase, setPhase] = useState<Phase>("input");
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [error, setError] = useState("");
   const [options, setOptions] = useState({
     characters: true,
@@ -77,6 +86,7 @@ export function STBulkImportModal({ open, onClose }: Props) {
     setPhase("input");
     setScanResult(null);
     setImportResult(null);
+    setProgress(null);
     setError("");
   }, []);
 
@@ -130,6 +140,7 @@ export function STBulkImportModal({ open, onClose }: Props) {
   const handleImport = useCallback(async () => {
     if (!folderPath.trim()) return;
     setPhase("importing");
+    setProgress(null);
 
     try {
       const res = await fetch("/api/import/st-bulk/run", {
@@ -137,12 +148,52 @@ export function STBulkImportModal({ open, onClose }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folderPath: folderPath.trim(), options }),
       });
-      const data = (await res.json()) as ImportResult;
-      setImportResult(data);
-      setPhase("done");
 
-      // Invalidate all relevant queries so the UI refreshes
-      qc.invalidateQueries();
+      if (!res.ok || !res.body) {
+        setError("Import failed — server error");
+        setPhase("preview");
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from the buffer
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          const lines = part.split("\n");
+          let eventType = "";
+          let dataStr = "";
+          for (const line of lines) {
+            if (line.startsWith("event: ")) eventType = line.slice(7);
+            else if (line.startsWith("data: ")) dataStr = line.slice(6);
+          }
+          if (!dataStr) continue;
+          try {
+            const parsed = JSON.parse(dataStr);
+            if (eventType === "progress") {
+              setProgress(parsed as ImportProgress);
+            } else if (eventType === "done") {
+              setImportResult(parsed as ImportResult);
+              setPhase("done");
+              qc.invalidateQueries();
+            }
+          } catch {
+            // skip malformed events
+          }
+        }
+      }
+
+      // If we exited the loop without a "done" event, the phase may still be "importing"
+      // — this is fine, the SSE stream just ended cleanly after the done event was processed
     } catch {
       setError("Import failed — server error");
       setPhase("preview");
@@ -326,10 +377,39 @@ export function STBulkImportModal({ open, onClose }: Props) {
 
         {/* ── Phase: Importing ── */}
         {phase === "importing" && (
-          <div className="flex flex-col items-center gap-3 py-6">
+          <div className="flex flex-col items-center gap-4 py-6">
             <Loader2 size={32} className="animate-spin text-[var(--primary)]" />
             <p className="text-sm font-medium">Importing your data…</p>
-            <p className="text-xs text-[var(--muted-foreground)]">This may take a moment for large libraries.</p>
+            {progress ? (
+              <div className="flex w-full flex-col gap-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-[var(--foreground)]">{progress.category}</span>
+                  <span className="tabular-nums text-[var(--muted-foreground)]">
+                    {progress.current} / {progress.total}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--secondary)]">
+                  <div
+                    className="h-full rounded-full bg-[var(--primary)] transition-all duration-200"
+                    style={{ width: `${Math.round((progress.current / progress.total) * 100)}%` }}
+                  />
+                </div>
+                <p className="truncate text-[11px] text-[var(--muted-foreground)]">{progress.item}</p>
+
+                {/* Running totals */}
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-[var(--muted-foreground)]">
+                  {progress.imported.characters > 0 && <span>{progress.imported.characters} characters</span>}
+                  {progress.imported.chats > 0 && <span>{progress.imported.chats} chats</span>}
+                  {progress.imported.groupChats > 0 && <span>{progress.imported.groupChats} group chats</span>}
+                  {progress.imported.presets > 0 && <span>{progress.imported.presets} presets</span>}
+                  {progress.imported.lorebooks > 0 && <span>{progress.imported.lorebooks} lorebooks</span>}
+                  {progress.imported.backgrounds > 0 && <span>{progress.imported.backgrounds} backgrounds</span>}
+                  {progress.imported.personas > 0 && <span>{progress.imported.personas} personas</span>}
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-[var(--muted-foreground)]">Preparing…</p>
+            )}
           </div>
         )}
 

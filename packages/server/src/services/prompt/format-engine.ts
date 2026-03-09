@@ -1,8 +1,8 @@
 // ──────────────────────────────────────────────
 // Format Engine — XML / Markdown auto-wrapping
 // ──────────────────────────────────────────────
-import type { WrapFormat } from "@rpg-engine/shared";
-import { nameToXmlTag } from "@rpg-engine/shared";
+import type { WrapFormat } from "@marinara-engine/shared";
+import { nameToXmlTag } from "@marinara-engine/shared";
 
 /**
  * Convert a display name to a Markdown heading slug.

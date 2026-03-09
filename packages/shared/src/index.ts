@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────
-// @rpg-engine/shared — Public API
+// @marinara-engine/shared — Public API
 // ──────────────────────────────────────────────
 
 // Types
@@ -30,7 +30,7 @@ export * from "./schemas/regex.schema.js";
 export * from "./constants/providers.js";
 export * from "./constants/defaults.js";
 export * from "./constants/chat-modes.js";
-export * from "./constants/model-lists.js";
+export * from "./constants/model-lists.js"; // also exports IMAGE_GENERATION_SOURCES
 export * from "./constants/agent-prompts.js";
 
 // Utils

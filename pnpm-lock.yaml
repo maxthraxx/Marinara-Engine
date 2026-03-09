@@ -23,7 +23,7 @@ importers:
 
   packages/client:
     dependencies:
-      '@rpg-engine/shared':
+      '@marinara-engine/shared':
         specifier: workspace:*
         version: link:../shared
       '@tanstack/react-query':
@@ -108,7 +108,7 @@ importers:
       '@libsql/client':
         specifier: ^0.15.0
         version: 0.15.15
-      '@rpg-engine/shared':
+      '@marinara-engine/shared':
         specifier: workspace:*
         version: link:../shared
       dotenv:

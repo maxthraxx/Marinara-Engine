@@ -6,7 +6,7 @@ import type { DB } from "../../db/connection.js";
 import { apiConnections } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
 import { encryptApiKey, decryptApiKey } from "../../utils/crypto.js";
-import type { CreateConnectionInput } from "@rpg-engine/shared";
+import type { CreateConnectionInput } from "@marinara-engine/shared";
 
 export function createConnectionsStorage(db: DB) {
   return {

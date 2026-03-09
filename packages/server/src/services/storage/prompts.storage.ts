@@ -14,8 +14,8 @@ import type {
   UpdatePromptGroupInput,
   CreateChoiceBlockInput,
   UpdateChoiceBlockInput,
-} from "@rpg-engine/shared";
-import { DEFAULT_GENERATION_PARAMS } from "@rpg-engine/shared";
+} from "@marinara-engine/shared";
+import { DEFAULT_GENERATION_PARAMS } from "@marinara-engine/shared";
 
 export function createPromptsStorage(db: DB) {
   return {

@@ -5,7 +5,7 @@ import { eq, and, desc } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { agentConfigs, agentRuns, agentMemory } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
-import type { CreateAgentConfigInput, AgentResult } from "@rpg-engine/shared";
+import type { CreateAgentConfigInput, AgentResult } from "@marinara-engine/shared";
 
 export function createAgentsStorage(db: DB) {
   return {

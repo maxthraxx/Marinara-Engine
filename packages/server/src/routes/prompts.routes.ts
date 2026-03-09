@@ -11,8 +11,8 @@ import {
   updatePromptGroupSchema,
   createChoiceBlockSchema,
   updateChoiceBlockSchema,
-} from "@rpg-engine/shared";
-import type { ExportEnvelope } from "@rpg-engine/shared";
+} from "@marinara-engine/shared";
+import type { ExportEnvelope } from "@marinara-engine/shared";
 import { createPromptsStorage } from "../services/storage/prompts.storage.js";
 import { assemblePrompt, type AssemblerInput } from "../services/prompt/index.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";

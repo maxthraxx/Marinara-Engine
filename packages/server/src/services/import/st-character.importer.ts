@@ -4,7 +4,7 @@
 import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { importSTLorebook } from "./st-lorebook.importer.js";
-import type { CharacterData } from "@rpg-engine/shared";
+import type { CharacterData } from "@marinara-engine/shared";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
@@ -32,8 +32,8 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB) {
   let data: CharacterData;
 
   // Detect format
-  if (raw.spec === "chara_card_v2" && raw.data) {
-    // V2 format — use directly
+  if ((raw.spec === "chara_card_v2" || raw.spec === "chara_card_v3") && raw.data) {
+    // V2 / V3 format — extract from data wrapper
     data = normalizeV2(raw.data as Record<string, unknown>);
   } else if (raw.char_name || raw.name) {
     // V1 / Pygmalion format — convert to V2
@@ -147,15 +147,16 @@ function convertV1toV2(raw: Record<string, unknown>): CharacterData {
     scenario: raw.world_scenario ?? raw.scenario ?? "",
     first_mes: raw.char_greeting ?? raw.first_mes ?? "",
     mes_example: raw.example_dialogue ?? raw.mes_example ?? "",
-    creator_notes: "",
-    system_prompt: "",
-    post_history_instructions: "",
-    tags: [],
-    creator: "",
-    character_version: "",
-    alternate_greetings: [],
-    extensions: {},
-    character_book: null,
+    // Preserve V2 fields when present instead of discarding them
+    creator_notes: raw.creator_notes ?? "",
+    system_prompt: raw.system_prompt ?? "",
+    post_history_instructions: raw.post_history_instructions ?? "",
+    tags: raw.tags ?? [],
+    creator: raw.creator ?? "",
+    character_version: raw.character_version ?? "",
+    alternate_greetings: raw.alternate_greetings ?? [],
+    extensions: raw.extensions ?? {},
+    character_book: raw.character_book ?? null,
   });
 }
 

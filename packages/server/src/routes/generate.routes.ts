@@ -2,8 +2,8 @@
 // Routes: Generation (SSE Streaming with Tool Use + Agent Pipeline)
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { generateRequestSchema, BUILT_IN_TOOLS, BUILT_IN_AGENTS, findKnownModel } from "@rpg-engine/shared";
-import type { AgentContext, AgentResult, AgentPhase, APIProvider, GameState } from "@rpg-engine/shared";
+import { generateRequestSchema, BUILT_IN_TOOLS, BUILT_IN_AGENTS, findKnownModel } from "@marinara-engine/shared";
+import type { AgentContext, AgentResult, AgentPhase, APIProvider, GameState } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createPromptsStorage } from "../services/storage/prompts.storage.js";
@@ -21,7 +21,7 @@ import { createAgentPipeline, type ResolvedAgent } from "../services/agents/agen
 import { executeAgent } from "../services/agents/agent-executor.js";
 import { gameStateSnapshots as gameStateSnapshotsTable } from "../db/schema/index.js";
 import { eq } from "drizzle-orm";
-import { PROVIDERS } from "@rpg-engine/shared";
+import { PROVIDERS } from "@marinara-engine/shared";
 
 // ── Helpers ──
 
@@ -245,6 +245,9 @@ export async function generateRoutes(app: FastifyInstance) {
       let verbosity: "low" | "medium" | "high" | null = null;
       let wrapFormat: "xml" | "markdown" | "none" = "xml";
 
+      // Determine whether agents are enabled for this chat (needed by assembler + agent pipeline)
+      const chatEnableAgents = chatMeta.enableAgents === true;
+
       if (presetId) {
         const preset = await presets.getById(presetId);
         if (preset) {
@@ -269,6 +272,7 @@ export async function generateRoutes(app: FastifyInstance) {
             personaFields,
             chatMessages: mappedMessages,
             chatSummary: (chatMeta.summary as string) ?? null,
+            enableAgents: chatEnableAgents,
           };
 
           const assembled = await assemblePrompt(assemblerInput);
@@ -308,8 +312,6 @@ export async function generateRoutes(app: FastifyInstance) {
       // ────────────────────────────────────────
       // Agent Pipeline: resolve enabled agents
       // ────────────────────────────────────────
-      // Only resolve agents if the chat has agents enabled
-      const chatEnableAgents = chatMeta.enableAgents === true;
       const enabledConfigs = chatEnableAgents ? await agentsStore.listEnabled() : [];
 
       // Also include built-in agents that are enabled by default but have no DB row yet.
@@ -706,7 +708,7 @@ export async function generateRoutes(app: FastifyInstance) {
       // ────────────────────────────────────────
       if (resolvedAgents.some((a) => a.type === "html")) {
         const htmlAgent = resolvedAgents.find((a) => a.type === "html")!;
-        const { getDefaultAgentPrompt } = await import("@rpg-engine/shared");
+        const { getDefaultAgentPrompt } = await import("@marinara-engine/shared");
         const htmlPrompt = (htmlAgent.promptTemplate || getDefaultAgentPrompt("html")).trim();
         if (htmlPrompt) {
           const htmlBlock = wrapFormat === "markdown" ? `\n## Immersive HTML\n${htmlPrompt}` : htmlPrompt;

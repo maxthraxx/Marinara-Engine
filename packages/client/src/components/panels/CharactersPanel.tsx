@@ -28,13 +28,21 @@ import {
   X,
   UserPlus,
   UserMinus,
+  ArrowUpDown,
   Pencil,
 } from "lucide-react";
 import { useUIStore } from "../../stores/ui.store";
 import { cn } from "../../lib/utils";
 
-type CharacterRow = { id: string; data: string; avatarPath: string | null };
+type CharacterRow = { id: string; data: string; avatarPath: string | null; createdAt: string; updatedAt: string };
 type GroupRow = { id: string; name: string; description: string; characterIds: string; avatarPath: string | null };
+
+type SortOption = "name-asc" | "name-desc" | "newest" | "oldest" | "tokens";
+
+/** Rough token estimate: ~4 chars per token */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
 
 export function CharactersPanel() {
   const { data: characters, isLoading } = useCharacters();
@@ -49,6 +57,7 @@ export function CharactersPanel() {
   const updateChat = useUpdateChat();
 
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortOption>("name-asc");
   const [groupsExpanded, setGroupsExpanded] = useState(true);
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
@@ -94,6 +103,24 @@ export function CharactersPanel() {
         (c.parsed.tags ?? []).some((t: string) => t.toLowerCase().includes(q)),
     );
   }, [parsedCharacters, search]);
+
+  const sortedCharacters = useMemo(() => {
+    const list = [...filteredCharacters];
+    switch (sort) {
+      case "name-asc":
+        return list.sort((a, b) => (a.parsed.name ?? "").localeCompare(b.parsed.name ?? ""));
+      case "name-desc":
+        return list.sort((a, b) => (b.parsed.name ?? "").localeCompare(a.parsed.name ?? ""));
+      case "newest":
+        return list.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+      case "oldest":
+        return list.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+      case "tokens":
+        return list.sort((a, b) => estimateTokens(JSON.stringify(b.parsed)) - estimateTokens(JSON.stringify(a.parsed)));
+      default:
+        return list;
+    }
+  }, [filteredCharacters, sort]);
 
   const parsedGroups = useMemo(() => {
     if (!groups) return [];
@@ -153,15 +180,32 @@ export function CharactersPanel() {
 
   return (
     <div className="flex flex-col gap-2 p-3">
-      {/* Search */}
-      <div className="relative">
-        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search characters…"
-          className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] py-2 pl-8 pr-3 text-xs outline-none transition-colors placeholder:text-[var(--muted-foreground)]/50 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-        />
+      {/* Search + Sort */}
+      <div className="flex gap-1.5">
+        <div className="relative flex-1">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search characters\u2026"
+            className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] py-2 pl-8 pr-3 text-xs outline-none transition-colors placeholder:text-[var(--muted-foreground)]/50 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
+          />
+        </div>
+        <div className="relative">
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortOption)}
+            className="h-full appearance-none rounded-xl border border-[var(--border)] bg-[var(--secondary)] py-2 pl-2.5 pr-7 text-[11px] outline-none transition-colors focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
+            title="Sort order"
+          >
+            <option value="name-asc">A-Z</option>
+            <option value="name-desc">Z-A</option>
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="tokens">Tokens</option>
+          </select>
+          <ArrowUpDown size={10} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+        </div>
       </div>
 
       {/* Actions */}
@@ -427,7 +471,7 @@ export function CharactersPanel() {
       )}
 
       <div className="stagger-children flex flex-col gap-1">
-        {filteredCharacters.map((char) => {
+        {sortedCharacters.map((char) => {
           const charName = char.parsed.name ?? "Unnamed";
           const charDesc = char.parsed.description ?? "";
           const charNameColor = (char.parsed.extensions?.nameColor as string) || undefined;

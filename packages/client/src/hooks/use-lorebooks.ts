@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
-import type { Lorebook, LorebookEntry } from "@rpg-engine/shared";
+import type { Lorebook, LorebookEntry } from "@marinara-engine/shared";
 
 export const lorebookKeys = {
   all: ["lorebooks"] as const,

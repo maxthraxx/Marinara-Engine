@@ -1,17 +1,37 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────
-# RPG Engine — Start Script (macOS / Linux)
+# Marinara Engine — Start Script (macOS / Linux)
 # ──────────────────────────────────────────────
 set -e
 
 echo ""
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║          RPG Engine  —  Launcher         ║"
+echo "  ║       Marinara Engine  —  Launcher        ║"
 echo "  ╚══════════════════════════════════════════╝"
 echo ""
 
 # Navigate to script directory
 cd "$(dirname "$0")"
+
+# ── Auto-update from Git ──
+if [ -d ".git" ]; then
+    echo "  [..] Checking for updates..."
+    OLD_HEAD=$(git rev-parse HEAD 2>/dev/null)
+    if git pull 2>/dev/null; then
+        NEW_HEAD=$(git rev-parse HEAD 2>/dev/null)
+        if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
+            echo "  [OK] Updated to $(git log -1 --format='%h %s' 2>/dev/null)"
+            echo "  [..] Reinstalling dependencies..."
+            pnpm install
+            # Force rebuild
+            rm -rf packages/shared/dist packages/server/dist packages/client/dist
+        else
+            echo "  [OK] Already up to date"
+        fi
+    else
+        echo "  [WARN] Could not check for updates (no internet?). Continuing with current version."
+    fi
+fi
 
 # ── Check Node.js ──
 if ! command -v node &> /dev/null; then
@@ -65,7 +85,7 @@ pnpm db:push 2>/dev/null || true
 # ── Start ──
 echo ""
 echo "  ══════════════════════════════════════════"
-echo "    Starting RPG Engine on http://localhost:7860"
+echo "    Starting Marinara Engine on http://localhost:7860"
 echo "    Press Ctrl+C to stop"
 echo "  ══════════════════════════════════════════"
 echo ""

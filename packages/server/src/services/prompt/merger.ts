@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Merger — Adjacent same-role message merging
 // ──────────────────────────────────────────────
-import type { ChatMLMessage } from "@rpg-engine/shared";
+import type { ChatMLMessage } from "@marinara-engine/shared";
 
 /**
  * Merge consecutive messages that share the same role, with a double-newline separator.

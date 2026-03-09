@@ -2,7 +2,7 @@
 // Import: Marinara Engine native format (.marinara.json)
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
-import type { ExportEnvelope, ExportType } from "@rpg-engine/shared";
+import type { ExportEnvelope, ExportType } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
 import { createPromptsStorage } from "../storage/prompts.storage.js";

@@ -6,7 +6,7 @@ import { X, Plus, Trash2, FileText, MessageSquare } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useChatGroup, useCreateChat, useDeleteChat, useDeleteChatGroup } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
-import type { Chat } from "@rpg-engine/shared";
+import type { Chat } from "@marinara-engine/shared";
 
 interface ChatFilesDrawerProps {
   chat: Chat;

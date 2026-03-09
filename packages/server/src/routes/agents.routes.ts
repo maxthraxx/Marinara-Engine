@@ -2,7 +2,7 @@
 // Routes: Agents
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { createAgentConfigSchema, updateAgentConfigSchema, BUILT_IN_AGENTS } from "@rpg-engine/shared";
+import { createAgentConfigSchema, updateAgentConfigSchema, BUILT_IN_AGENTS } from "@marinara-engine/shared";
 import { createAgentsStorage } from "../services/storage/agents.storage.js";
 
 export async function agentsRoutes(app: FastifyInstance) {

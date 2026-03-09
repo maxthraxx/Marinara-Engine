@@ -1,6 +1,6 @@
 {
-  "name": "rpg-engine",
-  "version": "1.0.0-alpha",
+  "name": "marinara-engine",
+  "version": "1.1.0",
   "private": true,
   "description": "AI Chat & Roleplay Frontend — Conversation, Roleplay, Visual Novel",
   "author": "Marianna",
@@ -12,13 +12,13 @@
     "pnpm": ">=9"
   },
   "scripts": {
-    "dev": "pnpm build:shared && pnpm --filter @rpg-engine/server --filter @rpg-engine/client -r --parallel run dev",
-    "dev:server": "pnpm --filter @rpg-engine/server dev",
-    "dev:client": "pnpm --filter @rpg-engine/client dev",
-    "build": "pnpm --filter @rpg-engine/shared build && pnpm -r --parallel run build",
-    "build:shared": "pnpm --filter @rpg-engine/shared build",
-    "build:server": "pnpm --filter @rpg-engine/server build",
-    "build:client": "pnpm --filter @rpg-engine/client build",
+    "dev": "pnpm build:shared && pnpm --filter @marinara-engine/server --filter @marinara-engine/client -r --parallel run dev",
+    "dev:server": "pnpm --filter @marinara-engine/server dev",
+    "dev:client": "pnpm --filter @marinara-engine/client dev",
+    "build": "pnpm --filter @marinara-engine/shared build && pnpm -r --parallel run build",
+    "build:shared": "pnpm --filter @marinara-engine/shared build",
+    "build:server": "pnpm --filter @marinara-engine/server build",
+    "build:client": "pnpm --filter @marinara-engine/client build",
     "start": "node packages/server/dist/index.js",
     "package": "pnpm build && node electron/bundle-server.cjs && electron-builder --config electron-builder.cjs",
     "package:win": "pnpm build && node electron/bundle-server.cjs && electron-builder --config electron-builder.cjs --win",
@@ -27,9 +27,9 @@
     "format": "prettier --write \"packages/**/*.{ts,tsx}\"",
     "lint": "pnpm -r run lint",
     "test": "pnpm -r run test",
-    "db:push": "pnpm --filter @rpg-engine/server db:push",
-    "db:generate": "pnpm --filter @rpg-engine/server db:generate",
-    "db:migrate": "pnpm --filter @rpg-engine/server db:migrate",
+    "db:push": "pnpm --filter @marinara-engine/server db:push",
+    "db:generate": "pnpm --filter @marinara-engine/server db:generate",
+    "db:migrate": "pnpm --filter @marinara-engine/server db:migrate",
     "clean": "pnpm -r run clean && rm -rf node_modules release"
   },
   "devDependencies": {

@@ -2,7 +2,7 @@
 // Routes: Chats
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { createChatSchema, createMessageSchema, getDefaultAgentPrompt } from "@rpg-engine/shared";
+import { createChatSchema, createMessageSchema, getDefaultAgentPrompt } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { newId } from "../utils/id-generator.js";
@@ -468,7 +468,7 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     let baseUrl = conn.baseUrl;
     if (!baseUrl) {
-      const { PROVIDERS } = await import("@rpg-engine/shared");
+      const { PROVIDERS } = await import("@marinara-engine/shared");
       const providerDef = PROVIDERS[conn.provider as keyof typeof PROVIDERS];
       baseUrl = providerDef?.defaultBaseUrl ?? "";
     }

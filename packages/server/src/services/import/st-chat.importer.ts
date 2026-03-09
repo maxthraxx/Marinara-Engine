@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
-import type { ChatMode } from "@rpg-engine/shared";
+import type { ChatMode } from "@marinara-engine/shared";
 
 interface STChatHeader {
   user_name?: string;

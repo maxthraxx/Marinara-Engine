@@ -31,7 +31,7 @@ import { useGameStateStore } from "../../stores/game-state.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useAgentConfigs } from "../../hooks/use-agents";
 import { useUIStore } from "../../stores/ui.store";
-import type { GameState, PresentCharacter, CharacterStat, InventoryItem, QuestProgress } from "@rpg-engine/shared";
+import type { GameState, PresentCharacter, CharacterStat, InventoryItem, QuestProgress } from "@marinara-engine/shared";
 import type { HudPosition } from "../../stores/ui.store";
 
 interface RoleplayHUDProps {

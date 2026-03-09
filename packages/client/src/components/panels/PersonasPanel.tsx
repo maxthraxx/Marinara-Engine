@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Panel: User Personas
 // ──────────────────────────────────────────────
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import {
   usePersonas,
   useCreatePersona,
@@ -10,7 +10,7 @@ import {
   useUploadPersonaAvatar,
 } from "../../hooks/use-characters";
 import { useUIStore } from "../../stores/ui.store";
-import { Plus, Trash2, User, Loader2, Pencil, Camera, Star } from "lucide-react";
+import { Plus, Trash2, User, Loader2, Pencil, Camera, Star, ArrowUpDown } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 
@@ -24,7 +24,15 @@ type PersonaRow = {
   appearance: string;
   avatarPath: string | null;
   isActive: string | boolean;
+  createdAt: string;
 };
+
+type SortOption = "name-asc" | "name-desc" | "newest" | "oldest" | "tokens";
+
+function estimateTokens(p: PersonaRow): number {
+  const text = [p.description, p.personality, p.scenario, p.backstory, p.appearance].join("");
+  return Math.ceil(text.length / 4);
+}
 
 export function PersonasPanel() {
   const { data: personas, isLoading } = usePersonas();
@@ -36,6 +44,7 @@ export function PersonasPanel() {
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [avatarTargetId, setAvatarTargetId] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortOption>("name-asc");
 
   const isActive = (p: PersonaRow) => p.isActive === true || p.isActive === "true";
 
@@ -68,7 +77,25 @@ export function PersonasPanel() {
     [avatarTargetId, uploadAvatar],
   );
 
-  const list = (personas as PersonaRow[] | undefined) ?? [];
+  const rawList = (personas as PersonaRow[] | undefined) ?? [];
+
+  const list = useMemo(() => {
+    const arr = [...rawList];
+    switch (sort) {
+      case "name-asc":
+        return arr.sort((a, b) => a.name.localeCompare(b.name));
+      case "name-desc":
+        return arr.sort((a, b) => b.name.localeCompare(a.name));
+      case "newest":
+        return arr.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+      case "oldest":
+        return arr.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+      case "tokens":
+        return arr.sort((a, b) => estimateTokens(b) - estimateTokens(a));
+      default:
+        return arr;
+    }
+  }, [rawList, sort]);
 
   return (
     <div className="flex flex-col gap-2 p-3">
@@ -78,14 +105,31 @@ export function PersonasPanel() {
         <HelpTooltip text="Personas are your different identities. The active persona determines how the AI refers to you and sees your description, personality, backstory, and appearance. Great for switching between different player characters!" />
       </div>
 
-      <button
-        onClick={handleCreate}
-        disabled={createPersona.isPending}
-        className="flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-medium transition-all active:scale-[0.98] bg-gradient-to-r from-emerald-400 to-teal-500 text-white shadow-md shadow-emerald-400/15 hover:shadow-lg hover:shadow-emerald-400/25 disabled:opacity-50"
-      >
-        {createPersona.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-        New Persona
-      </button>
+      <div className="flex gap-1.5">
+        <button
+          onClick={handleCreate}
+          disabled={createPersona.isPending}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-medium transition-all active:scale-[0.98] bg-gradient-to-r from-emerald-400 to-teal-500 text-white shadow-md shadow-emerald-400/15 hover:shadow-lg hover:shadow-emerald-400/25 disabled:opacity-50"
+        >
+          {createPersona.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+          New Persona
+        </button>
+        <div className="relative">
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortOption)}
+            className="h-full appearance-none rounded-xl border border-[var(--border)] bg-[var(--secondary)] py-2 pl-2.5 pr-7 text-[11px] outline-none transition-colors focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
+            title="Sort order"
+          >
+            <option value="name-asc">A-Z</option>
+            <option value="name-desc">Z-A</option>
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="tokens">Tokens</option>
+          </select>
+          <ArrowUpDown size={10} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
+        </div>
+      </div>
 
       {/* Hidden file input for avatar uploads */}
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />

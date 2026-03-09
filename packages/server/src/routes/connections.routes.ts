@@ -2,7 +2,7 @@
 // Routes: Connections
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { createConnectionSchema } from "@rpg-engine/shared";
+import { createConnectionSchema } from "@marinara-engine/shared";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 
@@ -43,7 +43,7 @@ export async function connectionsRoutes(app: FastifyInstance) {
     const start = Date.now();
     try {
       // Simple models list fetch to verify the key works
-      const { PROVIDERS } = await import("@rpg-engine/shared");
+      const { PROVIDERS } = await import("@marinara-engine/shared");
       const provider = PROVIDERS[conn.provider as keyof typeof PROVIDERS];
       const baseUrl = conn.baseUrl || provider?.defaultBaseUrl || "";
 
@@ -91,7 +91,7 @@ export async function connectionsRoutes(app: FastifyInstance) {
     if (!conn) return reply.status(404).send({ error: "Connection not found" });
 
     try {
-      const { PROVIDERS } = await import("@rpg-engine/shared");
+      const { PROVIDERS } = await import("@marinara-engine/shared");
       const provider = PROVIDERS[conn.provider as keyof typeof PROVIDERS];
       const baseUrl = conn.baseUrl || provider?.defaultBaseUrl || "";
 
@@ -146,7 +146,7 @@ export async function connectionsRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "No model configured. Set a model first." });
     }
 
-    const { PROVIDERS } = await import("@rpg-engine/shared");
+    const { PROVIDERS } = await import("@marinara-engine/shared");
     const providerDef = PROVIDERS[conn.provider as keyof typeof PROVIDERS];
     const baseUrl = conn.baseUrl || providerDef?.defaultBaseUrl || "";
 

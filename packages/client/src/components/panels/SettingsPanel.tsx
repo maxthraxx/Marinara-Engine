@@ -11,7 +11,7 @@ import {
 import { cn } from "../../lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api-client";
-import { useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   Upload,
   X,
@@ -159,6 +159,8 @@ function AppearanceSettings() {
   const setVisualTheme = useUIStore((s) => s.setVisualTheme);
   const chatBackground = useUIStore((s) => s.chatBackground);
   const setChatBackground = useUIStore((s) => s.setChatBackground);
+  const fontFamily = useUIStore((s) => s.fontFamily);
+  const setFontFamily = useUIStore((s) => s.setFontFamily);
   const fontSize = useUIStore((s) => s.fontSize);
   const setFontSize = useUIStore((s) => s.setFontSize);
   const chatFontSize = useUIStore((s) => s.chatFontSize);
@@ -167,6 +169,31 @@ function AppearanceSettings() {
   const setWeatherEffects = useUIStore((s) => s.setWeatherEffects);
   const hudPosition = useUIStore((s) => s.hudPosition);
   const setHudPosition = useUIStore((s) => s.setHudPosition);
+
+  // Fetch available custom fonts from data/fonts/
+  const { data: customFonts } = useQuery<{ filename: string; family: string; url: string }[]>({
+    queryKey: ["custom-fonts"],
+    queryFn: () => api.get("/fonts"),
+    staleTime: 60_000,
+  });
+
+  // Inject @font-face rules for custom fonts
+  React.useEffect(() => {
+    if (!customFonts?.length) return;
+    const id = "marinara-custom-fonts";
+    let style = document.getElementById(id) as HTMLStyleElement | null;
+    if (!style) {
+      style = document.createElement("style");
+      style.id = id;
+      document.head.appendChild(style);
+    }
+    style.textContent = customFonts
+      .map(
+        (f) =>
+          `@font-face { font-family: "${f.family}"; src: url("${f.url}"); font-display: swap; }`,
+      )
+      .join("\n");
+  }, [customFonts]);
 
   return (
     <div className="flex flex-col gap-4 animate-fade-in-up">
@@ -226,6 +253,31 @@ function AppearanceSettings() {
 
       <label className="flex flex-col gap-1">
         <span className="text-xs font-medium inline-flex items-center gap-1">
+          Font{" "}
+          <HelpTooltip text="Choose the font used across the app. 'Default (Inter)' is optimized for screen readability. Drop .ttf, .otf, .woff, or .woff2 font files into the data/fonts/ folder to add custom fonts." />
+        </span>
+        <select
+          value={fontFamily}
+          onChange={(e) => setFontFamily(e.target.value)}
+          className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]"
+        >
+          <option value="">Default (Inter)</option>
+          {customFonts?.map((f) => (
+            <option key={f.family} value={f.family}>
+              {f.family}
+            </option>
+          ))}
+        </select>
+        {(!customFonts || customFonts.length === 0) && (
+          <p className="text-[10px] text-[var(--muted-foreground)]">
+            Drop font files (.ttf, .otf, .woff, .woff2) into the <span className="font-medium">data/fonts/</span>{" "}
+            folder to add custom fonts.
+          </p>
+        )}
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-medium inline-flex items-center gap-1">
           Display Size{" "}
           <HelpTooltip text="Adjusts the base font size across the whole app. Larger sizes improve readability. Default is 14px." />
         </span>
@@ -250,7 +302,7 @@ function AppearanceSettings() {
           <input
             type="range"
             min={12}
-            max={24}
+            max={48}
             step={1}
             value={chatFontSize}
             onChange={(e) => setChatFontSize(Number(e.target.value))}
@@ -914,7 +966,7 @@ function ImportSettings() {
           label="Import Character (JSON/PNG)"
           accept=".json,.png"
           endpoint="/import/st-character"
-          mode="json"
+          mode="auto"
         />
         <ImportButton
           label="Import Chat (JSONL)"
@@ -943,7 +995,7 @@ function ImportButton({
   label: string;
   accept: string;
   endpoint: string;
-  mode?: "file" | "json";
+  mode?: "file" | "json" | "auto";
   onImported?: (data: any) => void;
 }) {
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -951,7 +1003,13 @@ function ImportButton({
     if (!file) return;
     try {
       let res: Response;
-      if (mode === "json") {
+
+      // "auto" mode: send binary files (PNG) as multipart, JSON files as JSON body
+      const effectiveMode = mode === "auto"
+        ? (file.name.toLowerCase().endsWith(".json") ? "json" : "file")
+        : mode;
+
+      if (effectiveMode === "json") {
         const text = await file.text();
         const json = JSON.parse(text);
         // Pass filename as fallback name for lorebook imports

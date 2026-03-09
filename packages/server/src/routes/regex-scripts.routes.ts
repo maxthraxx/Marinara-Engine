@@ -2,7 +2,7 @@
 // Routes: Regex Scripts
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { createRegexScriptSchema, updateRegexScriptSchema } from "@rpg-engine/shared";
+import { createRegexScriptSchema, updateRegexScriptSchema } from "@marinara-engine/shared";
 import { createRegexScriptsStorage } from "../services/storage/regex-scripts.storage.js";
 
 export async function regexScriptsRoutes(app: FastifyInstance) {

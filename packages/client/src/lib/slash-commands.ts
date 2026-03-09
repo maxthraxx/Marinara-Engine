@@ -2,7 +2,7 @@
 // Slash Commands — SillyTavern-style / commands
 // ──────────────────────────────────────────────
 import { api } from "./api-client";
-import type { Message } from "@rpg-engine/shared";
+import type { Message } from "@marinara-engine/shared";
 
 export interface SlashCommand {
   name: string;

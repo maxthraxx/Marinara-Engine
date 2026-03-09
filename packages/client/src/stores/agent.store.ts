@@ -2,7 +2,7 @@
 // Zustand Store: Agent Slice
 // ──────────────────────────────────────────────
 import { create } from "zustand";
-import type { AgentResult } from "@rpg-engine/shared";
+import type { AgentResult } from "@marinara-engine/shared";
 
 interface AgentState {
   activeAgents: string[];

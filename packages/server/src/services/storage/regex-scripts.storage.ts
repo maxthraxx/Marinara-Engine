@@ -5,7 +5,7 @@ import { eq, asc } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { regexScripts } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
-import type { CreateRegexScriptInput } from "@rpg-engine/shared";
+import type { CreateRegexScriptInput } from "@marinara-engine/shared";
 
 export function createRegexScriptsStorage(db: DB) {
   return {

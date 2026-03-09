@@ -5,7 +5,7 @@ import { eq, desc, and, lt, sql, count } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { chats, messages, messageSwipes } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
-import type { CreateChatInput, CreateMessageInput } from "@rpg-engine/shared";
+import type { CreateChatInput, CreateMessageInput } from "@marinara-engine/shared";
 
 export function createChatsStorage(db: DB) {
   return {

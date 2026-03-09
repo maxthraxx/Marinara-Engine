@@ -2,8 +2,8 @@
 // Routes: Characters, Personas & Groups
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { createCharacterSchema, createGroupSchema, updateGroupSchema } from "@rpg-engine/shared";
-import type { ExportEnvelope } from "@rpg-engine/shared";
+import { createCharacterSchema, createGroupSchema, updateGroupSchema } from "@marinara-engine/shared";
+import type { ExportEnvelope } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";

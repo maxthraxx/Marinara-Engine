@@ -1,9 +1,9 @@
 @echo off
-title RPG Engine
+title Marinara Engine
 color 0A
 echo.
 echo  ╔══════════════════════════════════════════╗
-echo  ║          RPG Engine  -  Launcher         ║
+echo  ║       Marinara Engine  -  Launcher        ║
 echo  ╚══════════════════════════════════════════╝
 echo.
 
@@ -15,6 +15,29 @@ if %errorlevel% neq 0 (
     echo.
     pause
     exit /b 1
+)
+
+:: Auto-update from Git
+if exist ".git" (
+    echo  [..] Checking for updates...
+    for /f "tokens=*" %%i in ('git rev-parse HEAD 2^>nul') do set OLD_HEAD=%%i
+    git pull >nul 2>&1
+    if %errorlevel% equ 0 (
+        for /f "tokens=*" %%i in ('git rev-parse HEAD 2^>nul') do set NEW_HEAD=%%i
+        if not "%OLD_HEAD%"=="%NEW_HEAD%" (
+            echo  [OK] Updated to latest version
+            echo  [..] Reinstalling dependencies...
+            call pnpm install
+            :: Force rebuild
+            if exist "packages\shared\dist" rmdir /s /q "packages\shared\dist"
+            if exist "packages\server\dist" rmdir /s /q "packages\server\dist"
+            if exist "packages\client\dist" rmdir /s /q "packages\client\dist"
+        ) else (
+            echo  [OK] Already up to date
+        )
+    ) else (
+        echo  [WARN] Could not check for updates. Continuing with current version.
+    )
 )
 
 :: Check Node version
@@ -67,7 +90,7 @@ call pnpm db:push 2>nul
 :: Start the server
 echo.
 echo  ══════════════════════════════════════════
-echo    Starting RPG Engine on http://localhost:7860
+echo    Starting Marinara Engine on http://localhost:7860
 echo    Press Ctrl+C to stop
 echo  ══════════════════════════════════════════
 echo.

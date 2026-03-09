@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useCallback, useMemo } from "react";
 import { useRegexScripts, type RegexScriptRow } from "./use-regex-scripts";
-import type { RegexPlacement } from "@rpg-engine/shared";
+import type { RegexPlacement } from "@marinara-engine/shared";
 
 /**
  * Parses a RegexScriptRow from DB into a usable form.

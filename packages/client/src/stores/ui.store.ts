@@ -62,6 +62,8 @@ interface UIState {
   fontSize: FontSize;
   /** Font size for chat messages (px) */
   chatFontSize: number;
+  /** Custom font family name (empty = default Inter) */
+  fontFamily: string;
   enableStreaming: boolean;
   /** Streaming render rate: 30 or 60 FPS */
   streamingFps: 30 | 60;
@@ -138,6 +140,7 @@ interface UIState {
   // Settings actions
   setFontSize: (size: FontSize) => void;
   setChatFontSize: (size: number) => void;
+  setFontFamily: (family: string) => void;
   setEnableStreaming: (v: boolean) => void;
   setStreamingFps: (v: 30 | 60) => void;
   setDebugMode: (v: boolean) => void;
@@ -185,6 +188,7 @@ export const useUIStore = create<UIState>()(
       // Settings defaults
       fontSize: 14 as FontSize,
       chatFontSize: 16,
+      fontFamily: "",
       enableStreaming: true,
       streamingFps: 60 as 30 | 60,
       debugMode: false,
@@ -344,6 +348,7 @@ export const useUIStore = create<UIState>()(
       // Settings actions
       setFontSize: (size) => set({ fontSize: size }),
       setChatFontSize: (size) => set({ chatFontSize: size }),
+      setFontFamily: (family) => set({ fontFamily: family }),
       setEnableStreaming: (v) => set({ enableStreaming: v }),
       setStreamingFps: (v) => set({ streamingFps: v }),
       setDebugMode: (v) => set({ debugMode: v }),
@@ -386,6 +391,7 @@ export const useUIStore = create<UIState>()(
         chatBackground: state.chatBackground,
         fontSize: state.fontSize,
         chatFontSize: state.chatFontSize,
+        fontFamily: state.fontFamily,
         enableStreaming: state.enableStreaming,
         streamingFps: state.streamingFps,
         debugMode: state.debugMode,

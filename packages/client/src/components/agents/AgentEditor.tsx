@@ -39,7 +39,7 @@ import {
   getDefaultAgentPrompt,
   type AgentPhase,
   type ToolDefinition,
-} from "@rpg-engine/shared";
+} from "@marinara-engine/shared";
 
 // ═══════════════════════════════════════════════
 //  Phase metadata

@@ -79,4 +79,13 @@ export const PROVIDERS: Record<APIProvider, ProviderDefinition> = {
     usesAuthHeader: true,
     apiKeyHeader: null,
   },
+  image_generation: {
+    id: "image_generation",
+    name: "Image Generation",
+    defaultBaseUrl: "",
+    modelsEndpoint: "",
+    supportsStreaming: false,
+    usesAuthHeader: true,
+    apiKeyHeader: null,
+  },
 };

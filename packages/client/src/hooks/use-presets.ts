@@ -10,7 +10,7 @@ import type {
   ChoiceBlock,
   GenerationParameters,
   ChatMLMessage,
-} from "@rpg-engine/shared";
+} from "@marinara-engine/shared";
 
 // ── Query Keys ──
 

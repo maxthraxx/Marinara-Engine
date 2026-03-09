@@ -3,7 +3,7 @@
 // Ties together storage, scanning, and injection.
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
-import type { LorebookEntry } from "@rpg-engine/shared";
+import type { LorebookEntry } from "@marinara-engine/shared";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
 import {
   scanForActivatedEntries,

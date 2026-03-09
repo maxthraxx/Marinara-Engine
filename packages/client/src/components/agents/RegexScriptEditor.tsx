@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
-import type { RegexPlacement } from "@rpg-engine/shared";
+import type { RegexPlacement } from "@marinara-engine/shared";
 
 // ═══════════════════════════════════════════════
 //  Placement metadata

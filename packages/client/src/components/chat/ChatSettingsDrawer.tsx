@@ -29,7 +29,7 @@ import { usePresets } from "../../hooks/use-presets";
 import { useConnections } from "../../hooks/use-connections";
 import { useUpdateChat, useUpdateChatMetadata, useChat, useCreateMessage } from "../../hooks/use-chats";
 import { useUIStore } from "../../stores/ui.store";
-import type { Chat } from "@rpg-engine/shared";
+import type { Chat } from "@marinara-engine/shared";
 
 interface ChatSettingsDrawerProps {
   chat: Chat;

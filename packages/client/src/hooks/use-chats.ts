@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
-import type { Chat, Message, MessageSwipe } from "@rpg-engine/shared";
+import type { Chat, Message, MessageSwipe } from "@marinara-engine/shared";
 
 export const chatKeys = {
   all: ["chats"] as const,

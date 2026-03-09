@@ -3,7 +3,16 @@
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
 import { createPromptsStorage } from "../storage/prompts.storage.js";
-import type { PromptVariableGroup } from "@rpg-engine/shared";
+import type { PromptVariableGroup } from "@marinara-engine/shared";
+
+const VALID_REASONING = new Set(["low", "medium", "high", "maximum"]);
+function clamp(v: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, v));
+}
+function toReasoningEffort(v: unknown): "low" | "medium" | "high" | "maximum" | null {
+  if (typeof v === "string" && VALID_REASONING.has(v)) return v as "low" | "medium" | "high" | "maximum";
+  return null;
+}
 
 interface STPromptEntry {
   identifier: string;
@@ -57,15 +66,15 @@ export async function importSTPreset(raw: Record<string, unknown>, db: DB, fileN
     variableGroups,
     variableValues: {},
     parameters: {
-      temperature: preset.temperature ?? 1,
-      topP: preset.top_p ?? 1,
-      topK: preset.top_k ?? 0,
-      minP: preset.min_p ?? 0,
-      maxTokens: preset.openai_max_tokens ?? 4096,
-      maxContext: preset.openai_max_context ?? 128000,
-      frequencyPenalty: preset.frequency_penalty ?? 0,
-      presencePenalty: preset.presence_penalty ?? 0,
-      reasoningEffort: (preset.reasoning_effort as "low" | "medium" | "high") ?? null,
+      temperature: clamp(preset.temperature ?? 1, 0, 2),
+      topP: clamp(preset.top_p ?? 1, 0, 1),
+      topK: Math.max(0, Math.round(preset.top_k ?? 0)),
+      minP: clamp(preset.min_p ?? 0, 0, 1),
+      maxTokens: Math.max(1, Math.round(preset.openai_max_tokens ?? 4096)),
+      maxContext: Math.max(1, Math.round(preset.openai_max_context ?? 128000)),
+      frequencyPenalty: clamp(preset.frequency_penalty ?? 0, -2, 2),
+      presencePenalty: clamp(preset.presence_penalty ?? 0, -2, 2),
+      reasoningEffort: toReasoningEffort(preset.reasoning_effort),
       verbosity: null,
       squashSystemMessages: preset.squash_system_messages ?? true,
       showThoughts: preset.show_thoughts ?? true,

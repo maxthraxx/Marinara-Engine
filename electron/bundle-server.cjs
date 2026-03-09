@@ -161,7 +161,7 @@ async function bundle() {
   writeFileSync(
     join(OUT, "package.json"),
     JSON.stringify({
-      name: "@rpg-engine/server",
+      name: "@marinara-engine/server",
       version: "0.1.0",
       type: "module",
       main: "./dist/index.js",

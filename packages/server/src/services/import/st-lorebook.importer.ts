@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
-import type { CreateLorebookEntryInput, LorebookCategory } from "@rpg-engine/shared";
+import type { CreateLorebookEntryInput, LorebookCategory } from "@marinara-engine/shared";
 
 interface STWorldInfoEntry {
   uid?: number;

@@ -12,6 +12,7 @@ export function App() {
   const theme = useUIStore((s) => s.theme);
   const fontSize = useUIStore((s) => s.fontSize);
   const visualTheme = useUIStore((s) => s.visualTheme);
+  const fontFamily = useUIStore((s) => s.fontFamily);
 
   // Apply theme + font size to the document root whenever they change
   useEffect(() => {
@@ -31,6 +32,15 @@ export function App() {
   useEffect(() => {
     document.documentElement.style.fontSize = `${fontSize}px`;
   }, [fontSize]);
+
+  // Apply custom font family via CSS variable
+  useEffect(() => {
+    if (fontFamily) {
+      document.documentElement.style.setProperty("--font-user", `"${fontFamily}"`);
+    } else {
+      document.documentElement.style.removeProperty("--font-user");
+    }
+  }, [fontFamily]);
 
   return (
     <>

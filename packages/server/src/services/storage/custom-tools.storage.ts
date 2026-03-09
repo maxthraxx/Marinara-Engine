@@ -5,7 +5,7 @@ import { eq, desc } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { customTools } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
-import type { CreateCustomToolInput } from "@rpg-engine/shared";
+import type { CreateCustomToolInput } from "@marinara-engine/shared";
 
 export function createCustomToolsStorage(db: DB) {
   return {

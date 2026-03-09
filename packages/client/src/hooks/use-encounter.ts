@@ -14,7 +14,7 @@ import type {
   CombatPlayerActions,
   EncounterLogEntry,
   EncounterSettings,
-} from "@rpg-engine/shared";
+} from "@marinara-engine/shared";
 
 export function useEncounter() {
   const qc = useQueryClient();

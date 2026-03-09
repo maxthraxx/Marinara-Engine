@@ -339,6 +339,96 @@ export const AI21_MODELS: KnownModel[] = [
   { id: "jamba-instruct-preview", name: "jamba-instruct-preview", context: 256000, maxOutput: 4096 },
 ];
 
+// ── Image Generation Sources (matches SillyTavern extension sources) ──
+
+export interface ImageGenSource {
+  id: string;
+  name: string;
+  description: string;
+  defaultBaseUrl: string;
+  requiresApiKey: boolean;
+}
+
+export const IMAGE_GENERATION_SOURCES: ImageGenSource[] = [
+  {
+    id: "openai",
+    name: "OpenAI (DALL-E)",
+    description: "DALL-E 2, DALL-E 3, and GPT Image via the OpenAI API.",
+    defaultBaseUrl: "https://api.openai.com/v1",
+    requiresApiKey: true,
+  },
+  {
+    id: "stability",
+    name: "Stability AI",
+    description: "Stable Diffusion 3, SDXL, and Stable Image via the Stability API.",
+    defaultBaseUrl: "https://api.stability.ai/v2beta",
+    requiresApiKey: true,
+  },
+  {
+    id: "togetherai",
+    name: "Together AI",
+    description: "FLUX, Stable Diffusion, and other open-source image models.",
+    defaultBaseUrl: "https://api.together.xyz/v1",
+    requiresApiKey: true,
+  },
+  {
+    id: "novelai",
+    name: "NovelAI",
+    description: "NovelAI Diffusion anime-style image generation.",
+    defaultBaseUrl: "https://image.novelai.net",
+    requiresApiKey: true,
+  },
+  {
+    id: "pollinations",
+    name: "Pollinations",
+    description: "Free, no-key-needed image generation via Pollinations AI.",
+    defaultBaseUrl: "https://image.pollinations.ai",
+    requiresApiKey: false,
+  },
+  {
+    id: "horde",
+    name: "Stable Horde",
+    description: "Crowdsourced distributed image generation. Free with optional API key.",
+    defaultBaseUrl: "https://stablehorde.net/api/v2",
+    requiresApiKey: false,
+  },
+  {
+    id: "automatic1111",
+    name: "SD Web UI (AUTOMATIC1111 / Forge)",
+    description: "Local Stable Diffusion via AUTOMATIC1111 or SD.Next WebUI.",
+    defaultBaseUrl: "http://localhost:7860",
+    requiresApiKey: false,
+  },
+  {
+    id: "comfyui",
+    name: "ComfyUI",
+    description: "Local node-based image generation with ComfyUI.",
+    defaultBaseUrl: "http://127.0.0.1:8188",
+    requiresApiKey: false,
+  },
+  {
+    id: "drawthings",
+    name: "Draw Things",
+    description: "macOS / iOS local image generation via Draw Things.",
+    defaultBaseUrl: "http://localhost:7860",
+    requiresApiKey: false,
+  },
+  {
+    id: "blockentropy",
+    name: "Block Entropy",
+    description: "Decentralised image generation network.",
+    defaultBaseUrl: "https://api.blockentropy.ai",
+    requiresApiKey: true,
+  },
+];
+
+export const IMAGE_GENERATION_MODELS: KnownModel[] = IMAGE_GENERATION_SOURCES.map((s) => ({
+  id: s.id,
+  name: s.name,
+  context: 0,
+  maxOutput: 0,
+}));
+
 // ── Provider → Model map ──
 
 export const MODEL_LISTS: Record<APIProvider, KnownModel[]> = {
@@ -349,6 +439,7 @@ export const MODEL_LISTS: Record<APIProvider, KnownModel[]> = {
   cohere: COHERE_MODELS,
   openrouter: OPENROUTER_MODELS,
   custom: [], // User must type model ID manually for custom endpoints
+  image_generation: IMAGE_GENERATION_MODELS,
 };
 
 /**

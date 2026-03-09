@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
-import type { ConnectionTestResult } from "@rpg-engine/shared";
+import type { ConnectionTestResult } from "@marinara-engine/shared";
 
 export const connectionKeys = {
   all: ["connections"] as const,

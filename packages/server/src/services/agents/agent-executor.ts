@@ -2,8 +2,8 @@
 // Agent Executor — Single & Batched LLM execution
 // ──────────────────────────────────────────────
 import type { BaseLLMProvider, ChatMessage } from "../llm/base-provider.js";
-import type { AgentResult, AgentContext, AgentResultType } from "@rpg-engine/shared";
-import { getDefaultAgentPrompt } from "@rpg-engine/shared";
+import type { AgentResult, AgentContext, AgentResultType } from "@marinara-engine/shared";
+import { getDefaultAgentPrompt } from "@marinara-engine/shared";
 
 /** Minimal agent config needed for execution. */
 export interface AgentExecConfig {
