@@ -153,6 +153,56 @@ export function createChatsStorage(db: DB) {
       return this.getMessage(id);
     },
 
+    /**
+     * Bulk-insert messages in a single transaction. Much faster than one-by-one
+     * createMessage calls (especially on Windows/NTFS where each transaction fsync is expensive).
+     * Does NOT return the created messages or update chat.updatedAt per message —
+     * caller should update chat.updatedAt once after the batch.
+     */
+    async createMessagesBatch(chatId: string, inputs: Omit<CreateMessageInput, "chatId">[]) {
+      if (inputs.length === 0) return;
+      const msgRows: (typeof messages.$inferInsert)[] = [];
+      const swipeRows: (typeof messageSwipes.$inferInsert)[] = [];
+      const timestamp = now();
+
+      for (const input of inputs) {
+        const id = newId();
+        msgRows.push({
+          id,
+          chatId,
+          role: input.role,
+          characterId: input.characterId,
+          content: input.content,
+          activeSwipeIndex: 0,
+          extra: JSON.stringify({
+            displayText: null,
+            isGenerated: input.role !== "user",
+            tokenCount: null,
+            generationInfo: null,
+          }),
+          createdAt: timestamp,
+        });
+        swipeRows.push({
+          id: newId(),
+          messageId: id,
+          index: 0,
+          content: input.content,
+          extra: JSON.stringify({}),
+          createdAt: timestamp,
+        });
+      }
+
+      // Batch in chunks of 500 to stay within SQLite variable limits
+      const CHUNK = 500;
+      await db.transaction(async (tx) => {
+        for (let i = 0; i < msgRows.length; i += CHUNK) {
+          await tx.insert(messages).values(msgRows.slice(i, i + CHUNK));
+          await tx.insert(messageSwipes).values(swipeRows.slice(i, i + CHUNK));
+        }
+        await tx.update(chats).set({ updatedAt: timestamp }).where(eq(chats.id, chatId));
+      });
+    },
+
     async updateMessageContent(id: string, content: string) {
       await db.update(messages).set({ content }).where(eq(messages.id, id));
       return this.getMessage(id);

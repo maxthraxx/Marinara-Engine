@@ -5,7 +5,8 @@ import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { importSTLorebook } from "./st-lorebook.importer.js";
 import type { CharacterData } from "@marinara-engine/shared";
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
+import { writeFile } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
@@ -57,7 +58,7 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB) {
     // Strip data URL header → raw base64
     const base64 = avatarDataUrl.split(",")[1];
     if (base64) {
-      writeFileSync(filePath, Buffer.from(base64, "base64"));
+      await writeFile(filePath, Buffer.from(base64, "base64"));
       avatarPath = `/api/avatars/file/${filename}`;
     }
   }

@@ -79,8 +79,8 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
 
   if (!chat) return { error: "Failed to create chat" };
 
-  // Import messages
-  let imported = 0;
+  // Import messages in batch
+  const msgInputs: { role: string; characterId: string | null; content: string }[] = [];
   for (let i = 1; i < lines.length; i++) {
     try {
       const stMsg = JSON.parse(lines[i]!) as STChatMessage;
@@ -102,23 +102,19 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
         }
       }
 
-      await storage.createMessage({
-        chatId: chat.id,
-        role,
-        characterId: messageCharacterId,
-        content,
-      });
-      imported++;
+      msgInputs.push({ role, characterId: messageCharacterId, content });
     } catch {
       // Skip malformed lines
     }
   }
+
+  await storage.createMessagesBatch(chat.id, msgInputs);
 
   return {
     success: true,
     chatId: chat.id,
     characterName,
     userName,
-    messagesImported: imported,
+    messagesImported: msgInputs.length,
   };
 }

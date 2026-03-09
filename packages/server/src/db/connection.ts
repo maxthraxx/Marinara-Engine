@@ -17,6 +17,11 @@ function createDB(dbPath: string) {
     url: `file:${dbPath}`,
   });
 
+  // Enable WAL journal mode and relaxed sync for much better write perf on Windows/NTFS.
+  // WAL avoids the expensive DELETE-journal fsync cycle per transaction.
+  client.execute("PRAGMA journal_mode=WAL");
+  client.execute("PRAGMA synchronous=NORMAL");
+
   return drizzle(client, { schema });
 }
 
