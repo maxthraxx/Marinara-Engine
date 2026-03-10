@@ -167,9 +167,9 @@ All agents are disabled by default — enable only the ones you want. You can al
 
 ### Windows Installer
 
-Download the **Marinara Engine Setup** `.exe` from the [Releases](https://github.com/SpicyMarinara/Marinara-Engine/releases) page and run it. That's it — the installer handles everything.
+Download **[Marinara-Engine-Installer-1.3.0.exe](https://github.com/SpicyMarinara/Marinara-Engine/releases/download/v1.3.0/Marinara-Engine-Installer-1.3.0.exe)** from the [Releases](https://github.com/SpicyMarinara/Marinara-Engine/releases) page and run it. The installer checks for Node.js and Git, clones the repo, installs dependencies, builds the app, and creates a desktop shortcut.
 
-Alternatively, download **install.bat** from the same page if you prefer a script-based install. It checks for Node.js and Git, clones the repo, installs dependencies, builds the app, and creates a desktop shortcut.
+You need **Node.js 20+** and **Git** installed first (the installer will tell you if they're missing).
 
 ---
 
