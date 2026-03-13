@@ -4,11 +4,13 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Send, Loader2, Paperclip, StopCircle, X } from "lucide-react";
 import { toast } from "sonner";
+import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
-import { useCreateMessage } from "../../hooks/use-chats";
+import { useCreateMessage, chatKeys } from "../../hooks/use-chats";
+import type { Message } from "@marinara-engine/shared";
 import {
   matchSlashCommand,
   getSlashCompletions,
@@ -42,6 +44,17 @@ export function ChatInput({ mode = "conversation", characterNames = [] }: ChatIn
   const enterToSend = useUIStore((s) => s.enterToSend);
   const createMessage = useCreateMessage(activeChatId);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const qc = useQueryClient();
+
+  // Derive whether the user can retry (last message is theirs with no assistant reply)
+  const canRetry = (() => {
+    if (!activeChatId || isStreaming) return false;
+    const cached = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(activeChatId));
+    if (!cached?.pages?.length) return false;
+    const chronological = [...cached.pages].reverse().flat();
+    const lastMsg = chronological[chronological.length - 1];
+    return !!lastMsg && lastMsg.role === "user";
+  })();
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -86,7 +99,28 @@ export function ChatInput({ mode = "conversation", characterNames = [] }: ChatIn
 
   const handleSend = useCallback(async () => {
     const raw = getValue();
-    if ((!raw.trim() && !attachments.length) || !activeChatId || isStreaming) return;
+    if (!activeChatId || isStreaming) return;
+
+    const hasText = raw.trim().length > 0;
+    const hasFiles = attachments.length > 0;
+
+    // If input is empty, check if we should retry a failed generation
+    // (last message is from the user with no assistant response after it)
+    if (!hasText && !hasFiles) {
+      const cached = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(activeChatId));
+      const chronological = [...(cached?.pages ?? [])].reverse().flat();
+      const lastMsg = chronological[chronological.length - 1];
+      if (lastMsg && lastMsg.role === "user") {
+        // Retry: generate a response for the existing last user message
+        try {
+          await generate({ chatId: activeChatId, connectionId: null });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "Generation failed";
+          toast.error(msg);
+        }
+      }
+      return;
+    }
 
     const normalized = normalizeQuotes(raw.trim());
 
@@ -143,7 +177,7 @@ export function ChatInput({ mode = "conversation", characterNames = [] }: ChatIn
       toast.error(msg);
       console.error("Send failed:", error);
     }
-  }, [activeChatId, isStreaming, generate, applyToUserInput, buildContext]);
+  }, [activeChatId, isStreaming, generate, applyToUserInput, buildContext, qc]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Autocomplete navigation
@@ -377,15 +411,15 @@ export function ChatInput({ mode = "conversation", characterNames = [] }: ChatIn
         {/* Send / Stop button */}
         <button
           onClick={isStreaming ? () => useChatStore.getState().stopGeneration() : handleSend}
-          disabled={(!hasInput && !attachments.length && !isStreaming) || !activeChatId}
+          disabled={(!hasInput && !attachments.length && !isStreaming && !canRetry) || !activeChatId}
           className={cn(
             "flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200",
             isStreaming
               ? "bg-[var(--destructive)] text-white hover:opacity-80"
-              : (hasInput || attachments.length) && activeChatId
+              : (hasInput || attachments.length || canRetry) && activeChatId
                 ? isRP
-                  ? "bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-md shadow-blue-500/20 hover:shadow-lg active:scale-90"
-                  : "bg-gradient-to-br from-[var(--primary)] to-blue-600 text-white shadow-md shadow-[var(--primary)]/20 hover:shadow-lg active:scale-90"
+                  ? "text-white hover:text-white/80 active:scale-90"
+                  : "text-[var(--foreground)] hover:text-[var(--foreground)]/80 active:scale-90"
                 : isRP
                   ? "text-white/20"
                   : "text-[var(--muted-foreground)]",

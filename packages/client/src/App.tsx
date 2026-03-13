@@ -31,6 +31,9 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.style.fontSize = `${fontSize}px`;
+    // Expose a scale factor for CSS rules that need to scale fixed-pixel values
+    // (e.g. icons, hardcoded text sizes). Baseline = 16px (browser default).
+    document.documentElement.style.setProperty("--display-scale", String(fontSize / 16));
   }, [fontSize]);
 
   // Apply custom font family via CSS variable

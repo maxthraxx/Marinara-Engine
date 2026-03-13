@@ -17,6 +17,7 @@ function parseLorebookRow(row: Record<string, unknown>) {
   return {
     ...row,
     recursiveScanning: row.recursiveScanning === "true",
+    maxRecursionDepth: typeof row.maxRecursionDepth === "number" ? row.maxRecursionDepth : 3,
     enabled: row.enabled === "true",
     generatedBy: row.generatedBy || null,
     sourceAgentId: row.sourceAgentId || null,
@@ -34,6 +35,7 @@ function parseEntryRow(row: Record<string, unknown>) {
     matchWholeWords: row.matchWholeWords === "true",
     caseSensitive: row.caseSensitive === "true",
     useRegex: row.useRegex === "true",
+    preventRecursion: row.preventRecursion === "true",
     keys: JSON.parse((row.keys as string) || "[]"),
     secondaryKeys: JSON.parse((row.secondaryKeys as string) || "[]"),
     relationships: JSON.parse((row.relationships as string) || "{}"),
@@ -96,6 +98,7 @@ export function createLorebooksStorage(db: DB) {
         scanDepth: input.scanDepth ?? 2,
         tokenBudget: input.tokenBudget ?? 2048,
         recursiveScanning: String(input.recursiveScanning ?? false),
+        maxRecursionDepth: input.maxRecursionDepth ?? 3,
         characterId: input.characterId ?? null,
         chatId: input.chatId ?? null,
         enabled: String(input.enabled ?? true),
@@ -115,6 +118,7 @@ export function createLorebooksStorage(db: DB) {
       if (input.scanDepth !== undefined) updates.scanDepth = input.scanDepth;
       if (input.tokenBudget !== undefined) updates.tokenBudget = input.tokenBudget;
       if (input.recursiveScanning !== undefined) updates.recursiveScanning = String(input.recursiveScanning);
+      if (input.maxRecursionDepth !== undefined) updates.maxRecursionDepth = input.maxRecursionDepth;
       if (input.characterId !== undefined) updates.characterId = input.characterId;
       if (input.chatId !== undefined) updates.chatId = input.chatId;
       if (input.enabled !== undefined) updates.enabled = String(input.enabled);
@@ -203,6 +207,7 @@ export function createLorebooksStorage(db: DB) {
         dynamicState: JSON.stringify(input.dynamicState ?? {}),
         activationConditions: JSON.stringify(input.activationConditions ?? []),
         schedule: input.schedule ? JSON.stringify(input.schedule) : null,
+        preventRecursion: String(input.preventRecursion ?? false),
         createdAt: timestamp,
         updatedAt: timestamp,
       });
@@ -239,6 +244,7 @@ export function createLorebooksStorage(db: DB) {
       if (input.activationConditions !== undefined)
         updates.activationConditions = JSON.stringify(input.activationConditions);
       if (input.schedule !== undefined) updates.schedule = input.schedule ? JSON.stringify(input.schedule) : null;
+      if (input.preventRecursion !== undefined) updates.preventRecursion = String(input.preventRecursion);
 
       await db.update(lorebookEntries).set(updates).where(eq(lorebookEntries.id, id));
       return this.getEntry(id);

@@ -118,6 +118,7 @@ export const BUILT_IN_AGENT_IDS = {
   CHAT_SUMMARY: "chat-summary",
   SPOTIFY: "spotify",
   EDITOR: "editor",
+  KNOWLEDGE_RETRIEVAL: "knowledge-retrieval",
 } as const;
 
 export type AgentCategory = "writer" | "tracker" | "misc";
@@ -297,6 +298,15 @@ export const BUILT_IN_AGENTS: BuiltInAgentMeta[] = [
     enabledByDefault: false,
     category: "writer",
   },
+  {
+    id: "knowledge-retrieval",
+    name: "Knowledge Retrieval",
+    description:
+      "Scans specified lorebooks for information relevant to the current conversation, summarizes the key data, and injects it into the prompt — a lightweight RAG pipeline without vector databases.",
+    phase: "pre_generation",
+    enabledByDefault: false,
+    category: "writer",
+  },
 ];
 
 /** Recommended default tools for each built-in agent type. */
@@ -325,6 +335,7 @@ export const DEFAULT_AGENT_TOOLS: Record<string, string[]> = {
     "spotify_set_volume",
   ],
   editor: [],
+  "knowledge-retrieval": ["search_lorebook"],
 };
 
 /** Data shape for a lorebook_update agent result. */

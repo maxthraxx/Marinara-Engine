@@ -28,8 +28,18 @@ import {
   Layers,
   Music,
   ExternalLink,
+  BookOpen,
+  Upload,
+  Loader2,
 } from "lucide-react";
 import { useDeleteAgent } from "../../hooks/use-agents";
+import { useLorebooks } from "../../hooks/use-lorebooks";
+import {
+  useKnowledgeSources,
+  useUploadKnowledgeSource,
+  useDeleteKnowledgeSource,
+  type KnowledgeSource,
+} from "../../hooks/use-knowledge-sources";
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import {
@@ -104,6 +114,8 @@ export function AgentEditor() {
   const [localInjectAsSection, setLocalInjectAsSection] = useState(false);
   const [localEnabledTools, setLocalEnabledTools] = useState<string[]>([]);
   const [localSpotifyClientId, setLocalSpotifyClientId] = useState("");
+  const [localSourceLorebookIds, setLocalSourceLorebookIds] = useState<string[]>([]);
+  const [localSourceFileIds, setLocalSourceFileIds] = useState<string[]>([]);
   const [spotifyStatus, setSpotifyStatus] = useState<{
     connected: boolean;
     expired: boolean;
@@ -134,6 +146,8 @@ export function AgentEditor() {
       setLocalInjectAsSection(settings.injectAsSection ?? false);
       setLocalEnabledTools(settings.enabledTools ?? DEFAULT_AGENT_TOOLS[dbConfig.type] ?? []);
       setLocalSpotifyClientId(settings.spotifyClientId ?? "");
+      setLocalSourceLorebookIds(settings.sourceLorebookIds ?? []);
+      setLocalSourceFileIds(settings.sourceFileIds ?? []);
       setLocalPrompt(dbConfig.promptTemplate || "");
     } else if (builtIn) {
       setLocalName(builtIn.name);
@@ -144,6 +158,8 @@ export function AgentEditor() {
       setLocalInjectAsSection(builtIn.defaultInjectAsSection ?? false);
       setLocalEnabledTools(DEFAULT_AGENT_TOOLS[builtIn.id] ?? []);
       setLocalSpotifyClientId("");
+      setLocalSourceLorebookIds([]);
+      setLocalSourceFileIds([]);
       setLocalPrompt("");
     } else {
       // Brand new custom agent — start empty
@@ -155,6 +171,8 @@ export function AgentEditor() {
       setLocalInjectAsSection(false);
       setLocalEnabledTools([]);
       setLocalSpotifyClientId("");
+      setLocalSourceLorebookIds([]);
+      setLocalSourceFileIds([]);
       setLocalPrompt("");
     }
     setDirty(false);
@@ -163,6 +181,14 @@ export function AgentEditor() {
 
   // Fetch Spotify connection status when viewing a Spotify agent
   const isSpotifyAgent = agentDetailId === "spotify" || dbConfig?.type === "spotify";
+
+  // Knowledge Retrieval agent — lorebook source selector
+  const isKnowledgeRetrievalAgent = agentDetailId === "knowledge-retrieval" || dbConfig?.type === "knowledge-retrieval";
+  const { data: allLorebooks } = useLorebooks();
+  const { data: allKnowledgeSources } = useKnowledgeSources();
+  const uploadSource = useUploadKnowledgeSource();
+  const deleteSource = useDeleteKnowledgeSource();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!isSpotifyAgent || !dbConfig?.id) {
       setSpotifyStatus(null);
@@ -220,6 +246,8 @@ export function AgentEditor() {
         ...(localInjectAsSection ? { injectAsSection: true } : {}),
         enabledTools: localEnabledTools,
         ...(localSpotifyClientId ? { spotifyClientId: localSpotifyClientId } : {}),
+        ...(localSourceLorebookIds.length > 0 ? { sourceLorebookIds: localSourceLorebookIds } : {}),
+        ...(localSourceFileIds.length > 0 ? { sourceFileIds: localSourceFileIds } : {}),
       },
     };
 
@@ -261,6 +289,8 @@ export function AgentEditor() {
     localInjectAsSection,
     localEnabledTools,
     localSpotifyClientId,
+    localSourceLorebookIds,
+    localSourceFileIds,
     dbConfig,
     builtIn,
     updateAgent,
@@ -695,6 +725,185 @@ export function AgentEditor() {
                     Requires Spotify Premium. Tokens refresh automatically — no need to reconnect.
                   </p>
                 </div>
+              </div>
+            </FieldGroup>
+          )}
+
+          {/* ── Knowledge Source Lorebooks (only for Knowledge Retrieval agent) ── */}
+          {isKnowledgeRetrievalAgent && (
+            <FieldGroup
+              label="Knowledge Sources"
+              icon={<BookOpen size={14} className="text-amber-400" />}
+              help="Select lorebooks and/or upload files for this agent to scan. Supported file types: .txt, .md, .csv, .json, .xml, .html, .pdf"
+            >
+              <div className="space-y-4">
+                {/* ── Lorebooks ── */}
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-medium text-white/60">Lorebooks</p>
+                  {allLorebooks && allLorebooks.length > 0 ? (
+                    <div className="max-h-48 overflow-y-auto space-y-1 rounded-lg border border-white/10 bg-white/[0.02] p-2">
+                      {allLorebooks.map((lb) => {
+                        const selected = localSourceLorebookIds.includes(lb.id);
+                        return (
+                          <button
+                            key={lb.id}
+                            type="button"
+                            onClick={() => {
+                              setLocalSourceLorebookIds((prev) =>
+                                selected ? prev.filter((id) => id !== lb.id) : [...prev, lb.id],
+                              );
+                              setDirty(true);
+                            }}
+                            className={cn(
+                              "w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all text-xs",
+                              selected
+                                ? "bg-amber-500/10 border border-amber-500/20 text-amber-300"
+                                : "bg-white/[0.02] border border-transparent text-white/60 hover:bg-white/5 hover:text-white/80",
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all",
+                                selected ? "border-amber-500/50 bg-amber-500/20" : "border-white/20 bg-white/5",
+                              )}
+                            >
+                              {selected && <Check size={10} />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate font-medium">{lb.name}</p>
+                              {lb.description && <p className="truncate text-[10px] text-white/40">{lb.description}</p>}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-white/40">No lorebooks available.</p>
+                  )}
+                </div>
+
+                {/* ── Uploaded Files ── */}
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-medium text-white/60">Files</p>
+                  {/* File list */}
+                  {allKnowledgeSources && allKnowledgeSources.length > 0 && (
+                    <div className="max-h-48 overflow-y-auto space-y-1 rounded-lg border border-white/10 bg-white/[0.02] p-2">
+                      {allKnowledgeSources.map((src) => {
+                        const selected = localSourceFileIds.includes(src.id);
+                        return (
+                          <div
+                            key={src.id}
+                            className={cn(
+                              "flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition-all",
+                              selected
+                                ? "bg-amber-500/10 border border-amber-500/20 text-amber-300"
+                                : "bg-white/[0.02] border border-transparent text-white/60",
+                            )}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setLocalSourceFileIds((prev) =>
+                                  selected ? prev.filter((id) => id !== src.id) : [...prev, src.id],
+                                );
+                                setDirty(true);
+                              }}
+                              className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
+                            >
+                              <div
+                                className={cn(
+                                  "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all",
+                                  selected ? "border-amber-500/50 bg-amber-500/20" : "border-white/20 bg-white/5",
+                                )}
+                              >
+                                {selected && <Check size={10} />}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate font-medium">{src.originalName}</p>
+                                <p className="text-[10px] text-white/40">{(src.size / 1024).toFixed(1)} KB</p>
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                deleteSource.mutate(src.id, {
+                                  onSuccess: () => {
+                                    setLocalSourceFileIds((prev) => prev.filter((id) => id !== src.id));
+                                  },
+                                });
+                              }}
+                              className="shrink-0 p-1 rounded text-white/20 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                              title="Delete file"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Upload button */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".txt,.md,.csv,.json,.xml,.html,.htm,.log,.yaml,.yml,.tsv,.pdf"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const uploaded = await uploadSource.mutateAsync(file);
+                        setLocalSourceFileIds((prev) => [...prev, uploaded.id]);
+                        setDirty(true);
+                      } catch {
+                        /* error handled by mutation */
+                      }
+                      // Reset so same file can be re-uploaded if needed
+                      e.target.value = "";
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={uploadSource.isPending}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-xs font-medium transition-all w-full justify-center",
+                      uploadSource.isPending
+                        ? "border-white/10 text-white/30 cursor-wait"
+                        : "border-white/15 text-white/50 hover:border-amber-500/30 hover:text-amber-400 hover:bg-amber-500/5",
+                    )}
+                  >
+                    {uploadSource.isPending ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        Uploading...
+                      </>
+                    ) : (
+                      <>
+                        <Upload size={14} />
+                        Upload File
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Summary */}
+                {(localSourceLorebookIds.length > 0 || localSourceFileIds.length > 0) && (
+                  <p className="text-[10px] text-white/40">
+                    {[
+                      localSourceLorebookIds.length > 0
+                        ? `${localSourceLorebookIds.length} lorebook${localSourceLorebookIds.length !== 1 ? "s" : ""}`
+                        : null,
+                      localSourceFileIds.length > 0
+                        ? `${localSourceFileIds.length} file${localSourceFileIds.length !== 1 ? "s" : ""}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}{" "}
+                    selected
+                  </p>
+                )}
               </div>
             </FieldGroup>
           )}

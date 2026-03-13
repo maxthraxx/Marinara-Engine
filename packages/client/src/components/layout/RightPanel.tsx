@@ -61,8 +61,8 @@ export function RightPanel() {
       </div>
 
       {/* Content with animated transitions */}
-      <div className="flex-1 overflow-y-auto">
-        <AnimatePresence mode="wait">
+      <div className="relative flex-1 overflow-y-auto">
+        <AnimatePresence mode="popLayout">
           <motion.div
             key={panel}
             initial={{ opacity: 0, y: 6 }}

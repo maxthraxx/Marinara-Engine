@@ -327,6 +327,16 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     column: "manual_overrides",
     definition: "TEXT",
   },
+  {
+    table: "lorebooks",
+    column: "max_recursion_depth",
+    definition: "INTEGER NOT NULL DEFAULT 3",
+  },
+  {
+    table: "lorebook_entries",
+    column: "prevent_recursion",
+    definition: "TEXT NOT NULL DEFAULT 'false'",
+  },
 ];
 
 export async function runMigrations(db: DB) {

@@ -11,6 +11,7 @@ export const lorebooks = sqliteTable("lorebooks", {
   scanDepth: integer("scan_depth").notNull().default(2),
   tokenBudget: integer("token_budget").notNull().default(2048),
   recursiveScanning: text("recursive_scanning").notNull().default("false"),
+  maxRecursionDepth: integer("max_recursion_depth").notNull().default(3),
   characterId: text("character_id"),
   chatId: text("chat_id"),
   enabled: text("enabled").notNull().default("true"),
@@ -67,6 +68,9 @@ export const lorebookEntries = sqliteTable("lorebook_entries", {
   activationConditions: text("activation_conditions").notNull().default("[]"),
   /** JSON schedule object or null */
   schedule: text("schedule"),
+
+  /** When true, this entry's content won't trigger further entries during recursive scanning */
+  preventRecursion: text("prevent_recursion").notNull().default("false"),
 
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

@@ -1349,3 +1349,18 @@ summary[class*="cursor-pointer"],
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
 }
+
+
+/* ─────────────────────────────────────────────
+   22. DISPLAY SIZE SCALING
+   ───────────────────────────────────────────── */
+/* Convert hardcoded pixel font sizes to rem so they scale with the Display Size setting.
+   rem is relative to the root font-size which App.tsx sets dynamically. */
+.text-\[10px\] { font-size: 0.625rem !important; }
+.text-\[11px\] { font-size: 0.6875rem !important; }
+.text-\[12px\] { font-size: 0.75rem !important; }
+
+/* Scale Lucide icons proportionally with display size */
+svg.lucide {
+  scale: var(--display-scale, 1);
+}

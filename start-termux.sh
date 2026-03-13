@@ -103,8 +103,12 @@ if [ -z "$BS3_DIR" ]; then
     exit 1
 fi
 
-if [ ! -f "$BS3_DIR/build/Release/better_sqlite3.node" ]; then
+if [ ! -f "$BS3_DIR/build/Release/better_sqlite3.node" ] || \
+   ! node -e "require('$BS3_DIR/build/Release/better_sqlite3.node')" 2>/dev/null; then
     mkdir -p "$BS3_DIR/build/Release"
+    rm -f "$BS3_DIR/build/Release/better_sqlite3.node"
+
+    NEED_SOURCE_BUILD=0
 
     # --- Try 1: Download prebuilt binary from GitHub releases ---
     PREBUILT_URL="https://github.com/SpicyMarinara/Marinara-Engine/releases/latest/download/better_sqlite3-android-arm64.node"
@@ -112,10 +116,22 @@ if [ ! -f "$BS3_DIR/build/Release/better_sqlite3.node" ]; then
     if curl -fSL --connect-timeout 15 --max-time 120 \
          -o "$BS3_DIR/build/Release/better_sqlite3.node" \
          "$PREBUILT_URL" 2>/dev/null; then
-        echo "  [OK] Prebuilt binary downloaded"
+        # Verify the binary actually loads with the current Node.js version
+        if node -e "require('$BS3_DIR/build/Release/better_sqlite3.node')" 2>/dev/null; then
+            echo "  [OK] Prebuilt binary downloaded and verified"
+        else
+            rm -f "$BS3_DIR/build/Release/better_sqlite3.node"
+            echo "  [WARN] Prebuilt binary is not compatible with Node.js $(node -v) (ABI mismatch)."
+            echo "         Falling back to compiling from source."
+            NEED_SOURCE_BUILD=1
+        fi
     else
         rm -f "$BS3_DIR/build/Release/better_sqlite3.node"
         echo "  [WARN] Prebuilt not available — compiling from source."
+        NEED_SOURCE_BUILD=1
+    fi
+
+    if [ "$NEED_SOURCE_BUILD" = "1" ]; then
         echo "         This takes 2-5 minutes. Please wait."
 
         # --- Try 2: Compile from source (needs build tools) ---

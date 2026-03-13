@@ -367,9 +367,9 @@ export function recursiveScan(
   const activatedIds = new Set(allActivated.map((a) => a.entry.id));
 
   for (let depth = 0; depth < maxDepth; depth++) {
-    // Build text from newly activated entries
+    // Build text from newly activated entries, excluding those with preventRecursion
     const newContent = allActivated
-      .filter((a) => !activatedIds.has(a.entry.id) || depth === 0)
+      .filter((a) => (!activatedIds.has(a.entry.id) || depth === 0) && !a.entry.preventRecursion)
       .map((a) => a.entry.content)
       .join("\n");
 

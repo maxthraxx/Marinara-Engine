@@ -23,6 +23,7 @@ import { encounterRoutes } from "./encounter.routes.js";
 import { fontsRoutes } from "./fonts.routes.js";
 import { galleryRoutes } from "./gallery.routes.js";
 import { spotifyAuthRoutes } from "./spotify-auth.routes.js";
+import { knowledgeSourcesRoutes } from "./knowledge-sources.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(chatsRoutes, { prefix: "/api/chats" });
@@ -46,4 +47,5 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(fontsRoutes, { prefix: "/api/fonts" });
   await app.register(galleryRoutes, { prefix: "/api/gallery" });
   await app.register(spotifyAuthRoutes, { prefix: "/api/spotify" });
+  await app.register(knowledgeSourcesRoutes, { prefix: "/api/knowledge-sources" });
 }

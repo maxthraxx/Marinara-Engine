@@ -463,6 +463,36 @@ function buildContextBlock(context: AgentContext, agentType: string): string {
     parts.push(`</agent_results>`);
   }
 
+  // Source material for knowledge-retrieval agent
+  if (context.memory._sourceMaterial) {
+    const material = context.memory._sourceMaterial as string;
+    parts.push(`\n<source_material>`);
+    parts.push(material);
+    parts.push(`</source_material>`);
+  }
+
+  // Chunk info for multi-pass knowledge-retrieval scanning
+  if (context.memory._chunkInfo) {
+    const info = context.memory._chunkInfo as { current: number; total: number };
+    parts.push(
+      `\n<chunk_info>Chunk ${info.current} of ${info.total} — extract relevant information from this chunk.</chunk_info>`,
+    );
+  }
+
+  // Previous chunk extractions for consolidation pass
+  if (context.memory._previousExtractions) {
+    const extractions = context.memory._previousExtractions as string[];
+    parts.push(`\n<previous_extractions>`);
+    parts.push(
+      `The following relevant excerpts were extracted from prior chunks of the same source material. Consolidate them into a single, coherent summary along with any new relevant information from the current chunk.`,
+    );
+    for (let i = 0; i < extractions.length; i++) {
+      parts.push(`\n--- Chunk ${i + 1} ---`);
+      parts.push(extractions[i]!);
+    }
+    parts.push(`</previous_extractions>`);
+  }
+
   return parts.join("\n");
 }
 
@@ -485,6 +515,7 @@ const AGENT_RESULT_TYPE_MAP: Record<string, AgentResultType> = {
   "chat-summary": "chat_summary",
   spotify: "spotify_control",
   editor: "text_rewrite",
+  "knowledge-retrieval": "context_injection",
 };
 
 /** Agents that return structured JSON. */

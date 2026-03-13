@@ -66,9 +66,22 @@ export async function processLorebooks(
     gameState: gameState ?? null,
   };
 
+  // Determine recursion settings from enabled lorebooks
+  const enabledBooks = await storage.list();
+  const activeBooks = enabledBooks.filter((b: { enabled: boolean }) => b.enabled);
+  const anyRecursive =
+    options?.enableRecursive || activeBooks.some((b: { recursiveScanning: boolean }) => b.recursiveScanning);
+  const maxRecursionDepth = activeBooks.reduce(
+    (max: number, b: { recursiveScanning: boolean; maxRecursionDepth?: number }) => {
+      if (!b.recursiveScanning) return max;
+      return Math.max(max, b.maxRecursionDepth ?? 3);
+    },
+    3,
+  );
+
   let activated: ActivatedEntry[];
-  if (options?.enableRecursive) {
-    activated = recursiveScan(messages, allEntries, scanOpts, 3);
+  if (anyRecursive) {
+    activated = recursiveScan(messages, allEntries, scanOpts, maxRecursionDepth);
   } else {
     activated = scanForActivatedEntries(messages, allEntries, scanOpts);
   }

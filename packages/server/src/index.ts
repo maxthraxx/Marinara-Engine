@@ -1,9 +1,22 @@
 // ──────────────────────────────────────────────
 // Server Entry Point
 // ──────────────────────────────────────────────
-import "dotenv/config";
-import { readFileSync } from "fs";
+import dotenv from "dotenv";
+import { existsSync, readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 import { buildApp } from "./app.js";
+
+// Load .env from monorepo root (handles `cd packages/server && node dist/index.js`)
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const monorepoRoot = resolve(__dirname, "../../..");
+const envPath = resolve(monorepoRoot, ".env");
+if (existsSync(envPath)) {
+  dotenv.config({ path: envPath });
+} else {
+  // Fallback: try CWD (for standalone usage)
+  dotenv.config();
+}
 
 const PORT = parseInt(process.env.PORT ?? "7860", 10);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -13,9 +26,12 @@ function loadTlsOptions() {
   const key = process.env.SSL_KEY;
   if (!cert || !key) return null;
   try {
+    // Resolve relative paths against the monorepo root (not CWD)
+    const certPath = resolve(monorepoRoot, cert);
+    const keyPath = resolve(monorepoRoot, key);
     return {
-      cert: readFileSync(cert),
-      key: readFileSync(key),
+      cert: readFileSync(certPath),
+      key: readFileSync(keyPath),
     };
   } catch (err) {
     throw new Error(

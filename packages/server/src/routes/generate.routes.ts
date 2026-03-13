@@ -34,6 +34,8 @@ import type { LLMToolDefinition, ChatMessage, LLMUsage } from "../services/llm/b
 import { executeToolCalls } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent } from "../services/agents/agent-pipeline.js";
 import { executeAgent } from "../services/agents/agent-executor.js";
+import { executeKnowledgeRetrieval } from "../services/agents/knowledge-retrieval.js";
+import { extractFileText, getSourceFilePath } from "./knowledge-sources.routes.js";
 import { gameStateSnapshots as gameStateSnapshotsTable } from "../db/schema/index.js";
 import { eq } from "drizzle-orm";
 import { PROVIDERS } from "@marinara-engine/shared";
@@ -644,6 +646,58 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       }
 
+      // If the knowledge-retrieval agent is enabled, load lorebook + file source material
+      const knowledgeRetrievalAgent = resolvedAgents.find((a) => a.type === "knowledge-retrieval");
+      if (knowledgeRetrievalAgent) {
+        const materialParts: string[] = [];
+
+        // Load lorebook entries
+        try {
+          const sourceIds = (knowledgeRetrievalAgent.settings.sourceLorebookIds as string[]) ?? [];
+          if (sourceIds.length > 0) {
+            const entries = await lorebooksStore.listEntriesByLorebooks(sourceIds);
+            const activeEntries = entries.filter((e: any) => e.enabled !== false);
+            if (activeEntries.length > 0) {
+              const formatted = activeEntries
+                .map((e: any) => {
+                  const header = e.name || e.keys?.join(", ") || "Entry";
+                  return `## ${header}\n${e.content}`;
+                })
+                .join("\n\n");
+              materialParts.push(formatted);
+            }
+          }
+        } catch {
+          /* non-critical */
+        }
+
+        // Load uploaded file sources
+        try {
+          const sourceFileIds = (knowledgeRetrievalAgent.settings.sourceFileIds as string[]) ?? [];
+          if (sourceFileIds.length > 0) {
+            for (const fileId of sourceFileIds) {
+              try {
+                const sourceInfo = await getSourceFilePath(fileId);
+                if (!sourceInfo) continue;
+                const { filePath, originalName } = sourceInfo;
+                const text = await extractFileText(filePath);
+                if (text.trim()) {
+                  materialParts.push(`## File: ${originalName}\n${text}`);
+                }
+              } catch {
+                /* skip unreadable or missing files */
+              }
+            }
+          }
+        } catch {
+          /* non-critical */
+        }
+
+        if (materialParts.length > 0) {
+          agentContext.memory._knowledgeRetrievalMaterial = materialParts.join("\n\n");
+        }
+      }
+
       // If the chat-summary agent is enabled, provide the previous summary
       const chatSummaryEnabled = enabledConfigs.some((c: any) => c.type === "chat-summary");
       if (chatSummaryEnabled && chatMeta.summary) {
@@ -683,14 +737,16 @@ export async function generateRoutes(app: FastifyInstance) {
       let contextInjections: string[] = [];
       // Static-injection agents don't need LLM calls — they inject prompt text directly
       const STATIC_INJECTION_AGENTS = new Set(["html"]);
+      const SEPARATE_INJECTION_AGENTS = new Set(["knowledge-retrieval"]);
+      const EXCLUDED_FROM_PIPELINE = new Set(["html", "knowledge-retrieval"]);
       const hasPreGenAgents = resolvedAgents.some(
-        (a) => a.phase === "pre_generation" && !STATIC_INJECTION_AGENTS.has(a.type),
+        (a) => a.phase === "pre_generation" && !EXCLUDED_FROM_PIPELINE.has(a.type),
       );
       if (hasPreGenAgents) {
         if (!input.regenerateMessageId) {
           // Fresh generation — run all pre-gen agents (excluding static-injection ones)
           reply.raw.write(`data: ${JSON.stringify({ type: "agent_start", data: { phase: "pre_generation" } })}\n\n`);
-          contextInjections = await pipeline.preGenerate((t) => !STATIC_INJECTION_AGENTS.has(t));
+          contextInjections = await pipeline.preGenerate((t) => !EXCLUDED_FROM_PIPELINE.has(t));
         } else {
           // Regeneration — try to reuse cached context injections from the original generation
           const regenMsg = await chats.getMessage(input.regenerateMessageId);
@@ -751,6 +807,62 @@ export async function generateRoutes(app: FastifyInstance) {
             const last = finalMessages[finalMessages.length - 1]!;
             finalMessages[finalMessages.length - 1] = { ...last, content: last.content + wrapped };
           }
+        }
+      }
+
+      // ────────────────────────────────────────
+      // Knowledge Retrieval agent (chunked RAG)
+      // ────────────────────────────────────────
+      // Runs separately from the pipeline because it may need multiple LLM
+      // passes to scan large lorebook content. On regenerations, reuses the
+      // cached contextInjections (which already include its result).
+      if (knowledgeRetrievalAgent && agentContext.memory._knowledgeRetrievalMaterial) {
+        if (!input.regenerateMessageId) {
+          reply.raw.write(
+            `data: ${JSON.stringify({ type: "agent_start", data: { phase: "pre_generation", agentType: "knowledge-retrieval" } })}\n\n`,
+          );
+          const krConfig = {
+            id: knowledgeRetrievalAgent.id,
+            type: knowledgeRetrievalAgent.type,
+            name: knowledgeRetrievalAgent.name,
+            phase: knowledgeRetrievalAgent.phase,
+            promptTemplate: knowledgeRetrievalAgent.promptTemplate,
+            connectionId: knowledgeRetrievalAgent.connectionId,
+            settings: knowledgeRetrievalAgent.settings,
+          };
+          const sourceMaterial = agentContext.memory._knowledgeRetrievalMaterial as string;
+          const krResult = await executeKnowledgeRetrieval(
+            krConfig,
+            agentContext,
+            knowledgeRetrievalAgent.provider,
+            knowledgeRetrievalAgent.model,
+            sourceMaterial,
+          );
+          sendAgentEvent(krResult);
+
+          if (krResult.success && krResult.data) {
+            const krText =
+              typeof krResult.data === "string" ? krResult.data : ((krResult.data as { text?: string })?.text ?? "");
+            if (krText) {
+              // Inject KR output into the prompt with its own tag
+              const krWrapped =
+                wrapFormat === "markdown"
+                  ? `\n\n## Knowledge Retrieval\n${krText}`
+                  : `\n\n<knowledge_retrieval>\n${krText}\n</knowledge_retrieval>`;
+              const lastUserIdx = findLastIndex(finalMessages, "user");
+              if (lastUserIdx >= 0) {
+                const target = finalMessages[lastUserIdx]!;
+                finalMessages[lastUserIdx] = { ...target, content: target.content + krWrapped };
+              } else {
+                const last = finalMessages[finalMessages.length - 1]!;
+                finalMessages[finalMessages.length - 1] = { ...last, content: last.content + krWrapped };
+              }
+              // Also add to contextInjections for caching (used on regen)
+              contextInjections.push(krText);
+            }
+          }
+        } else {
+          // Regeneration — KR data is already in cached contextInjections if present
         }
       }
 

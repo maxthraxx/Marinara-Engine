@@ -86,6 +86,7 @@ export function LorebookEditor() {
   const [formScanDepth, setFormScanDepth] = useState(2);
   const [formTokenBudget, setFormTokenBudget] = useState(2048);
   const [formRecursive, setFormRecursive] = useState(false);
+  const [formMaxRecursionDepth, setFormMaxRecursionDepth] = useState(3);
 
   // ── Form state for entry editor ──
   const [entryForm, setEntryForm] = useState<Partial<LorebookEntry> | null>(null);
@@ -100,6 +101,7 @@ export function LorebookEditor() {
     setFormScanDepth(lorebook.scanDepth);
     setFormTokenBudget(lorebook.tokenBudget);
     setFormRecursive(lorebook.recursiveScanning);
+    setFormMaxRecursionDepth(lorebook.maxRecursionDepth ?? 3);
     setDirty(false);
   }, [lorebook]);
 
@@ -143,6 +145,7 @@ export function LorebookEditor() {
         scanDepth: formScanDepth,
         tokenBudget: formTokenBudget,
         recursiveScanning: formRecursive,
+        maxRecursionDepth: formMaxRecursionDepth,
       });
       setDirty(false);
     } finally {
@@ -157,6 +160,7 @@ export function LorebookEditor() {
     formScanDepth,
     formTokenBudget,
     formRecursive,
+    formMaxRecursionDepth,
     updateLorebook,
   ]);
 
@@ -187,6 +191,7 @@ export function LorebookEditor() {
         delay: entryForm.delay,
         group: entryForm.group,
         tag: entryForm.tag,
+        preventRecursion: entryForm.preventRecursion,
       });
       setDirty(false);
     } finally {
@@ -358,6 +363,12 @@ export function LorebookEditor() {
                 label="Case Sensitive"
                 value={entryForm.caseSensitive ?? false}
                 onChange={(v) => setEntryForm((f) => (f ? { ...f, caseSensitive: v } : f))}
+              />
+              <ToggleButton
+                label="No Recursion"
+                value={entryForm.preventRecursion ?? false}
+                onChange={(v) => setEntryForm((f) => (f ? { ...f, preventRecursion: v } : f))}
+                tooltip="When enabled, this entry's content won't trigger additional entries during recursive scanning."
               />
             </div>
 
@@ -692,7 +703,7 @@ export function LorebookEditor() {
                     className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                   />
                 </div>
-                <div className="flex items-end">
+                <div className="flex items-end gap-2">
                   <div className="flex items-center justify-between rounded-xl bg-[var(--secondary)] px-3 py-2.5 ring-1 ring-[var(--border)]">
                     <span className="mr-2 text-xs">Recursive</span>
                     <button
@@ -708,6 +719,25 @@ export function LorebookEditor() {
                       )}
                     </button>
                   </div>
+                  {formRecursive && (
+                    <div>
+                      <label className="mb-1.5 flex items-center gap-1 text-xs font-medium">
+                        Max Depth{" "}
+                        <HelpTooltip text="Maximum number of recursive passes. Each pass scans activated entry content for additional keyword matches. Higher values find more connections but use more processing." />
+                      </label>
+                      <input
+                        type="number"
+                        value={formMaxRecursionDepth}
+                        onChange={(e) => {
+                          setFormMaxRecursionDepth(Math.max(1, Math.min(10, parseInt(e.target.value) || 3)));
+                          markDirty();
+                        }}
+                        min={1}
+                        max={10}
+                        className="w-20 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -875,10 +905,21 @@ function KeysEditor({ keys, onChange }: { keys: string[]; onChange: (keys: strin
   );
 }
 
-function ToggleButton({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+function ToggleButton({
+  label,
+  value,
+  onChange,
+  tooltip,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+  tooltip?: string;
+}) {
   return (
     <button
       onClick={() => onChange(!value)}
+      title={tooltip}
       className={cn(
         "flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-medium ring-1 transition-all",
         value

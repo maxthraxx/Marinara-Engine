@@ -23,6 +23,8 @@ export interface Lorebook {
   /** Max tokens allocated to this lorebook */
   tokenBudget: number;
   recursiveScanning: boolean;
+  /** Maximum recursion depth for recursive scanning (default 3) */
+  maxRecursionDepth: number;
   /** ID of the character this lorebook is linked to (character books) */
   characterId: string | null;
   /** ID of the chat this lorebook is scoped to (if any) */
@@ -84,6 +86,8 @@ export interface LorebookEntry {
   groupWeight: number | null;
 
   // ── Engine extensions (beyond ST) ──
+  /** When true, this entry's content won't trigger further entries during recursive scanning */
+  preventRecursion: boolean;
   /** Sub-category tag for the entry (e.g. "location", "item", "lore", "quest") */
   tag: string;
   /** Relationships to other entries: { entryId: relationshipType } */

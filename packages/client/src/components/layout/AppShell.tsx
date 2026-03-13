@@ -56,7 +56,7 @@ export function AppShell() {
       {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm md:hidden"
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -68,7 +68,7 @@ export function AppShell() {
           "flex-shrink-0 overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl transition-[width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
           sidebarOpen && "border-r border-[var(--sidebar-border)]/30",
           // Mobile: fixed overlay
-          "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-2xl",
+          "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:shadow-2xl",
           !sidebarOpen && "max-md:!w-0",
         )}
         style={{ width: sidebarOpen ? (isMobile ? "100vw" : sidebarWidth) : 0 }}

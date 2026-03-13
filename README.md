@@ -1,6 +1,6 @@
 # 🍝 Marinara Engine
 
-### Release 1.3.1
+### Release 1.3.2
 
 <h3 align="center"><b>Fun. Intuitive. Plug-And-Play.</b></h3>
 
@@ -66,29 +66,27 @@ Everything runs locally. No accounts, no cloud, no telemetry. Connect to any Ope
 
 ## Changelog
 
-### v1.3.1
+### v1.3.2
 
 **Added:**
-- Bulk import for regex scripts via JSON in the Agents panel.
-- Regex Scripts section moved to the top of the Agents tab for easier access.
+- **Knowledge Retrieval Agent** — A new pre-generation RAG agent that scans lorebook entries and uploaded files for relevant context. It uses chunked multi-pass extraction to handle large knowledge bases within a configurable token budget, injecting findings directly into the prompt.
+- **File Upload Knowledge Sources** — Upload documents (.txt, .md, .csv, .json, .xml, .html, .pdf) as knowledge sources for the Knowledge Retrieval agent. Files are stored locally and managed through the Agent Editor UI.
+- **Docker Support** — Added a multi-stage Dockerfile and .dockerignore for containerized deployment. Supports GHCR hosting with a single `docker run` command.
 
 **Changes:**
-- Import icons now use a downward-arrow-into-box icon; export icons use an upward-arrow-from-box icon for clearer visual distinction.
-- Mobile HUD widgets are now evenly distributed using flex layout with proper spacing from the toolbar menu.
-- Echo Chamber panel on mobile now dynamically positions below the HUD bar instead of using a hardcoded offset.
+- Knowledge Retrieval agent output is now injected with its own `<knowledge_retrieval>` XML tag instead of being merged into `<prose_guardian>`, giving models clearer context boundaries.
+- Agent table updated to 19 built-in agents (Knowledge Retrieval added).
 
 **Fixes:**
-- Fixed mobile world state widgets being too wide and overlapping action buttons.
-- Fixed Echo Chamber window overlaying HUD widgets on mobile.
-- Fixed desktop world state widgets being constrained to incorrect max-width.
-- Fixed mobile tracker widget overlapping/touching the three-dots toolbar menu button.
-- Fixed SQLite `IOERR_WRITE` errors caused by macOS iCloud `fileproviderd` interfering with WAL files (added `busy_timeout`, `.nosync` marker).
-- Fixed `getDB()` race condition where concurrent calls could create duplicate database connections.
-- Fixed `busy_timeout` PRAGMA missing from the `better-sqlite3` driver path.
-- Fixed regex script import not normalizing `placement` field type (array vs string).
-- Fixed CSS `@import` ordering violation in globals.css (custom rules appeared before `@import "tailwindcss"`).
-- Removed orphaned `.rpg-hud-actions` CSS selector.
-- Cleaned up inline styles and stale comments across components.
+- Fixed Knowledge Retrieval agent output never reaching the prompt on first generation (injection block ran before the agent executed).
+- Fixed race condition in knowledge-sources route where directory creation was fire-and-forget (async import not awaited).
+- Fixed knowledge-sources meta file reader using `require("fs")` in an ESM context — replaced with proper synchronous `readFileSync`.
+- Added path traversal guard to `extractFileText()` ensuring only files within the knowledge-sources directory are accessible.
+- Fixed home page content getting cut off on small viewports (replaced `justify-center` with `overflow-y-auto` + `my-auto` pattern).
+- Fixed send button not appearing after a failed generation (retry state).
+- Fixed tab/browser refresh causing a brief UI flicker.
+- Fixed mobile floating action buttons being hidden behind side panels (z-index).
+- Fixed send button design inconsistency on mobile.
 
 ---
 
@@ -110,7 +108,7 @@ Everything runs locally. No accounts, no cloud, no telemetry. Connect to any Ope
 - **Two Visual Themes** — Y2K Marinara theme and a faithful SillyTavern classic theme
 - **Light & Dark Mode**
 
-### AI Agent System (18 Built-In)
+### AI Agent System (19 Built-In)
 Agents are autonomous AI assistants that run alongside your chat, each handling a specific task:
 
 | Agent | What It Does |
@@ -133,6 +131,7 @@ Agents are autonomous AI assistants that run alongside your chat, each handling 
 | **Consistency Editor** | Edits responses for internal consistency |
 | **Spotify DJ** | Controls Spotify playback to match the scene mood |
 | **Chat Summarizer** | Generates condensed summaries of long conversations |
+| **Knowledge Retrieval** | Scans lorebooks and uploaded files for relevant context using chunked RAG |
 
 All agents are disabled by default — enable only the ones you want. You can also create **custom agents** with your own prompts and tool configurations.
 
@@ -158,7 +157,7 @@ All agents are disabled by default — enable only the ones you want. You can al
 ## Installation
 
 ## Windows EASIEST METHOD
-Download **[Marinara-Engine-Installer-1.3.1.exe](https://github.com/SpicyMarinara/Marinara-Engine/releases/download/v1.3.1/Marinara-Engine-Installer-1.3.1.exe)** from the [Releases](https://github.com/SpicyMarinara/Marinara-Engine/releases) page and run it. The installer checks for Node.js and Git, clones the repo, installs dependencies, builds the app, and creates a desktop shortcut.
+Download **[Marinara-Engine-Installer-1.3.2.exe](https://github.com/SpicyMarinara/Marinara-Engine/releases/download/v1.3.2/Marinara-Engine-Installer-1.3.2.exe)** from the [Releases](https://github.com/SpicyMarinara/Marinara-Engine/releases) page and run it. The installer checks for Node.js and Git, clones the repo, installs dependencies, builds the app, and creates a desktop shortcut.
 
 ---
 
@@ -218,12 +217,7 @@ chmod +x start.sh
 Install [Termux](https://f-droid.org/en/packages/com.termux/) from F-Droid (the Play Store version is outdated), then run:
 
 ```bash
-pkg update && pkg install -y git nodejs-lts
-npm install -g pnpm
-git clone https://github.com/SpicyMarinara/marinara-engine.git
-cd marinara-engine
-chmod +x start-termux.sh
-./start-termux.sh
+pkg update && pkg install -y git nodejs-lts && npm install -g pnpm && git clone https://github.com/SpicyMarinara/marinara-engine.git && cd marinara-engine && chmod +x start-termux.sh && ./start-termux.sh
 ```
 
 The Termux launcher handles everything automatically — it downloads a prebuilt native module, installs dependencies, builds the app, and starts the server at `http://localhost:7860`. First run takes a few minutes on mobile. After that, just run `./start-termux.sh` to start.
