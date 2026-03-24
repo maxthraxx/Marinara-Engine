@@ -29,7 +29,7 @@ export function AgentsPanel() {
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
 
-  // Handler for importing regex scripts from JSON
+  // Handler for importing regex scripts from JSON (supports ST format and native)
   const handleImportRegex = async (event: React.ChangeEvent<HTMLInputElement>) => {
     setImportError(null);
     setImportSuccess(null);
@@ -37,37 +37,50 @@ export function AgentsPanel() {
     if (!file) return;
     try {
       const text = await file.text();
-      const arr = JSON.parse(text);
-      if (!Array.isArray(arr)) throw new Error("JSON must be an array of regex scripts");
+      const parsed = JSON.parse(text);
+      // Accept a single object or an array
+      const arr = Array.isArray(parsed) ? parsed : [parsed];
+      if (arr.length === 0) throw new Error("No regex scripts found in file");
       let imported = 0;
       for (const obj of arr) {
-        // Only send known fields
-        const {
-          name,
-          enabled,
-          findRegex,
-          replaceString,
-          trimStrings,
-          placement,
-          flags,
-          promptOnly,
-          order,
-          minDepth,
-          maxDepth,
-        } = obj;
+        // Resolve name: ST uses scriptName, native uses name
+        const name = obj.name || obj.scriptName;
+        // ST wraps regex in /delimiters/flags — extract pattern and flags
+        let findRegex = obj.findRegex ?? "";
+        let flags = obj.flags ?? "gi";
+        const delimited = findRegex.match(/^\/(.+)\/([gimsuy]*)$/s);
+        if (delimited) {
+          findRegex = delimited[1];
+          flags = delimited[2] || "g";
+        }
         if (!name || !findRegex) continue;
+        // ST placement uses numbers: 1 = user_input, 2 = ai_output
+        const stPlacementMap: Record<number, string> = { 1: "user_input", 2: "ai_output" };
+        let placement: string[] = ["ai_output"];
+        if (Array.isArray(obj.placement)) {
+          const mapped = obj.placement
+            .map((p: unknown) => (typeof p === "number" ? stPlacementMap[p] : p))
+            .filter((p: unknown): p is string => p === "ai_output" || p === "user_input");
+          if (mapped.length > 0) placement = mapped;
+        }
+        // ST uses disabled (inverted), native uses enabled
+        let enabled = true;
+        if (typeof obj.enabled === "boolean") enabled = obj.enabled;
+        else if (typeof obj.enabled === "string") enabled = obj.enabled !== "false";
+        else if (typeof obj.disabled === "boolean") enabled = !obj.disabled;
+
         await createRegexScript.mutateAsync({
           name,
-          enabled: enabled ?? "true",
+          enabled: String(enabled),
           findRegex,
-          replaceString: replaceString ?? "",
-          trimStrings: trimStrings ?? "",
-          placement: typeof placement === "string" ? placement : JSON.stringify(placement ?? ["ai_output"]),
-          flags: flags ?? "g",
-          promptOnly: promptOnly ?? "false",
-          order: order ?? 0,
-          minDepth: minDepth ?? null,
-          maxDepth: maxDepth ?? null,
+          replaceString: obj.replaceString ?? "",
+          trimStrings: JSON.stringify(obj.trimStrings ?? []),
+          placement: JSON.stringify(placement),
+          flags,
+          promptOnly: String(obj.promptOnly ?? false),
+          order: obj.order ?? 0,
+          minDepth: obj.minDepth ?? null,
+          maxDepth: obj.maxDepth ?? null,
         });
         imported++;
       }
