@@ -510,7 +510,7 @@ export function ChatSettingsDrawer({ chat, open, onClose }: ChatSettingsDrawerPr
           >
             {/* Currently selected persona */}
             {chat.personaId ? (
-              <div className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-2.5 py-2 ring-1 ring-[var(--primary)]/30">
+              <div className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-2.5 py-2">
                 {(() => {
                   const p = personas.find((p) => p.id === chat.personaId);
                   return p ? (
@@ -578,7 +578,7 @@ export function ChatSettingsDrawer({ chat, open, onClose }: ChatSettingsDrawerPr
                   }}
                   className={cn(
                     "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]",
-                    !chat.personaId && "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30",
+                    !chat.personaId && "bg-[var(--primary)]/10",
                   )}
                 >
                   <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--muted-foreground)]">
@@ -602,7 +602,7 @@ export function ChatSettingsDrawer({ chat, open, onClose }: ChatSettingsDrawerPr
                       }}
                       className={cn(
                         "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]",
-                        chat.personaId === p.id && "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30",
+                        chat.personaId === p.id && "bg-[var(--primary)]/10",
                       )}
                     >
                       {p.avatarPath ? (
