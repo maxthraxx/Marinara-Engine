@@ -2,7 +2,7 @@
 // Routes: Character Sprite Upload, List & Serving
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { existsSync, mkdirSync, createReadStream, readdirSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, createReadStream, readdirSync, unlinkSync, statSync } from "fs";
 import { writeFile, mkdir, readdir, unlink } from "fs/promises";
 import { join, extname } from "path";
 import { DATA_DIR } from "../utils/data-dir.js";
@@ -32,10 +32,11 @@ export async function spritesRoutes(app: FastifyInstance) {
         .map((f) => {
           const ext = extname(f);
           const expression = f.slice(0, -ext.length);
+          const mtime = statSync(join(dir, f)).mtimeMs;
           return {
             expression,
             filename: f,
-            url: `/api/sprites/${characterId}/file/${encodeURIComponent(f)}`,
+            url: `/api/sprites/${characterId}/file/${encodeURIComponent(f)}?v=${Math.floor(mtime)}`,
           };
         });
       return sprites;
@@ -89,10 +90,11 @@ export async function spritesRoutes(app: FastifyInstance) {
     const filepath = join(dir, filename);
     await writeFile(filepath, Buffer.from(base64, "base64"));
 
+    const mtime = statSync(filepath).mtimeMs;
     return {
       expression,
       filename,
-      url: `/api/sprites/${characterId}/file/${encodeURIComponent(filename)}`,
+      url: `/api/sprites/${characterId}/file/${encodeURIComponent(filename)}?v=${Math.floor(mtime)}`,
     };
   });
 
