@@ -308,6 +308,7 @@ function extractFirstFileFromZip(zip: Uint8Array): Uint8Array | null {
     }
   }
   if (eocdOffset === -1) return null;
+  if (eocdOffset + 19 >= zip.length) return null;
 
   // Read first central directory entry offset
   const cdOffset = zip[eocdOffset + 16]! | (zip[eocdOffset + 17]! << 8) |
