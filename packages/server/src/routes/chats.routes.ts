@@ -160,13 +160,15 @@ export async function chatsRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  // Update message extra (partial merge)
+  // Update message extra (partial merge) — also syncs to the active swipe
   app.patch<{ Params: { chatId: string; messageId: string } }>(
     "/:chatId/messages/:messageId/extra",
     async (req, reply) => {
       const partial = req.body as Record<string, unknown>;
       const updated = await storage.updateMessageExtra(req.params.messageId, partial);
       if (!updated) return reply.status(404).send({ error: "Message not found" });
+      // Keep swipe extra in sync so per-swipe data (like spriteExpressions) persists
+      await storage.updateSwipeExtra(req.params.messageId, updated.activeSwipeIndex, partial);
       return updated;
     },
   );

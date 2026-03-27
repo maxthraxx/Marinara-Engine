@@ -95,6 +95,8 @@ export interface MessageExtra {
   isConversationStart?: boolean;
   /** Model's reasoning/thinking content (if available) */
   thinking?: string | null;
+  /** Per-swipe sprite expressions from the Expression Engine agent */
+  spriteExpressions?: Record<string, string> | null;
 }
 
 /** Metadata about how a message was generated. */

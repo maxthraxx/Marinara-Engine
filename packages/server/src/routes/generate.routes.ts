@@ -3122,6 +3122,16 @@ export async function generateRoutes(app: FastifyInstance) {
                 return true;
               });
             }
+            // Persist validated expressions onto the message/swipe extra so they survive page refresh
+            // and swipe switching. The chat-level metadata is also updated for backward compat.
+            if (spriteData.expressions && spriteData.expressions.length > 0) {
+              const exprMap: Record<string, string> = {};
+              for (const e of spriteData.expressions) exprMap[e.characterId] = e.expression;
+              try {
+                await chats.updateMessageExtra(messageId, { spriteExpressions: exprMap });
+                await chats.updateSwipeExtra(messageId, targetSwipeIndex, { spriteExpressions: exprMap });
+              } catch { /* non-critical */ }
+            }
           }
 
           // Persist game state snapshots from world-state agent

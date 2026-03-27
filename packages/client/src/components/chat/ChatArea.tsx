@@ -316,10 +316,23 @@ export function ChatArea() {
   }, [chat]);
   const spriteCharacterIds: string[] = chatMeta.spriteCharacterIds ?? [];
   const spritePosition: "left" | "right" = chatMeta.spritePosition ?? "left";
-  const spriteExpressions: Record<string, string> = useMemo(
-    () => chatMeta.spriteExpressions ?? {},
-    [chatMeta.spriteExpressions],
-  );
+  // Prefer per-swipe expressions from the last assistant message's extra (survives swipe switching),
+  // falling back to chat-level metadata for backward compatibility.
+  const spriteExpressions: Record<string, string> = useMemo(() => {
+    if (messages?.length) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i]!;
+        if (m.role === "assistant") {
+          const extra = typeof m.extra === "string" ? JSON.parse(m.extra) : (m.extra ?? {});
+          if (extra.spriteExpressions && Object.keys(extra.spriteExpressions).length > 0) {
+            return extra.spriteExpressions as Record<string, string>;
+          }
+          break; // only check the last assistant message
+        }
+      }
+    }
+    return chatMeta.spriteExpressions ?? {};
+  }, [messages, chatMeta.spriteExpressions]);
   const groupChatMode: string | undefined = chatCharIds.length > 1 ? (chatMeta.groupChatMode ?? "merged") : undefined;
 
   const streamingCharacterId = useChatStore((s) => s.streamingCharacterId);
@@ -400,10 +413,23 @@ export function ChatArea() {
       if (expressionSaveTimer.current) clearTimeout(expressionSaveTimer.current);
       expressionSaveTimer.current = setTimeout(() => {
         updateMeta.mutate({ id: chat!.id, spriteExpressions: pendingExpressions.current });
+        // Also persist to the last assistant message's extra so it's per-swipe
+        if (messages?.length) {
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const m = messages[i]!;
+            if (m.role === "assistant") {
+              updateMessageExtra.mutate({
+                messageId: m.id,
+                extra: { spriteExpressions: pendingExpressions.current },
+              });
+              break;
+            }
+          }
+        }
       }, 1000);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chat?.id, updateMeta],
+    [chat?.id, updateMeta, messages, updateMessageExtra],
   );
 
   const handleToggleSpritePosition = useCallback(() => {
