@@ -4,7 +4,7 @@
 import { useState, useRef, useCallback, useEffect, memo } from "react";
 import { Send, Paperclip, StopCircle, X } from "lucide-react";
 import { toast } from "sonner";
-import { useQueryClient, useQuery, type InfiniteData } from "@tanstack/react-query";
+import { useQueryClient, useQuery, skipToken, type InfiniteData } from "@tanstack/react-query";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { useGenerate } from "../../hooks/use-generate";
@@ -104,14 +104,15 @@ export const ChatInput = memo(function ChatInput({ mode = "conversation", charac
 
   // Reactively derive the last message's role from the query cache.
   // pages[0] is the newest page; its last element is the most recent message.
-  const lastMessageRole = useQuery({
-    queryKey: chatKeys.messages(activeChatId ?? ""),
-    enabled: false, // Don't fetch — just subscribe to existing cache
-    select: (data: InfiniteData<Message[]>) => {
-      const firstPage = data?.pages?.[0];
-      return firstPage?.[firstPage.length - 1]?.role ?? null;
-    },
-  }).data ?? null;
+  const lastMessageRole =
+    useQuery({
+      queryKey: chatKeys.messages(activeChatId ?? ""),
+      queryFn: skipToken,
+      select: (data: InfiniteData<Message[]>) => {
+        const firstPage = data?.pages?.[0];
+        return firstPage?.[firstPage.length - 1]?.role ?? null;
+      },
+    }).data ?? null;
 
   const canRetry = !isStreaming && lastMessageRole === "user";
   const canContinue = !isStreaming && mode === "roleplay" && lastMessageRole === "assistant";
@@ -139,7 +140,6 @@ export const ChatInput = memo(function ChatInput({ mode = "conversation", charac
   const removeAttachment = (idx: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
   };
-
 
   // Get the current textarea value (always from the DOM directly)
   const getValue = () => textareaRef.current?.value ?? "";
@@ -333,7 +333,7 @@ export const ChatInput = memo(function ChatInput({ mode = "conversation", charac
   const _isRP = mode === "roleplay";
 
   return (
-    <div className="mari-chat-input chat-input-container p-3">
+    <div className="mari-chat-input chat-input-container px-3 pb-3">
       {/* Slash command autocomplete popup */}
       {completions.length > 0 && (
         <div className="mb-2 overflow-hidden rounded-xl border border-white/10 bg-black/80 shadow-xl backdrop-blur-xl">
@@ -351,7 +351,9 @@ export const ChatInput = memo(function ChatInput({ mode = "conversation", charac
               }}
               className={cn(
                 "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors",
-                i === selectedCompletion ? "bg-foreground/10 text-foreground" : "text-foreground/70 hover:bg-foreground/5",
+                i === selectedCompletion
+                  ? "bg-foreground/10 text-foreground"
+                  : "text-foreground/70 hover:bg-foreground/5",
               )}
             >
               <span className="font-mono font-semibold text-blue-400">/{cmd.name}</span>
@@ -401,7 +403,7 @@ export const ChatInput = memo(function ChatInput({ mode = "conversation", charac
       {/* Main input container */}
       <div
         className={cn(
-          "mari-chat-input-box relative flex items-center gap-2 rounded-2xl border-2 px-4 py-2.5 transition-all duration-200",
+          "mari-chat-input-box relative flex items-center gap-1.5 rounded-2xl border-2 px-2.5 py-2.5 transition-all duration-200 sm:gap-2 sm:px-4",
           "bg-black/40",
           hasInput || attachments.length ? "border-blue-400/30 shadow-md shadow-blue-500/5" : "border-foreground/25",
         )}
@@ -439,7 +441,7 @@ export const ChatInput = memo(function ChatInput({ mode = "conversation", charac
           rows={1}
           spellCheck
           autoCorrect="on"
-          className="mari-chat-input-textarea max-h-[12.5rem] flex-1 resize-none bg-transparent py-0 text-sm leading-normal text-[#c3c2c2] placeholder:text-foreground/30 outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          className="mari-chat-input-textarea max-h-[12.5rem] min-w-0 flex-1 resize-none bg-transparent py-0 text-sm leading-normal text-[#c3c2c2] placeholder:text-foreground/30 outline-none disabled:cursor-not-allowed disabled:opacity-40"
         />
 
         {/* Send / Stop button */}
@@ -447,7 +449,7 @@ export const ChatInput = memo(function ChatInput({ mode = "conversation", charac
           onClick={isStreaming ? () => useChatStore.getState().stopGeneration() : handleSend}
           disabled={(!hasInput && !attachments.length && !isStreaming && !canRetry && !canContinue) || !activeChatId}
           className={cn(
-            "mari-chat-send-btn flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200",
+            "mari-chat-send-btn flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200",
             isStreaming
               ? "text-foreground hover:opacity-80"
               : (hasInput || attachments.length || canRetry || canContinue) && activeChatId

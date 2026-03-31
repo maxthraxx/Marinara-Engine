@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useState, useCallback, useRef, memo, useMemo, type ReactNode } from "react";
 import { Pencil, Trash2, Copy, RefreshCw, Eye, Brain, X, User, Languages } from "lucide-react";
-import { cn } from "../../lib/utils";
+import { cn, copyToClipboard } from "../../lib/utils";
 import type { CharacterMap } from "./ChatArea";
 import { useTranslate } from "../../hooks/use-translate";
 
@@ -318,7 +318,7 @@ export const ConversationMessage = memo(function ConversationMessage({
 
   // Actions
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(message.content);
+    copyToClipboard(message.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }, [message.content]);
@@ -387,7 +387,9 @@ export const ConversationMessage = memo(function ConversationMessage({
               aria-label={isSelected ? "Deselect message" : "Select message"}
               className={cn(
                 "h-5 w-5 rounded border-2 flex items-center justify-center transition-colors cursor-pointer",
-                isSelected ? "border-[var(--destructive)] bg-[var(--destructive)]" : "border-[var(--muted-foreground)]/40 bg-[var(--secondary)]",
+                isSelected
+                  ? "border-[var(--destructive)] bg-[var(--destructive)]"
+                  : "border-[var(--muted-foreground)]/40 bg-[var(--secondary)]",
               )}
             >
               {isSelected && <span className="text-white text-xs font-bold">✓</span>}
@@ -549,10 +551,14 @@ export const ConversationMessage = memo(function ConversationMessage({
       {/* Multi-select checkbox */}
       {multiSelectMode && (
         <div className="flex items-center flex-shrink-0">
-          <div className={cn(
-            "h-5 w-5 rounded border-2 flex items-center justify-center transition-colors cursor-pointer",
-            isSelected ? "border-[var(--destructive)] bg-[var(--destructive)]" : "border-[var(--muted-foreground)]/40 bg-[var(--secondary)]",
-          )}>
+          <div
+            className={cn(
+              "h-5 w-5 rounded border-2 flex items-center justify-center transition-colors cursor-pointer",
+              isSelected
+                ? "border-[var(--destructive)] bg-[var(--destructive)]"
+                : "border-[var(--muted-foreground)]/40 bg-[var(--secondary)]",
+            )}
+          >
             {isSelected && <span className="text-white text-xs font-bold">✓</span>}
           </div>
         </div>
@@ -618,7 +624,10 @@ export const ConversationMessage = memo(function ConversationMessage({
             />
             <div className="flex items-center gap-2 text-[0.6875rem] text-[var(--muted-foreground)]">
               backspace (empty) to{" "}
-              <button onClick={() => setEditing(false)} className="text-foreground/70 hover:underline hover:text-foreground">
+              <button
+                onClick={() => setEditing(false)}
+                className="text-foreground/70 hover:underline hover:text-foreground"
+              >
                 cancel
               </button>{" "}
               · enter to{" "}
@@ -775,7 +784,10 @@ function MsgAction({
         onClick();
       }}
       title={title}
-      className={cn("rounded p-1 text-foreground/70 transition-colors hover:bg-foreground/20 hover:text-foreground", className)}
+      className={cn(
+        "rounded p-1 text-foreground/70 transition-colors hover:bg-foreground/20 hover:text-foreground",
+        className,
+      )}
     >
       {icon}
     </button>

@@ -1,7 +1,18 @@
 // ──────────────────────────────────────────────
-// Schema: Chats & Messages
+// Schema: Chats, Messages & Folders
 // ──────────────────────────────────────────────
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+
+export const chatFolders = sqliteTable("chat_folders", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  mode: text("mode", { enum: ["conversation", "roleplay", "visual_novel"] }).notNull(),
+  color: text("color").notNull().default(""),
+  sortOrder: integer("sort_order").notNull().default(0),
+  collapsed: text("collapsed").notNull().default("false"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
 
 export const chats = sqliteTable("chats", {
   id: text("id").primaryKey(),
@@ -18,6 +29,10 @@ export const chats = sqliteTable("chats", {
   metadata: text("metadata").notNull().default("{}"),
   /** ID of a linked chat (conversation ↔ roleplay bidirectional link) */
   connectedChatId: text("connected_chat_id"),
+  /** Folder this chat belongs to (null = root/unfiled) */
+  folderId: text("folder_id"),
+  /** Manual sort order within a folder (lower = higher). 0 = use default updatedAt sort. */
+  sortOrder: integer("sort_order").notNull().default(0),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

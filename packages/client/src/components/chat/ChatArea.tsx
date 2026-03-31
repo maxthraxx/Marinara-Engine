@@ -57,7 +57,9 @@ import {
   X,
   ArrowRightLeft,
   Trash2,
+  PenLine,
 } from "lucide-react";
+import type { Message } from "@marinara-engine/shared";
 import { useUIStore } from "../../stores/ui.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { cn } from "../../lib/utils";
@@ -160,13 +162,78 @@ function CrossfadeBackground({ url, className }: { url: string | null; className
   );
 }
 
+/**
+ * Self-contained streaming indicator — subscribes to the hot `streamBuffer`
+ * selector so ChatArea itself doesn't re-render on every token.
+ */
+function StreamingIndicator({
+  activeChatId,
+  chatCharIds,
+  characterMap,
+  personaInfo,
+  chatMode,
+  groupChatMode,
+}: {
+  activeChatId: string;
+  chatCharIds: string[];
+  characterMap: CharacterMap;
+  personaInfo?: { name?: string; avatarUrl?: string; nameColor?: string; dialogueColor?: string; boxColor?: string };
+  chatMode: string;
+  groupChatMode?: string;
+}) {
+  const streamBuffer = useChatStore((s) => s.streamBuffer);
+  const generationPhase = useChatStore((s) => s.generationPhase);
+  const streamingCharacterId = useChatStore((s) => s.streamingCharacterId);
+
+  return (
+    <div className="animate-message-in">
+      {!streamBuffer && generationPhase && (
+        <div className="flex items-center gap-2 px-[12%] max-md:px-4 py-2 text-xs text-[var(--muted-foreground)] italic">
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--muted-foreground)]" />
+          {generationPhase}
+        </div>
+      )}
+      <ChatMessage
+        message={{
+          id: "__streaming__",
+          chatId: activeChatId,
+          role: "assistant",
+          characterId: streamingCharacterId ?? chatCharIds[0] ?? null,
+          content: streamBuffer || "",
+          activeSwipeIndex: 0,
+          extra: { displayText: null, isGenerated: true, tokenCount: 0, generationInfo: null },
+          createdAt: new Date().toISOString(),
+        }}
+        isStreaming
+        characterMap={characterMap}
+        personaInfo={personaInfo}
+        chatMode={chatMode}
+        groupChatMode={groupChatMode}
+        chatCharacterIds={chatCharIds}
+      />
+    </div>
+  );
+}
+
+/**
+ * Wrapper that subscribes to `streamBuffer` only for the message being
+ * regenerated, keeping the rest of the message list re-render-free.
+ */
+function RegeneratingMessageContent({
+  msg,
+  ...rest
+}: {
+  msg: Message & { swipes?: Array<{ id: string; content: string }> };
+} & Omit<React.ComponentProps<typeof ChatMessage>, "message" | "isStreaming">) {
+  const streamBuffer = useChatStore((s) => s.streamBuffer);
+  return <ChatMessage message={{ ...msg, content: streamBuffer || "" }} isStreaming {...rest} />;
+}
+
 export function ChatArea() {
   const activeChatId = useChatStore((s) => s.activeChatId);
-  const setActiveChat = useChatStore((s) => s.setActiveChat);
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreamingGlobal = useChatStore((s) => s.isStreaming);
   const isStreaming = isStreamingGlobal && streamingChatId === activeChatId;
-  const streamBuffer = useChatStore((s) => s.streamBuffer);
   const regenerateMessageId = useChatStore((s) => s.regenerateMessageId);
   const chatBackground = useUIStore((s) => s.chatBackground);
   const weatherEffects = useUIStore((s) => s.weatherEffects);
@@ -214,9 +281,6 @@ export function ChatArea() {
   const failedAgentTypes = useAgentStore((s) => s.failedAgentTypes);
   const agentProcessing = useAgentStore((s) => s.isProcessing);
 
-  const setShouldOpenSettings = useChatStore((s) => s.setShouldOpenSettings);
-  const setShouldOpenWizard = useChatStore((s) => s.setShouldOpenWizard);
-
   const handleQuickStart = useCallback(
     (mode: "conversation" | "roleplay") => {
       const label = mode === "conversation" ? "Conversation" : "Roleplay";
@@ -224,14 +288,14 @@ export function ChatArea() {
         { name: `New ${label}`, mode, characterIds: [] },
         {
           onSuccess: (chat) => {
-            setActiveChatId(chat.id);
-            setShouldOpenSettings(true);
-            setShouldOpenWizard(true);
+            useChatStore.getState().setActiveChatId(chat.id);
+            useChatStore.getState().setShouldOpenSettings(true);
+            useChatStore.getState().setShouldOpenWizard(true);
           },
         },
       );
     },
-    [createChat, setActiveChatId, setShouldOpenSettings, setShouldOpenWizard],
+    [createChat],
   );
 
   // Build character lookup map
@@ -344,7 +408,6 @@ export function ChatArea() {
   }, [messages, chatMeta.spriteExpressions]);
   const groupChatMode: string | undefined = chatCharIds.length > 1 ? (chatMeta.groupChatMode ?? "merged") : undefined;
 
-  const streamingCharacterId = useChatStore((s) => s.streamingCharacterId);
   const updateMeta = useUpdateChatMetadata();
 
   // Sync translation config from chat metadata to the translation store
@@ -368,13 +431,12 @@ export function ChatArea() {
   ]);
 
   // Restore per-chat background from metadata when switching chats.
-  // If the new chat has a saved background, apply it; otherwise clear it.
+  // If the new chat has a saved background, apply it; otherwise keep the current
+  // background so newly-created chats don't flash to black.
   useEffect(() => {
     const bg = chatMeta.background as string | undefined;
     if (bg) {
       useUIStore.getState().setChatBackground(`/api/backgrounds/file/${encodeURIComponent(bg)}`);
-    } else {
-      useUIStore.getState().setChatBackground(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat?.id]);
@@ -460,12 +522,9 @@ export function ChatArea() {
   const combatAgentEnabled = enabledAgentTypes.has("combat");
   const expressionAgentEnabled = enabledAgentTypes.has("expression");
 
-  const handleDelete = useCallback(
-    (messageId: string) => {
-      setDeleteDialogMessageId(messageId);
-    },
-    [],
-  );
+  const handleDelete = useCallback((messageId: string) => {
+    setDeleteDialogMessageId(messageId);
+  }, []);
 
   const handleDeleteConfirm = useCallback(() => {
     if (deleteDialogMessageId) {
@@ -575,12 +634,12 @@ export function ChatArea() {
         { chatId: activeChatId, upToMessageId: messageId },
         {
           onSuccess: (newChat) => {
-            if (newChat) setActiveChatId(newChat.id);
+            if (newChat) useChatStore.getState().setActiveChatId(newChat.id);
           },
         },
       );
     },
-    [activeChatId, branchChat, setActiveChatId],
+    [activeChatId, branchChat],
   );
 
   // Peek prompt state
@@ -620,8 +679,8 @@ export function ChatArea() {
   }, [messages]);
 
   useEffect(() => {
-    if (chat) setActiveChat(chat);
-  }, [chat, setActiveChat]);
+    if (chat) useChatStore.getState().setActiveChat(chat);
+  }, [chat]);
 
   // Reset stagger animation flag when switching chats
   useEffect(() => {
@@ -639,9 +698,9 @@ export function ChatArea() {
       } else {
         setSettingsOpen(true);
       }
-      setShouldOpenSettings(false);
+      useChatStore.getState().setShouldOpenSettings(false);
     }
-  }, [shouldOpenSettings, shouldOpenWizard, activeChatId, setShouldOpenSettings]);
+  }, [shouldOpenSettings, shouldOpenWizard, activeChatId]);
 
   // Auto-scroll on new messages / streaming (but not on "load more")
   // Only scroll if user is already near the bottom (within 150px).
@@ -702,7 +761,22 @@ export function ChatArea() {
     if (isOptimistic || (isNearBottomRef.current && !userScrolledAwayRef.current)) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [newestMsgId, newestMsgSwipeIndex, streamBuffer, isStreaming, isOptimistic]);
+  }, [newestMsgId, newestMsgSwipeIndex, isStreaming, isOptimistic]);
+
+  // Auto-scroll on streamBuffer changes without causing ChatArea re-render.
+  // Uses a store subscription so the hot per-token updates bypass React.
+  useEffect(() => {
+    let prev = useChatStore.getState().streamBuffer;
+    const unsub = useChatStore.subscribe((state) => {
+      if (state.streamBuffer !== prev) {
+        prev = state.streamBuffer;
+        if (!isLoadingMoreRef.current && isNearBottomRef.current && !userScrolledAwayRef.current) {
+          messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }
+      }
+    });
+    return unsub;
+  }, []);
 
   // Preserve scroll position when older messages are prepended
   const pageCount = msgData?.pages.length ?? 0;
@@ -726,8 +800,11 @@ export function ChatArea() {
   // ═══════════════════════════════════════════════
   if (!activeChatId) {
     return (
-      <div data-component="ChatArea.EmptyState" className="flex flex-1 flex-col items-center overflow-y-auto p-8">
-        <div className="flex flex-col items-center gap-6 my-auto py-4">
+      <div
+        data-component="ChatArea.EmptyState"
+        className="flex flex-1 flex-col items-center overflow-y-auto p-4 sm:p-8"
+      >
+        <div className="flex w-full max-w-md flex-col items-center gap-6 my-auto py-4">
           {/* Central hero */}
           <div className="relative">
             <div className="animate-pulse-ring bunny-glow flex h-20 w-20 items-center justify-center rounded-2xl shadow-xl shadow-orange-500/20 overflow-hidden">
@@ -742,7 +819,7 @@ export function ChatArea() {
             </p>
           </div>
 
-          <div className="stagger-children flex gap-3">
+          <div className="stagger-children flex flex-wrap justify-center gap-3">
             <QuickStartCard
               icon={<MessageSquare size="1.125rem" />}
               label="Conversation"
@@ -833,9 +910,9 @@ export function ChatArea() {
 
             {/* Special thanks */}
             <p className="mt-1 max-w-xs text-center text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]/40">
-              Special thanks to Coxde, JorgeLTE, Seele The Seal King, Loungemeister, Kale, Tabris, GREGOR OVECH, Coins, Tacoman, Jorge, Promansis, Kitsumiro, Sheep, Pod042,
-              Prolix, PlutoMayhem, Mezzeh, Kuc0, Exalted, Yang Best Girl, MidnightSleeper, Geechan, TheLonelyDevil,
-              Artus, and you!
+              Special thanks to Coxde, JorgeLTE, Seele The Seal King, Loungemeister, Kale, Tabris, GREGOR OVECH, Coins,
+              Tacoman, Jorge, Promansis, Kitsumiro, Sheep, Pod042, Prolix, PlutoMayhem, Mezzeh, Kuc0, Exalted, Yang Best
+              Girl, MidnightSleeper, Geechan, TheLonelyDevil, Artus, and you!
             </p>
 
             {/* Restart tutorial */}
@@ -941,8 +1018,14 @@ export function ChatArea() {
 
         {/* Delete confirmation dialog */}
         {deleteDialogMessageId && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setDeleteDialogMessageId(null)}>
-            <div className="mx-4 w-full max-w-xs rounded-xl bg-[var(--card)] p-5 shadow-2xl ring-1 ring-[var(--border)]" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+            onClick={() => setDeleteDialogMessageId(null)}
+          >
+            <div
+              className="mx-4 w-full max-w-xs rounded-xl bg-[var(--card)] p-5 shadow-2xl ring-1 ring-[var(--border)]"
+              onClick={(e) => e.stopPropagation()}
+            >
               <p className="mb-4 text-sm font-semibold text-center">How to proceed?</p>
               <div className="flex flex-col gap-2">
                 <button
@@ -1049,6 +1132,7 @@ export function ChatArea() {
                   <ToolbarMenu>
                     <SummaryButton chatId={chat?.id ?? null} summary={chatMeta.summary ?? null} />
                     <WorldInfoButton chatId={chat?.id ?? null} />
+                    <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
                     <RpToolbarButton
                       icon={<FolderOpen size="0.875rem" />}
                       title="Manage Chat Files"
@@ -1101,6 +1185,7 @@ export function ChatArea() {
                     <ToolbarMenu>
                       <SummaryButton chatId={chat?.id ?? null} summary={chatMeta.summary ?? null} />
                       <WorldInfoButton chatId={chat?.id ?? null} />
+                      <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
                       <RpToolbarButton
                         icon={<FolderOpen size="0.875rem" />}
                         title="Manage Chat Files"
@@ -1147,6 +1232,7 @@ export function ChatArea() {
                     <ToolbarMenu>
                       <SummaryButton chatId={chat?.id ?? null} summary={chatMeta.summary ?? null} />
                       <WorldInfoButton chatId={chat?.id ?? null} />
+                      <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
                       <RpToolbarButton
                         icon={<FolderOpen size="0.875rem" />}
                         title="Manage Chat Files"
@@ -1224,7 +1310,6 @@ export function ChatArea() {
                   if (messages?.length) hasAnimatedRef.current = true;
                   return messages?.map((msg, i) => {
                     const isRegenerating = isStreaming && regenerateMessageId === msg.id;
-                    const displayMsg = isRegenerating ? { ...msg, content: streamBuffer || "" } : msg;
                     return (
                       <div
                         key={msg.id}
@@ -1235,58 +1320,70 @@ export function ChatArea() {
                             : undefined
                         }
                       >
-                        <ChatMessage
-                          message={displayMsg}
-                          isStreaming={isRegenerating}
-                          onDelete={handleDelete}
-                          onRegenerate={handleRegenerate}
-                          onEdit={handleEdit}
-                          onSetActiveSwipe={handleSetActiveSwipe}
-                          onToggleConversationStart={handleToggleConversationStart}
-                          onPeekPrompt={handlePeekPrompt}
-                          onBranch={handleBranch}
-                          isLastAssistantMessage={msg.id === lastAssistantMessageId}
-                          characterMap={characterMap}
-                          personaInfo={personaInfo}
-                          chatMode={chatMode}
-                          messageDepth={messages ? messages.length - 1 - i : undefined}
-                          isGrouped={isGrouped(i)}
-                          groupChatMode={groupChatMode}
-                          chatCharacterIds={chatCharIds}
-                          multiSelectMode={multiSelectMode}
-                          isSelected={selectedMessageIds.has(msg.id)}
-                          onToggleSelect={handleToggleSelectMessage}
-                        />
+                        {isRegenerating ? (
+                          <RegeneratingMessageContent
+                            msg={msg}
+                            onDelete={handleDelete}
+                            onRegenerate={handleRegenerate}
+                            onEdit={handleEdit}
+                            onSetActiveSwipe={handleSetActiveSwipe}
+                            onToggleConversationStart={handleToggleConversationStart}
+                            onPeekPrompt={handlePeekPrompt}
+                            onBranch={handleBranch}
+                            isLastAssistantMessage={msg.id === lastAssistantMessageId}
+                            characterMap={characterMap}
+                            personaInfo={personaInfo}
+                            chatMode={chatMode}
+                            messageDepth={messages ? messages.length - 1 - i : undefined}
+                            isGrouped={isGrouped(i)}
+                            groupChatMode={groupChatMode}
+                            chatCharacterIds={chatCharIds}
+                            multiSelectMode={multiSelectMode}
+                            isSelected={selectedMessageIds.has(msg.id)}
+                            onToggleSelect={handleToggleSelectMessage}
+                          />
+                        ) : (
+                          <ChatMessage
+                            message={msg}
+                            isStreaming={false}
+                            onDelete={handleDelete}
+                            onRegenerate={handleRegenerate}
+                            onEdit={handleEdit}
+                            onSetActiveSwipe={handleSetActiveSwipe}
+                            onToggleConversationStart={handleToggleConversationStart}
+                            onPeekPrompt={handlePeekPrompt}
+                            onBranch={handleBranch}
+                            isLastAssistantMessage={msg.id === lastAssistantMessageId}
+                            characterMap={characterMap}
+                            personaInfo={personaInfo}
+                            chatMode={chatMode}
+                            messageDepth={messages ? messages.length - 1 - i : undefined}
+                            isGrouped={isGrouped(i)}
+                            groupChatMode={groupChatMode}
+                            chatCharacterIds={chatCharIds}
+                            multiSelectMode={multiSelectMode}
+                            isSelected={selectedMessageIds.has(msg.id)}
+                            onToggleSelect={handleToggleSelectMessage}
+                          />
+                        )}
                       </div>
                     );
                   });
                 })()}
 
                 {/* CYOA choice buttons */}
-                {!isStreaming && <CyoaChoices />}
+                {!isStreaming && <CyoaChoices messages={messages} />}
 
                 {/* Streaming indicator */}
                 {isStreaming && !regenerateMessageId && (
-                  <div className="animate-message-in">
-                    <ChatMessage
-                      message={{
-                        id: "__streaming__",
-                        chatId: activeChatId,
-                        role: "assistant",
-                        characterId: streamingCharacterId ?? chatCharIds[0] ?? null,
-                        content: streamBuffer || "",
-                        activeSwipeIndex: 0,
-                        extra: { displayText: null, isGenerated: true, tokenCount: 0, generationInfo: null },
-                        createdAt: new Date().toISOString(),
-                      }}
-                      isStreaming
-                      characterMap={characterMap}
-                      personaInfo={personaInfo}
-                      chatMode={chatMode}
-                      groupChatMode={groupChatMode}
-                      chatCharacterIds={chatCharIds}
-                    />
-                  </div>
+                  <StreamingIndicator
+                    activeChatId={activeChatId}
+                    chatCharIds={chatCharIds}
+                    characterMap={characterMap}
+                    personaInfo={personaInfo}
+                    chatMode={chatMode}
+                    groupChatMode={groupChatMode}
+                  />
                 )}
 
                 <div ref={messagesEndRef} />
@@ -1363,8 +1460,14 @@ export function ChatArea() {
 
       {/* Delete confirmation dialog */}
       {deleteDialogMessageId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setDeleteDialogMessageId(null)}>
-          <div className="mx-4 w-full max-w-xs rounded-xl bg-[var(--card)] p-5 shadow-2xl ring-1 ring-[var(--border)]" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={() => setDeleteDialogMessageId(null)}
+        >
+          <div
+            className="mx-4 w-full max-w-xs rounded-xl bg-[var(--card)] p-5 shadow-2xl ring-1 ring-[var(--border)]"
+            onClick={(e) => e.stopPropagation()}
+          >
             <p className="mb-4 text-sm font-semibold text-center">How to proceed?</p>
             <div className="flex flex-col gap-2">
               <button
@@ -1393,9 +1496,7 @@ export function ChatArea() {
       {/* Multi-select floating bar */}
       {multiSelectMode && (
         <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl bg-[var(--card)] px-5 py-3 shadow-2xl ring-1 ring-[var(--border)]">
-          <span className="text-xs font-medium text-[var(--muted-foreground)]">
-            {selectedMessageIds.size} selected
-          </span>
+          <span className="text-xs font-medium text-[var(--muted-foreground)]">{selectedMessageIds.size} selected</span>
           <button
             onClick={handleBulkDelete}
             disabled={selectedMessageIds.size === 0}
@@ -1489,7 +1590,7 @@ function QuickStartCard({
       onClick={handleClick}
       title={tooltip}
       className={cn(
-        "group card-3d-tilt btn-scanlines relative flex w-28 flex-col items-center justify-center gap-2 rounded-xl border-2 border-[var(--border)] bg-[var(--card)] p-4 text-center transition-all",
+        "group card-3d-tilt btn-scanlines relative flex w-24 sm:w-28 flex-col items-center justify-center gap-2 rounded-xl border-2 border-[var(--border)] bg-[var(--card)] p-3 sm:p-4 text-center transition-all",
         "cursor-pointer hover:-translate-y-1 hover:border-[var(--primary)]/40 hover:shadow-lg",
       )}
       style={shadowColor ? { ["--tw-shadow-color" as string]: shadowColor } : undefined}
@@ -1584,7 +1685,7 @@ function SummaryButton({ chatId, summary }: { chatId: string | null; summary: st
       <button
         onClick={() => setOpen(!open)}
         className={cn(
-          "flex items-center justify-center rounded-full border p-1.5 backdrop-blur-md transition-all",
+          "flex items-center justify-center rounded-full border p-1 md:p-1.5 backdrop-blur-md transition-all",
           open
             ? "bg-foreground/15 border-foreground/20 text-foreground/90"
             : summary
@@ -1631,28 +1732,28 @@ function WorldInfoButton({ chatId }: { chatId: string | null }) {
 
   const panelContent = (
     <>
-      <h3 className="mb-2 text-xs font-semibold text-foreground/90 flex items-center gap-1.5">
+      <h3 className="mb-2 text-xs font-semibold text-[var(--foreground)] flex items-center gap-1.5">
         <Globe size="0.75rem" />
         Active World Info
         {isMobile && (
           <button
             onClick={() => setOpen(false)}
-            className="ml-auto rounded-md p-1 text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70"
+            className="ml-auto rounded-md p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
           >
             <X size="0.75rem" />
           </button>
         )}
       </h3>
       {isLoading ? (
-        <div className="flex items-center gap-2 py-4 text-xs text-foreground/40">
+        <div className="flex items-center gap-2 py-4 text-xs text-[var(--muted-foreground)]">
           <Loader2 size="0.75rem" className="animate-spin" />
           Scanning entries…
         </div>
       ) : entries.length === 0 ? (
-        <p className="py-3 text-center text-xs text-foreground/40">No active entries for this chat</p>
+        <p className="py-3 text-center text-xs text-[var(--muted-foreground)]">No active entries for this chat</p>
       ) : (
         <>
-          <p className="mb-2 text-[0.625rem] text-foreground/40">
+          <p className="mb-2 text-[0.625rem] text-[var(--muted-foreground)]">
             {entries.length} active • ~{(data?.totalTokens ?? 0).toLocaleString()} tokens
           </p>
           <div className="space-y-1.5">
@@ -1670,7 +1771,7 @@ function WorldInfoButton({ chatId }: { chatId: string | null }) {
       <button
         onClick={() => setOpen(!open)}
         className={cn(
-          "flex items-center justify-center rounded-full border p-1.5 backdrop-blur-md transition-all",
+          "flex items-center justify-center rounded-full border p-1 md:p-1.5 backdrop-blur-md transition-all",
           open
             ? "bg-foreground/15 border-foreground/20 text-foreground/90"
             : hasEntries && !isLoading
@@ -1686,14 +1787,140 @@ function WorldInfoButton({ chatId }: { chatId: string | null }) {
           createPortal(
             <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
               <div className="absolute inset-0 bg-black/30" onClick={() => setOpen(false)} />
-              <div className="relative w-full max-w-sm max-h-[calc(100dvh-4rem)] overflow-y-auto rounded-xl border border-foreground/10 bg-black/90 p-3 shadow-2xl backdrop-blur-xl animate-message-in">
+              <div className="relative w-full max-w-sm max-h-[calc(100dvh-4rem)] overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in">
                 {panelContent}
               </div>
             </div>,
             document.body,
           )
         ) : (
-          <div className="absolute right-0 top-full z-50 mt-2 w-[min(20rem,calc(100vw-2rem))] max-h-[60vh] overflow-y-auto rounded-xl border border-foreground/10 bg-black/90 p-3 shadow-2xl backdrop-blur-xl animate-message-in">
+          <div className="absolute right-0 top-full z-50 mt-2 w-[min(20rem,calc(100vw-2rem))] max-h-[60vh] overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in">
+            {panelContent}
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function AuthorNotesButton({ chatId, chatMeta }: { chatId: string | null; chatMeta: Record<string, any> }) {
+  const [open, setOpen] = useState(false);
+  const [notes, setNotes] = useState((chatMeta.authorNotes as string) ?? "");
+  const [depthStr, setDepthStr] = useState(String((chatMeta.authorNotesDepth as number) ?? 4));
+  const updateMeta = useUpdateChatMetadata();
+  const ref = useRef<HTMLDivElement>(null);
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+
+  // Sync from metadata when it changes externally
+  useEffect(() => {
+    setNotes((chatMeta.authorNotes as string) ?? "");
+    setDepthStr(String((chatMeta.authorNotesDepth as number) ?? 4));
+  }, [chatMeta.authorNotes, chatMeta.authorNotesDepth]);
+
+  const depth = parseInt(depthStr, 10) || 0;
+
+  // Close on outside click (desktop)
+  useEffect(() => {
+    if (!open || isMobile) return;
+    const handle = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [open, isMobile]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open]);
+
+  if (!chatId) return null;
+
+  const hasNotes = !!notes.trim();
+
+  const handleSave = () => {
+    updateMeta.mutate({ id: chatId, authorNotes: notes, authorNotesDepth: depth });
+  };
+
+  const panelContent = (
+    <>
+      <h3 className="mb-2 text-xs font-semibold text-[var(--foreground)] flex items-center gap-1.5">
+        <PenLine size="0.75rem" />
+        Author's Notes
+        {isMobile && (
+          <button
+            onClick={() => setOpen(false)}
+            className="ml-auto rounded-md p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+          >
+            <X size="0.75rem" />
+          </button>
+        )}
+      </h3>
+      <p className="mb-2 text-[0.625rem] text-[var(--muted-foreground)]">
+        Text here is injected into the prompt at the chosen depth every generation.
+      </p>
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        onBlur={handleSave}
+        placeholder="e.g. Keep the tone dark and suspenseful. The villain is secretly an ally."
+        className="w-full rounded-lg bg-[var(--secondary)] border border-[var(--border)] px-2.5 py-2 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] outline-none resize-none focus:ring-2 focus:ring-[var(--ring)] transition-colors"
+        rows={4}
+      />
+      <div className="mt-2 flex items-center gap-2">
+        <span className="text-[0.625rem] text-[var(--muted-foreground)] shrink-0">Injection Depth</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={depthStr}
+          onChange={(e) => setDepthStr(e.target.value.replace(/[^0-9]/g, ""))}
+          onBlur={() => {
+            const val = Math.max(0, parseInt(depthStr, 10) || 0);
+            setDepthStr(String(val));
+            updateMeta.mutate({ id: chatId, authorNotes: notes, authorNotesDepth: val });
+          }}
+          className="w-14 rounded-md bg-[var(--secondary)] border border-[var(--border)] px-2 py-0.5 text-[0.625rem] text-[var(--foreground)] outline-none text-center focus:ring-2 focus:ring-[var(--ring)] transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+      </div>
+      <p className="mt-1 text-[0.5625rem] text-[var(--muted-foreground)]/60">
+        Depth 0 = end of conversation, 4 = four messages from the end.
+      </p>
+    </>
+  );
+
+  return (
+    <div className="relative" ref={ref} onClick={(e) => e.stopPropagation()}>
+      <button
+        onClick={() => setOpen(!open)}
+        className={cn(
+          "flex items-center justify-center rounded-full border p-1 md:p-1.5 backdrop-blur-md transition-all",
+          open
+            ? "bg-foreground/15 border-foreground/20 text-foreground/90"
+            : hasNotes
+              ? "bg-foreground/10 border-foreground/25 text-foreground/80 hover:bg-foreground/15 hover:text-foreground"
+              : "bg-foreground/5 border-foreground/10 text-foreground/60 hover:bg-foreground/10 hover:text-foreground",
+        )}
+        title="Author's Notes"
+      >
+        <PenLine size="0.875rem" />
+      </button>
+      {open &&
+        (isMobile ? (
+          createPortal(
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
+              <div className="absolute inset-0 bg-black/30" onClick={() => setOpen(false)} />
+              <div className="relative w-full max-w-sm max-h-[calc(100dvh-4rem)] overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in">
+                {panelContent}
+              </div>
+            </div>,
+            document.body,
+          )
+        ) : (
+          <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in">
             {panelContent}
           </div>
         ))}
@@ -1709,27 +1936,27 @@ function WorldInfoEntryRow({
   const [expanded, setExpanded] = useState(false);
   return (
     <div
-      className="rounded-lg bg-foreground/5 p-2 text-xs cursor-pointer transition-colors hover:bg-foreground/10"
+      className="rounded-lg bg-[var(--secondary)] p-2 text-xs cursor-pointer transition-colors hover:bg-[var(--accent)]"
       onClick={() => setExpanded(!expanded)}
     >
       <div className="flex items-center gap-2">
         <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
-        <span className="font-medium text-foreground/80 truncate">{entry.name}</span>
+        <span className="font-medium text-[var(--foreground)]/80 truncate">{entry.name}</span>
         {entry.constant && (
           <span className="rounded bg-amber-400/15 px-1 py-0.5 text-[0.5rem] font-medium text-amber-400 shrink-0">
             CONST
           </span>
         )}
-        <span className="ml-auto text-[0.625rem] text-foreground/30 shrink-0">#{entry.order}</span>
+        <span className="ml-auto text-[0.625rem] text-[var(--muted-foreground)] shrink-0">#{entry.order}</span>
       </div>
       {entry.keys.length > 0 && (
-        <p className="mt-0.5 truncate text-[0.625rem] text-foreground/30">
+        <p className="mt-0.5 truncate text-[0.625rem] text-[var(--muted-foreground)]">
           Keys: {entry.keys.slice(0, 5).join(", ")}
           {entry.keys.length > 5 && ` +${entry.keys.length - 5}`}
         </p>
       )}
       {expanded && (
-        <p className="mt-1.5 whitespace-pre-wrap text-[0.6875rem] text-foreground/50 leading-relaxed border-t border-foreground/5 pt-1.5 max-h-40 overflow-y-auto">
+        <p className="mt-1.5 whitespace-pre-wrap text-[0.6875rem] text-[var(--muted-foreground)] leading-relaxed border-t border-[var(--border)] pt-1.5 max-h-40 overflow-y-auto">
           {entry.content || "(empty)"}
         </p>
       )}

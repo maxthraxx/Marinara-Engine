@@ -2,12 +2,12 @@
 // Panel: Presets (overhauled — search, assign, edit, duplicate)
 // ──────────────────────────────────────────────
 import { useState, useMemo } from "react";
-import { usePresets, useDeletePreset, useDuplicatePreset } from "../../hooks/use-presets";
+import { usePresets, useDeletePreset, useDuplicatePreset, useSetDefaultPreset } from "../../hooks/use-presets";
 import { useUpdateChat, useUpdateChatMetadata } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
-import { Plus, Download, FileText, Trash2, Check, Copy, Search, Code2, Hash } from "lucide-react";
+import { Plus, Download, FileText, Trash2, Check, Copy, Search, Code2, Hash, Star } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 type PresetRow = {
@@ -24,6 +24,7 @@ export function PresetsPanel() {
   const { data: presets, isLoading } = usePresets();
   const deletePreset = useDeletePreset();
   const duplicatePreset = useDuplicatePreset();
+  const setDefaultPreset = useSetDefaultPreset();
   const openModal = useUIStore((s) => s.openModal);
   const openPresetDetail = useUIStore((s) => s.openPresetDetail);
   const activeChat = useChatStore((s) => s.activeChat);
@@ -179,16 +180,31 @@ export function PresetsPanel() {
                       selectPreset(preset.id);
                     }}
                     className={cn(
-                      "rounded-lg px-2 py-1 text-[0.625rem] font-medium transition-all active:scale-90",
+                      "rounded-lg p-1.5 transition-all active:scale-90",
                       isSelected
                         ? "bg-purple-400/15 text-purple-400"
-                        : "bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                     )}
                     title={isSelected ? "Unassign from chat" : "Assign to chat"}
                   >
-                    {isSelected ? "Active" : "Use"}
+                    <Check size="0.75rem" />
                   </button>
                 )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDefaultPreset.mutate(preset.id);
+                  }}
+                  className={cn(
+                    "rounded-lg p-1.5 transition-all active:scale-90",
+                    isDefault
+                      ? "text-yellow-500"
+                      : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-yellow-500",
+                  )}
+                  title={isDefault ? "Default preset" : "Set as default"}
+                >
+                  <Star size="0.75rem" className={isDefault ? "fill-yellow-500" : ""} />
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

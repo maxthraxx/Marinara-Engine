@@ -52,6 +52,33 @@
 
 ## Changelog
 
+### v1.4.6
+
+**New Features:**
+
+- **Embedding Base URL** — Configurable base URL for embedding endpoints, allowing custom embedding servers per connection.
+- **Browser Refresh on Error** — The Bot Browser tab now shows a "Refresh" button when search fails, instead of a static error message.
+
+**Improvements:**
+
+- **Performance — Streaming Re-render Optimization** — Extracted `StreamingIndicator` and `RegeneratingMessageContent` into self-contained components that subscribe to the stream buffer independently. The main `ChatArea` no longer re-renders on every token (~30–60×/sec), drastically reducing CPU usage during streaming.
+- **Performance — Zustand Selector Batching** — Combined 5 individual `useUIStore` selectors in `ChatMessage` into a single shallow-compared selector via `useShallow`, and memoized style objects (`textStrokeStyle`, `narrationTextStyle`, `chatTextStyle`, bubble colors) to avoid recreating them on every render.
+- **Performance — Debounced UI Persistence** — UI store `localStorage` writes are now debounced (1 s) via a custom `createJSONStorage` adapter, preventing synchronous I/O on every state change (e.g. dragging sliders).
+- **Performance — Action Selector Cleanup** — Converted 4 action-only selectors (`setActiveChat`, `setShouldOpenSettings`, `setShouldOpenWizard`, and callback-only `setActiveChatId`) to `getState()` calls, eliminating unnecessary re-render subscriptions.
+- **Chat Text Appearance** — Unified chat text color with a single "Chat Text Color" setting and a default text stroke width of 0.5 px.
+- **Settings Panel Polish** — Renamed reset buttons to "Reset to default", removed redundant labels ("Color", "From"/"To"), and consolidated reset actions (text color reset also resets opacity to 90 %).
+- **Roleplay Input Responsiveness** — Responsive padding/gap on the roleplay input bar, `min-w-0` on the textarea to prevent flex overflow on narrow screens, and `shrink-0` on the send button.
+- **Home Page Mobile Layout** — Reduced padding on mobile (`p-4 sm:p-8`), constrained content width (`max-w-md`), and made QuickStart cards flex-wrap with responsive sizing (`w-24 sm:w-28`).
+- **Folder UX** — New folders are created at the top of the list (server-side `sortOrder: 0` with existing folders shifted), folders render above unfiled chats, and the folder row now uses inline rename-on-click + a trash icon on hover instead of a three-dot menu.
+
+**Bug Fixes:**
+
+- **Fixed infinite re-render loop** — The combined Zustand object selector in `ChatMessage` returned a new reference every render, bypassing `memo()` and causing "Maximum update depth exceeded". Fixed by wrapping with `useShallow()`.
+- **Fixed message background opacity** — Roleplay message bubbles used `rgba(0,0,0,…)` instead of the correct `rgba(23,23,23,…)` matching Tailwind's `bg-neutral-900/70` and `bg-neutral-900/60`.
+- **Fixed new folders appearing at the bottom** — Two-part fix: server assigns `sortOrder: 0` to new folders (shifting existing ones down), and the client renders folders before unfiled chats.
+- **Fixed missing DB column migrations** — Added `openrouter_provider`, `comfyui_workflow`, and `embedding_base_url` to `COLUMN_MIGRATIONS` so they auto-create on startup.
+- **Fixed combat encounter `parseJSON`** — Corrected escape-sequence detection and added 3-level sanitization for AI responses in the combat agent.
+
 ### v1.4.5
 
 **New Features:**
@@ -87,7 +114,7 @@
 
 ## Windows EASIEST METHOD
 
-Download **[Marinara-Engine-Installer-1.4.5.exe](https://github.com/SpicyMarinara/Marinara-Engine/releases/download/v1.4.5/Marinara-Engine-Installer-1.4.5.exe)** from the [Releases](https://github.com/SpicyMarinara/Marinara-Engine/releases) page and run it. The installer checks for Node.js and Git, clones the repo, installs dependencies, builds the app, and creates a desktop shortcut.
+Download **[Marinara-Engine-Installer-1.4.6.exe](https://github.com/SpicyMarinara/Marinara-Engine/releases/download/v1.4.6/Marinara-Engine-Installer-1.4.6.exe)** from the [Releases](https://github.com/SpicyMarinara/Marinara-Engine/releases) page and run it. The installer checks for Node.js and Git, clones the repo, installs dependencies, builds the app, and creates a desktop shortcut.
 
 ---
 

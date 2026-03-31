@@ -67,6 +67,8 @@ export function useCreateChat() {
       characterIds?: string[];
       groupId?: string | null;
       connectionId?: string | null;
+      personaId?: string | null;
+      promptPresetId?: string | null;
     }) => api.post<Chat>("/chats", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: chatKeys.list() }),
   });
@@ -168,8 +170,7 @@ export function useDeleteMessage(chatId: string | null) {
 export function useDeleteMessages(chatId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (messageIds: string[]) =>
-      api.post(`/chats/${chatId}/messages/bulk-delete`, { messageIds }),
+    mutationFn: (messageIds: string[]) => api.post(`/chats/${chatId}/messages/bulk-delete`, { messageIds }),
     onSuccess: () => {
       if (chatId) {
         qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
@@ -194,9 +195,7 @@ export function useUpdateMessage(chatId: string | null) {
         if (!old) return old;
         return {
           ...old,
-          pages: old.pages.map((page) =>
-            page.map((msg) => (msg.id === messageId ? { ...msg, content } : msg)),
-          ),
+          pages: old.pages.map((page) => page.map((msg) => (msg.id === messageId ? { ...msg, content } : msg))),
         };
       });
       return { previous };
@@ -285,9 +284,13 @@ export function useBranchChat() {
   return useMutation({
     mutationFn: ({ chatId, upToMessageId }: { chatId: string; upToMessageId?: string }) =>
       api.post<Chat>(`/chats/${chatId}/branch`, { upToMessageId }),
-    onSuccess: (_data, { chatId }) => {
+    onSuccess: (newChat, { chatId }) => {
       qc.invalidateQueries({ queryKey: chatKeys.list() });
       qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
+      // Pre-populate the new branch's cache so settings are immediately available
+      if (newChat) {
+        qc.setQueryData(chatKeys.detail(newChat.id), newChat);
+      }
     },
   });
 }

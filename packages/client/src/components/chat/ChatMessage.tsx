@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Chat: Message — mode-aware rendering
 // ──────────────────────────────────────────────
-import { cn, getAvatarCropStyle } from "../../lib/utils";
+import { cn, copyToClipboard, getAvatarCropStyle } from "../../lib/utils";
 import {
   User,
   Bot,
@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { Message } from "@marinara-engine/shared";
 import { memo, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, type ReactNode } from "react";
+import { useShallow } from "zustand/react/shallow";
 import type { CharacterMap } from "./ChatArea";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useUIStore } from "../../stores/ui.store";
@@ -378,16 +379,25 @@ function renderContent(
         // Sanitize a CSS color value — only allow safe color formats
         const safeColor = (c: string) =>
           /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+|rgba?\([\d,.\s%]+\)|hsla?\([\d,.\s%]+\))$/.test(c) ? c : "inherit";
+        // Helper: check if an offset is inside an HTML tag (attribute context)
+        const insideTag = (text: string, offset: number) => {
+          const before = text.slice(0, offset);
+          return before.lastIndexOf("<") > before.lastIndexOf(">");
+        };
         // Pass 1: Bold quotes inside speaker-annotated spans with their specific colors
         const afterSpeaker = clean.replace(
           /<span[^>]*\bdata-spk="([^"]*)"[^>]*>([\s\S]*?)<\/span>/g,
           (_m: string, color: string, content: string) => {
             const validColor = safeColor(color);
-            return content.replace(/(?<![=\w])"([^"<>]+)"/g, `<strong style="color:${validColor}">"$1"</strong>`);
+            return content.replace(/(?<![=\w])"([^"<>]+)"/g, (match: string, inner: string, offset: number) => {
+              if (insideTag(content, offset)) return match;
+              return `<strong style="color:${validColor}">"${inner}"</strong>`;
+            });
           },
         );
         // Pass 2: Bold remaining quotes with default dialogue color, skipping already-bolded text
         return afterSpeaker.replace(/(?<![=\w])"([^"<>]+)"/g, (match, inner, offset) => {
+          if (insideTag(afterSpeaker, offset)) return match;
           const before = afterSpeaker.slice(0, offset);
           // Skip if already inside a <strong> from pass 1
           if (/<strong[^>]*>\s*$/.test(before.slice(Math.max(0, before.length - 300)))) return match;
@@ -462,11 +472,59 @@ export const ChatMessage = memo(function ChatMessage({
   const isSystem = message.role === "system";
   const isNarrator = message.role === "narrator";
   const isRoleplay = chatMode === "roleplay" || chatMode === "visual_novel";
-  const chatFontSize = useUIStore((s) => s.chatFontSize);
+  const {
+    chatFontSize,
+    chatFontColor,
+    chatFontOpacity,
+    textStrokeWidth,
+    textStrokeColor,
+    showModelName,
+    boldDialogue,
+  } = useUIStore(
+    useShallow((s) => ({
+      chatFontSize: s.chatFontSize,
+      chatFontColor: s.chatFontColor,
+      chatFontOpacity: s.chatFontOpacity,
+      textStrokeWidth: s.textStrokeWidth,
+      textStrokeColor: s.textStrokeColor,
+      showModelName: s.showModelName,
+      boldDialogue: s.boldDialogue ?? true,
+    })),
+  );
+
+  // Build reusable text style objects (memoized to avoid unnecessary DOM updates)
+  const textStrokeStyle = useMemo<React.CSSProperties>(
+    () =>
+      textStrokeWidth > 0
+        ? { WebkitTextStroke: `${textStrokeWidth}px ${textStrokeColor}`, paintOrder: "stroke fill" }
+        : {},
+    [textStrokeWidth, textStrokeColor],
+  );
+  const messageTextStyle = useMemo<React.CSSProperties>(
+    () => ({
+      fontSize: chatFontSize,
+      lineHeight: 1.5,
+      ...(chatFontColor ? { color: chatFontColor } : {}),
+      ...textStrokeStyle,
+    }),
+    [chatFontSize, chatFontColor, textStrokeStyle],
+  );
+
+  // Compute message bubble background with user-controlled opacity
+  // Base colors match the original Tailwind dark-mode values: neutral-900/70 and neutral-900/60
+  const { userBubbleBg, assistantBubbleBg } = useMemo(() => {
+    const o = chatFontOpacity / 100;
+    return {
+      userBubbleBg: `rgba(23,23,23,${(0.7 * o).toFixed(3)})`,
+      assistantBubbleBg: `rgba(23,23,23,${(0.6 * o).toFixed(3)})`,
+    };
+  }, [chatFontOpacity]);
+
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
   const [showActions, setShowActions] = useState(false);
+  const [avatarLightbox, setAvatarLightbox] = useState<string | null>(null);
   const scrollRestoreRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const msgRef = useRef<HTMLDivElement>(null);
 
@@ -487,19 +545,22 @@ export const ChatMessage = memo(function ChatMessage({
     return () => document.removeEventListener("touchstart", handleTouch);
   }, [showActions]);
 
-  const handleMobileTap = useCallback((e: React.MouseEvent) => {
-    // In multi-select mode, clicking toggles selection on any device
-    if (multiSelectMode) {
-      onToggleSelect?.(message.id);
-      return;
-    }
-    // Only toggle on touch devices
-    if (!matchMedia("(pointer: coarse)").matches) return;
-    // Don't toggle when tapping buttons, links, or the edit textarea
-    const target = e.target as HTMLElement;
-    if (target.closest("button, a, textarea")) return;
-    setShowActions((v) => !v);
-  }, [multiSelectMode, onToggleSelect, message.id]);
+  const handleMobileTap = useCallback(
+    (e: React.MouseEvent) => {
+      // In multi-select mode, clicking toggles selection on any device
+      if (multiSelectMode) {
+        onToggleSelect?.(message.id);
+        return;
+      }
+      // Only toggle on touch devices
+      if (!matchMedia("(pointer: coarse)").matches) return;
+      // Don't toggle when tapping buttons, links, or the edit textarea
+      const target = e.target as HTMLElement;
+      if (target.closest("button, a, textarea")) return;
+      setShowActions((v) => !v);
+    },
+    [multiSelectMode, onToggleSelect, message.id],
+  );
 
   // Parse message extra for conversation start flag
   const extra = useMemo(() => {
@@ -510,7 +571,6 @@ export const ChatMessage = memo(function ChatMessage({
   const thinking = extra.thinking as string | undefined;
 
   // Model name display
-  const showModelName = useUIStore((s) => s.showModelName);
   const _modelName = !isUser && showModelName ? (extra.generationInfo?.model ?? null) : null;
   const genInfo = !isUser && showModelName ? extra.generationInfo : null;
   const genLabel = useMemo(() => {
@@ -682,13 +742,13 @@ export const ChatMessage = memo(function ChatMessage({
   // Render content with dialogue highlighting (or HTML rendering)
   const text = typeof displayContent === "string" ? displayContent : message.content;
   const isHtmlContent = HTML_TAG_RE.test(text);
-  const boldDialogue = useUIStore((s) => s.boldDialogue) ?? true;
+
   const renderedContent = useMemo(() => {
     return renderContent(text, dialogueColor, speakerColorMap, boldDialogue);
   }, [text, dialogueColor, speakerColorMap, boldDialogue]);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(message.content);
+    copyToClipboard(message.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -751,10 +811,7 @@ export const ChatMessage = memo(function ChatMessage({
               Narrator
               <span className="h-px flex-1 bg-amber-400/20" />
             </div>
-            <div
-              className="mari-message-content whitespace-pre-wrap break-words text-amber-100/80 italic"
-              style={{ fontSize: chatFontSize, lineHeight: 1.5 }}
-            >
+            <div className="mari-message-content whitespace-pre-wrap break-words italic" style={messageTextStyle}>
               {displayContent}
             </div>
           </div>
@@ -785,7 +842,9 @@ export const ChatMessage = memo(function ChatMessage({
                 aria-label={isSelected ? "Deselect message" : "Select message"}
                 className={cn(
                   "h-5 w-5 rounded border-2 flex items-center justify-center transition-colors cursor-pointer",
-                  isSelected ? "border-[var(--destructive)] bg-[var(--destructive)]" : "border-[var(--muted-foreground)]/40 bg-[var(--secondary)]",
+                  isSelected
+                    ? "border-[var(--destructive)] bg-[var(--destructive)]"
+                    : "border-[var(--muted-foreground)]/40 bg-[var(--secondary)]",
                 )}
               >
                 {isSelected && <span className="text-white text-xs font-bold">✓</span>}
@@ -796,7 +855,13 @@ export const ChatMessage = memo(function ChatMessage({
           {!isGrouped && (
             <div className="mari-message-avatar flex-shrink-0 pt-1">
               {isMergedGroup && mergedAvatars.length > 0 ? (
-                <div className="rpg-avatar-glow relative h-10 w-10 overflow-hidden rounded-full ring-2 ring-white/10">
+                <div
+                  className="rpg-avatar-glow relative h-10 w-10 cursor-pointer overflow-hidden rounded-full ring-2 ring-white/10"
+                  onClick={() => {
+                    const visible = mergedAvatars[cycleIndexRef.current];
+                    if (visible) setAvatarLightbox(visible.url);
+                  }}
+                >
                   {mergedAvatars.map((avatar, i) => (
                     <img
                       key={avatar.url}
@@ -812,7 +877,10 @@ export const ChatMessage = memo(function ChatMessage({
                 </div>
               ) : avatarUrl ? (
                 <div className={cn(!isUser && "rpg-avatar-glow")}>
-                  <div className="h-10 w-10 overflow-hidden rounded-full ring-2 ring-white/10">
+                  <div
+                    className="h-10 w-10 cursor-pointer overflow-hidden rounded-full ring-2 ring-white/10"
+                    onClick={() => setAvatarLightbox(avatarUrl)}
+                  >
                     <img
                       src={avatarUrl}
                       alt={displayName}
@@ -886,16 +954,14 @@ export const ChatMessage = memo(function ChatMessage({
                 isUser
                   ? "rounded-tr-sm text-neutral-100 ring-1 ring-white/10"
                   : "rounded-tl-sm text-white/90 ring-1 ring-white/8",
-                !boxBgColor && (isUser ? "bg-black/30 dark:bg-neutral-900/70" : "bg-black/20 dark:bg-neutral-900/60"),
                 isGrouped && (isUser ? "rounded-tr-2xl" : "rounded-tl-2xl"),
                 isStreaming && "rpg-streaming",
                 isConversationStart && "ring-amber-400/30",
                 editing && "w-full",
               )}
               style={{
-                fontSize: chatFontSize,
-                lineHeight: 1.5,
-                ...(boxBgColor ? { backgroundColor: boxBgColor } : {}),
+                ...messageTextStyle,
+                backgroundColor: boxBgColor ? boxBgColor : isUser ? userBubbleBg : assistantBubbleBg,
               }}
             >
               {editing ? (
@@ -1022,6 +1088,26 @@ export const ChatMessage = memo(function ChatMessage({
 
         {/* Thinking modal */}
         {showThinking && thinking && <ThinkingModal thinking={thinking} onClose={() => setShowThinking(false)} />}
+
+        {/* Avatar lightbox */}
+        {avatarLightbox && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80"
+            onClick={() => setAvatarLightbox(null)}
+          >
+            <img
+              src={avatarLightbox}
+              alt={displayName}
+              className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
+            />
+            <button
+              onClick={() => setAvatarLightbox(null)}
+              className="absolute right-3 top-3 rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
+            >
+              <X size="1rem" />
+            </button>
+          </div>
+        )}
       </>
     );
   }
@@ -1049,7 +1135,13 @@ export const ChatMessage = memo(function ChatMessage({
         {(!isUser || avatarUrl) && (
           <div className={cn("mari-message-avatar flex-shrink-0 self-end", isGrouped && "invisible")}>
             {isMergedGroup && mergedAvatars.length > 0 ? (
-              <div className="relative h-8 w-8 overflow-hidden rounded-full">
+              <div
+                className="relative h-8 w-8 cursor-pointer overflow-hidden rounded-full"
+                onClick={() => {
+                  const visible = mergedAvatars[cycleIndexRef.current];
+                  if (visible) setAvatarLightbox(visible.url);
+                }}
+              >
                 {mergedAvatars.map((avatar, i) => (
                   <img
                     key={avatar.url}
@@ -1064,7 +1156,10 @@ export const ChatMessage = memo(function ChatMessage({
                 ))}
               </div>
             ) : avatarUrl ? (
-              <div className="h-8 w-8 overflow-hidden rounded-full">
+              <div
+                className="h-8 w-8 cursor-pointer overflow-hidden rounded-full"
+                onClick={() => setAvatarLightbox(avatarUrl)}
+              >
                 <img
                   src={avatarUrl}
                   alt={displayName}
@@ -1125,7 +1220,7 @@ export const ChatMessage = memo(function ChatMessage({
               isConversationStart && "ring-1 ring-amber-500/30",
               editing && "w-full",
             )}
-            style={{ fontSize: chatFontSize, lineHeight: 1.5, ...(boxBgColor ? { backgroundColor: boxBgColor } : {}) }}
+            style={{ ...messageTextStyle, ...(boxBgColor ? { backgroundColor: boxBgColor } : {}) }}
           >
             {editing ? (
               <EditTextarea
@@ -1258,6 +1353,26 @@ export const ChatMessage = memo(function ChatMessage({
 
       {/* Thinking modal */}
       {showThinking && thinking && <ThinkingModal thinking={thinking} onClose={() => setShowThinking(false)} />}
+
+      {/* Avatar lightbox */}
+      {avatarLightbox && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80"
+          onClick={() => setAvatarLightbox(null)}
+        >
+          <img
+            src={avatarLightbox}
+            alt={displayName}
+            className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
+          />
+          <button
+            onClick={() => setAvatarLightbox(null)}
+            className="absolute right-3 top-3 rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
+          >
+            <X size="1rem" />
+          </button>
+        </div>
+      )}
     </div>
   );
 });
@@ -1265,7 +1380,10 @@ export const ChatMessage = memo(function ChatMessage({
 // ── Thinking modal ──
 function ThinkingModal({ thinking, onClose }: { thinking: string; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 max-md:pt-[env(safe-area-inset-top)]" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 max-md:pt-[env(safe-area-inset-top)]"
+      onClick={onClose}
+    >
       <div
         className="relative mx-4 flex max-h-[70vh] w-full max-w-xl flex-col rounded-xl bg-[var(--card)] shadow-2xl ring-1 ring-[var(--border)]"
         onClick={(e) => e.stopPropagation()}

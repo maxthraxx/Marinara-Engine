@@ -49,7 +49,7 @@ export function createChatsStorage(db: DB) {
       return this.getById(id);
     },
 
-    async update(id: string, data: Partial<CreateChatInput>) {
+    async update(id: string, data: Partial<CreateChatInput> & { folderId?: string | null; sortOrder?: number }) {
       await db
         .update(chats)
         .set({
@@ -60,6 +60,8 @@ export function createChatsStorage(db: DB) {
           ...(data.personaId !== undefined && { personaId: data.personaId }),
           ...(data.promptPresetId !== undefined && { promptPresetId: data.promptPresetId }),
           ...(data.connectionId !== undefined && { connectionId: data.connectionId }),
+          ...(data.folderId !== undefined && { folderId: data.folderId }),
+          ...(data.sortOrder !== undefined && { sortOrder: data.sortOrder }),
           updatedAt: now(),
         })
         .where(eq(chats.id, id));

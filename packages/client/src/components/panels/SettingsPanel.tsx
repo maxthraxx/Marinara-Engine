@@ -244,6 +244,18 @@ function AppearanceSettings() {
   const weatherEffects = useUIStore((s) => s.weatherEffects);
   const setWeatherEffects = useUIStore((s) => s.setWeatherEffects);
 
+  // Text appearance
+  const chatFontColor = useUIStore((s) => s.chatFontColor);
+  const setChatFontColor = useUIStore((s) => s.setChatFontColor);
+  const chatFontOpacity = useUIStore((s) => s.chatFontOpacity);
+  const setChatFontOpacity = useUIStore((s) => s.setChatFontOpacity);
+  const textStrokeWidth = useUIStore((s) => s.textStrokeWidth);
+  const setTextStrokeWidth = useUIStore((s) => s.setTextStrokeWidth);
+  const textStrokeColor = useUIStore((s) => s.textStrokeColor);
+  const setTextStrokeColor = useUIStore((s) => s.setTextStrokeColor);
+  const [draftChatFontColor, setDraftChatFontColor] = useState(chatFontColor || "#c3c2c2");
+  const [draftStrokeColor, setDraftStrokeColor] = useState(textStrokeColor);
+
   // Custom fonts — query is pre-warmed in App.tsx, no fetch here
   const { data: customFonts } = useQuery<{ filename: string; family: string; url: string }[]>({
     queryKey: ["custom-fonts"],
@@ -435,6 +447,120 @@ function AppearanceSettings() {
         </div>
       </label>
 
+      {/* ── Text Appearance ── */}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-1.5">
+          <Paintbrush size="0.75rem" className="text-[var(--muted-foreground)]" />
+          <span className="text-xs font-medium">Text Appearance</span>
+          <HelpTooltip text="Customize the look of chat message text. Chat Text Color sets the default font color for all non-dialogue text. Background Opacity controls the transparency of roleplay message bubbles." />
+        </div>
+
+        {/* Chat Text Color */}
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.6875rem] font-medium">Chat Text Color</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={draftChatFontColor}
+              onChange={(e) => {
+                setDraftChatFontColor(e.target.value);
+                setChatFontColor(e.target.value);
+              }}
+              className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
+            />
+            <input
+              type="text"
+              value={draftChatFontColor}
+              onChange={(e) => {
+                setDraftChatFontColor(e.target.value);
+                if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) setChatFontColor(e.target.value);
+              }}
+              onBlur={() => setDraftChatFontColor(chatFontColor || "#c3c2c2")}
+              className="w-24 rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
+            />
+          </div>
+        </div>
+
+        {/* Roleplay Messages Background Opacity */}
+        <label className="flex flex-col gap-1">
+          <span className="text-[0.6875rem] font-medium">Roleplay Messages Background Opacity</span>
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={chatFontOpacity}
+              onChange={(e) => setChatFontOpacity(Number(e.target.value))}
+              className="flex-1 accent-[var(--primary)]"
+            />
+            <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-8 text-right">
+              {chatFontOpacity}%
+            </span>
+          </div>
+        </label>
+        <button
+          onClick={() => {
+            setChatFontColor("");
+            setDraftChatFontColor("#c3c2c2");
+            setChatFontOpacity(90);
+          }}
+          className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
+        >
+          Reset to default
+        </button>
+
+        {/* Text Stroke */}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[0.6875rem] font-medium inline-flex items-center gap-1">
+            Text Outline / Stroke
+            <HelpTooltip text="Adds an outline around chat text for better readability over backgrounds. Set width to 0 to disable." />
+          </span>
+          <div className="flex items-center gap-3">
+            <label className="flex flex-col gap-1 flex-1">
+              <span className="text-[0.625rem] text-[var(--muted-foreground)]">Width</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={5}
+                  step={0.5}
+                  value={textStrokeWidth}
+                  onChange={(e) => setTextStrokeWidth(Number(e.target.value))}
+                  className="flex-1 accent-[var(--primary)]"
+                />
+                <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-10 text-right">
+                  {textStrokeWidth}px
+                </span>
+              </div>
+            </label>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="color"
+                  value={draftStrokeColor}
+                  onChange={(e) => {
+                    setDraftStrokeColor(e.target.value);
+                    setTextStrokeColor(e.target.value);
+                  }}
+                  className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
+                />
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setTextStrokeWidth(0.5);
+              setTextStrokeColor("#000000");
+              setDraftStrokeColor("#000000");
+            }}
+            className="text-[0.625rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
+          >
+            Reset to default
+          </button>
+        </div>
+      </div>
+
       {/* ── Effects ── */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-1.5">
@@ -468,7 +594,6 @@ function AppearanceSettings() {
         />
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
-            <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">From</span>
             <div className="flex items-center gap-2">
               <input
                 type="color"
@@ -492,7 +617,6 @@ function AppearanceSettings() {
             </div>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">To</span>
             <div className="flex items-center gap-2">
               <input
                 type="color"

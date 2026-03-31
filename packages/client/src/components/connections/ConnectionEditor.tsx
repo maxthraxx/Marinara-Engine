@@ -30,6 +30,7 @@ import {
   Globe,
   Key,
   Server,
+  Bot,
   ChevronDown,
   ExternalLink,
 } from "lucide-react";
@@ -80,8 +81,12 @@ export function ConnectionEditor() {
   const [localModel, setLocalModel] = useState("");
   const [localMaxContext, setLocalMaxContext] = useState(128000);
   const [localEnableCaching, setLocalEnableCaching] = useState(false);
+  const [localDefaultForAgents, setLocalDefaultForAgents] = useState(false);
   const [localEmbeddingModel, setLocalEmbeddingModel] = useState("");
+  const [localEmbeddingBaseUrl, setLocalEmbeddingBaseUrl] = useState("");
   const [localEmbeddingConnectionId, setLocalEmbeddingConnectionId] = useState("");
+  const [localOpenrouterProvider, setLocalOpenrouterProvider] = useState("");
+  const [localComfyuiWorkflow, setLocalComfyuiWorkflow] = useState("");
 
   // Test results
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latencyMs: number } | null>(null);
@@ -126,8 +131,12 @@ export function ConnectionEditor() {
     setLocalModel((c.model as string) ?? "");
     setLocalMaxContext(Number(c.maxContext) || 128000);
     setLocalEnableCaching(c.enableCaching === "true" || c.enableCaching === true);
+    setLocalDefaultForAgents(c.defaultForAgents === "true" || c.defaultForAgents === true);
     setLocalEmbeddingModel((c.embeddingModel as string) ?? "");
+    setLocalEmbeddingBaseUrl((c.embeddingBaseUrl as string) ?? "");
     setLocalEmbeddingConnectionId((c.embeddingConnectionId as string) ?? "");
+    setLocalOpenrouterProvider((c.openrouterProvider as string) ?? "");
+    setLocalComfyuiWorkflow((c.comfyuiWorkflow as string) ?? "");
     setDirty(false);
     setSaveError(null);
     setTestResult(null);
@@ -184,8 +193,12 @@ export function ConnectionEditor() {
       model: localModel,
       maxContext: localMaxContext,
       enableCaching: localEnableCaching,
+      defaultForAgents: localDefaultForAgents,
       embeddingModel: localEmbeddingModel,
+      embeddingBaseUrl: localEmbeddingBaseUrl,
       embeddingConnectionId: localEmbeddingConnectionId || null,
+      openrouterProvider: localOpenrouterProvider || null,
+      comfyuiWorkflow: localComfyuiWorkflow || null,
     };
     // Only send API key if user typed a new one
     if (localApiKey.trim()) {
@@ -208,8 +221,12 @@ export function ConnectionEditor() {
     localModel,
     localMaxContext,
     localEnableCaching,
+    localDefaultForAgents,
     localEmbeddingModel,
+    localEmbeddingBaseUrl,
     localEmbeddingConnectionId,
+    localOpenrouterProvider,
+    localComfyuiWorkflow,
     updateConnection,
   ]);
 
@@ -459,6 +476,37 @@ export function ConnectionEditor() {
             </div>
           </FieldGroup>
 
+          {/* ── OpenRouter Provider Preference ── */}
+          {localProvider === "openrouter" && (
+            <FieldGroup
+              label="Preferred Provider"
+              icon={<Server size="0.875rem" className="text-sky-400" />}
+              help="Choose which backend provider OpenRouter should route your requests to. Leave empty to let OpenRouter choose automatically based on price and availability."
+            >
+              <input
+                value={localOpenrouterProvider}
+                onChange={(e) => {
+                  setLocalOpenrouterProvider(e.target.value);
+                  markDirty();
+                }}
+                className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                placeholder="e.g. Anthropic, Google, Amazon Bedrock…"
+              />
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                Forces OpenRouter to route through a specific provider. The provider name must match exactly as shown on{" "}
+                <a
+                  href="https://openrouter.ai/models"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sky-400 hover:underline"
+                >
+                  openrouter.ai/models
+                </a>
+                . Leave empty for automatic routing.
+              </p>
+            </FieldGroup>
+          )}
+
           {/* ── API Key ── */}
           <FieldGroup
             label="API Key"
@@ -627,6 +675,20 @@ export function ConnectionEditor() {
                     onClick={() => {
                       setShowModelDropdown(false);
                       setModelSearch("");
+                    }}
+                    onWheel={(e) => {
+                      // Let scroll pass through to parent
+                      e.currentTarget.style.pointerEvents = "none";
+                      requestAnimationFrame(() => {
+                        (e.currentTarget as HTMLElement).style.pointerEvents = "";
+                      });
+                    }}
+                    onTouchMove={(e) => {
+                      // Let touch-scroll pass through to parent
+                      e.currentTarget.style.pointerEvents = "none";
+                      requestAnimationFrame(() => {
+                        (e.currentTarget as HTMLElement).style.pointerEvents = "";
+                      });
                     }}
                   />
                   <div
@@ -804,6 +866,30 @@ export function ConnectionEditor() {
             )}
           </FieldGroup>
 
+          {/* ── ComfyUI Workflow ── */}
+          {localProvider === "image_generation" &&
+            (localBaseUrl.includes(":8188") || localBaseUrl.toLowerCase().includes("comfyui")) && (
+              <FieldGroup
+                label="ComfyUI Workflow (Optional)"
+                icon={<Zap size="0.875rem" className="text-sky-400" />}
+                help="Paste a custom ComfyUI workflow JSON (API format). Use placeholders: %prompt%, %negative_prompt%, %width%, %height%, %seed%, %model%. Leave empty to use the built-in default txt2img workflow."
+              >
+                <textarea
+                  value={localComfyuiWorkflow}
+                  onChange={(e) => {
+                    setLocalComfyuiWorkflow(e.target.value);
+                    markDirty();
+                  }}
+                  placeholder='Paste workflow JSON here (exported from ComfyUI via "Save (API Format)")…'
+                  className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-mono outline-none ring-1 ring-[var(--border)] transition-shadow placeholder:text-[var(--muted-foreground)]/50 focus:ring-sky-400/50 min-h-[120px] max-h-[300px] resize-y"
+                />
+                <p className="text-[0.55rem] text-[var(--muted-foreground)] mt-1">
+                  Export your workflow from ComfyUI using <strong>Save (API Format)</strong> in the menu. Placeholders
+                  like <code>%prompt%</code> will be replaced at generation time.
+                </p>
+              </FieldGroup>
+            )}
+
           {/* ── Max Context ── */}
           {localProvider !== "image_generation" && (
             <FieldGroup
@@ -859,6 +945,32 @@ export function ConnectionEditor() {
             </FieldGroup>
           )}
 
+          {/* ── Default for Agents ── */}
+          {localProvider !== "image_generation" && (
+            <FieldGroup
+              label="Default for Agents"
+              icon={<Bot size="0.875rem" className="text-teal-400" />}
+              help="When enabled, all agents that don't have a specific connection override will use this connection instead of the chat's active connection."
+            >
+              <label className="flex items-center gap-3 cursor-pointer select-none px-2 py-1">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    checked={localDefaultForAgents}
+                    onChange={(e) => {
+                      setLocalDefaultForAgents(e.target.checked);
+                      markDirty();
+                    }}
+                    className="peer sr-only"
+                  />
+                  <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-teal-400/70" />
+                  <div className="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
+                </div>
+                <span className="text-sm">Use as default agent connection</span>
+              </label>
+            </FieldGroup>
+          )}
+
           {/* ── Embedding Model (for lorebook vectorization) ── */}
           {localProvider !== "image_generation" && (
             <FieldGroup
@@ -879,6 +991,27 @@ export function ConnectionEditor() {
                 Used for lorebook semantic search. Entries matching by meaning (not just keywords) will be included in
                 the prompt.
               </p>
+
+              {/* Embedding Base URL Override */}
+              <div className="mt-3 pt-3 border-t border-[var(--border)]">
+                <label className="block text-xs font-medium text-[var(--muted-foreground)] mb-1.5">
+                  Embedding Endpoint URL
+                </label>
+                <input
+                  value={localEmbeddingBaseUrl}
+                  onChange={(e) => {
+                    setLocalEmbeddingBaseUrl(e.target.value);
+                    markDirty();
+                  }}
+                  className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm font-mono ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  placeholder="e.g. http://localhost:5002/v1"
+                />
+                <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                  Optional. A separate base URL for your embedding backend. Useful when running two instances of
+                  llama.cpp on different ports — one for chat, one for embeddings. Leave empty to use the
+                  connection&apos;s main URL.
+                </p>
+              </div>
 
               {/* Embedding Connection Override */}
               <div className="mt-3 pt-3 border-t border-[var(--border)]">

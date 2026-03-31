@@ -226,23 +226,19 @@ export async function backupRoutes(app: FastifyInstance) {
             const { writeFile } = await import("fs/promises");
             await writeFile(join(DATA_DIR, personaAvatarPath), Buffer.from(p.avatarBase64, "base64"));
           }
-          await chars.createPersona(
-            p.name,
-            p.description ?? "",
-            personaAvatarPath,
-            {
-              comment: p.comment,
-              personality: p.personality,
-              backstory: p.backstory,
-              appearance: p.appearance,
-              scenario: p.scenario,
-              nameColor: p.nameColor,
-              dialogueColor: p.dialogueColor,
-              boxColor: p.boxColor,
-              personaStats: p.personaStats,
-              altDescriptions: typeof p.altDescriptions === "string" ? p.altDescriptions : JSON.stringify(p.altDescriptions ?? []),
-            },
-          );
+          await chars.createPersona(p.name, p.description ?? "", personaAvatarPath, {
+            comment: p.comment,
+            personality: p.personality,
+            backstory: p.backstory,
+            appearance: p.appearance,
+            scenario: p.scenario,
+            nameColor: p.nameColor,
+            dialogueColor: p.dialogueColor,
+            boxColor: p.boxColor,
+            personaStats: p.personaStats,
+            altDescriptions:
+              typeof p.altDescriptions === "string" ? p.altDescriptions : JSON.stringify(p.altDescriptions ?? []),
+          });
           stats.personas++;
         } catch {
           /* skip */
@@ -285,9 +281,12 @@ export async function backupRoutes(app: FastifyInstance) {
             const created = await presets.create({
               name: `${p.name} (imported)`,
               description: p.description ?? "",
-              parameters: typeof p.parameters === "string" ? JSON.parse(p.parameters) : (p.parameters ?? p.generationParams),
-              variableGroups: typeof p.variableGroups === "string" ? JSON.parse(p.variableGroups) : (p.variableGroups ?? []),
-              variableValues: typeof p.variableValues === "string" ? JSON.parse(p.variableValues) : (p.variableValues ?? {}),
+              parameters:
+                typeof p.parameters === "string" ? JSON.parse(p.parameters) : (p.parameters ?? p.generationParams),
+              variableGroups:
+                typeof p.variableGroups === "string" ? JSON.parse(p.variableGroups) : (p.variableGroups ?? []),
+              variableValues:
+                typeof p.variableValues === "string" ? JSON.parse(p.variableValues) : (p.variableValues ?? {}),
             });
             if (created) {
               const newPresetId = (created as any).id;
@@ -307,7 +306,9 @@ export async function backupRoutes(app: FastifyInstance) {
                       enabled: g.enabled === "true" || g.enabled === true,
                     });
                     if (newGroup) groupIdMap.set(g.id, (newGroup as any).id);
-                  } catch { /* skip individual group */ }
+                  } catch {
+                    /* skip individual group */
+                  }
                 }
                 // Pass 2: fix parent references using the fully-populated map
                 for (const g of p.groups) {
@@ -316,7 +317,9 @@ export async function backupRoutes(app: FastifyInstance) {
                       await presets.updateGroup(groupIdMap.get(g.id)!, {
                         parentGroupId: groupIdMap.get(g.parentGroupId)!,
                       });
-                    } catch { /* skip */ }
+                    } catch {
+                      /* skip */
+                    }
                   }
                 }
               }
@@ -334,13 +337,16 @@ export async function backupRoutes(app: FastifyInstance) {
                       enabled: s.enabled === "true" || s.enabled === true,
                       isMarker: s.isMarker === "true" || s.isMarker === true,
                       groupId: s.groupId ? (groupIdMap.get(s.groupId) ?? null) : null,
-                      markerConfig: typeof s.markerConfig === "string" ? JSON.parse(s.markerConfig) : (s.markerConfig ?? null),
+                      markerConfig:
+                        typeof s.markerConfig === "string" ? JSON.parse(s.markerConfig) : (s.markerConfig ?? null),
                       injectionPosition: s.injectionPosition ?? "ordered",
                       injectionDepth: s.injectionDepth ?? 0,
                       injectionOrder: s.injectionOrder ?? 100,
                       forbidOverrides: s.forbidOverrides === "true" || s.forbidOverrides === true,
                     });
-                  } catch { /* skip individual section */ }
+                  } catch {
+                    /* skip individual section */
+                  }
                 }
               }
 
@@ -357,7 +363,9 @@ export async function backupRoutes(app: FastifyInstance) {
                       separator: cb.separator ?? ", ",
                       randomPick: cb.randomPick === "true" || cb.randomPick === true,
                     });
-                  } catch { /* skip individual choice block */ }
+                  } catch {
+                    /* skip individual choice block */
+                  }
                 }
               }
 

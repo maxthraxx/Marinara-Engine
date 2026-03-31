@@ -28,8 +28,12 @@ export interface APIConnection {
   isDefault: boolean;
   /** Whether this connection is in the random-selection pool */
   useForRandom: boolean;
+  /** Whether this connection is the default for all agents */
+  defaultForAgents: boolean;
   /** Model to use for embedding generation (e.g. "text-embedding-3-small") */
   embeddingModel: string | null;
+  /** Separate base URL for the embedding backend (e.g. a second llama.cpp on a different port) */
+  embeddingBaseUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }

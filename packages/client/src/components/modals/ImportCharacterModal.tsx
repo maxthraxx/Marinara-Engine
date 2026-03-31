@@ -27,6 +27,30 @@ export function ImportCharacterModal({ open, onClose }: Props) {
 
     try {
       const isPng = file.name.toLowerCase().endsWith(".png") || file.type === "image/png";
+      const isCharX = file.name.toLowerCase().endsWith(".charx");
+
+      // CharX files are zip archives — upload as multipart
+      if (isCharX) {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/import/st-character", {
+          method: "POST",
+          body: form,
+        });
+        const data = await res.json();
+        if (data.success) {
+          setStatus("success");
+          setMessage(`Imported "${data.name ?? file.name}" successfully!`);
+          qc.invalidateQueries({ queryKey: characterKeys.list() });
+          if (data.lorebook) {
+            qc.invalidateQueries({ queryKey: lorebookKeys.all });
+          }
+        } else {
+          setStatus("error");
+          setMessage(data.error ?? "Import failed");
+        }
+        return;
+      }
 
       let json: Record<string, unknown>;
       let avatarDataUrl: string | null = null;
@@ -44,9 +68,7 @@ export function ImportCharacterModal({ open, onClose }: Props) {
 
       // Detect Marinara envelope format and route to the native importer
       const isMarinaraEnvelope =
-        json.version === 1 &&
-        typeof json.type === "string" &&
-        (json.type as string).startsWith("marinara_");
+        json.version === 1 && typeof json.type === "string" && (json.type as string).startsWith("marinara_");
 
       let res: Response;
       if (isMarinaraEnvelope) {
@@ -123,7 +145,9 @@ export function ImportCharacterModal({ open, onClose }: Props) {
           />
           <div className="text-center">
             <p className="text-sm font-medium">Drop a file here or click to browse</p>
-            <p className="mt-1 text-xs text-[var(--muted-foreground)]">Supports JSON, PNG (with embedded data), and Marinara exports</p>
+            <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+              Supports JSON, PNG (with embedded data), CharX, and Marinara exports
+            </p>
           </div>
           <div className="flex gap-2">
             <span className="flex items-center gap-1 rounded-full bg-[var(--secondary)] px-2.5 py-1 text-xs text-[var(--muted-foreground)]">
@@ -131,6 +155,9 @@ export function ImportCharacterModal({ open, onClose }: Props) {
             </span>
             <span className="flex items-center gap-1 rounded-full bg-[var(--secondary)] px-2.5 py-1 text-xs text-[var(--muted-foreground)]">
               <Image size="0.75rem" /> .png
+            </span>
+            <span className="flex items-center gap-1 rounded-full bg-[var(--secondary)] px-2.5 py-1 text-xs text-[var(--muted-foreground)]">
+              <FileJson size="0.75rem" /> .charx
             </span>
             <span className="flex items-center gap-1 rounded-full bg-[var(--secondary)] px-2.5 py-1 text-xs text-[var(--muted-foreground)]">
               <FileJson size="0.75rem" /> .marinara
@@ -141,7 +168,7 @@ export function ImportCharacterModal({ open, onClose }: Props) {
         <input
           ref={fileRef}
           type="file"
-          accept=".json,.png,.marinara"
+          accept=".json,.png,.marinara,.charx"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];

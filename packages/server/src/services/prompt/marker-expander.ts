@@ -333,6 +333,18 @@ async function expandAgentData(config: MarkerConfig, ctx: MarkerContext): Promis
   const agentType = config.agentType;
   if (!agentType) return { content: "" };
 
+  // Tracker agent types are now always injected directly by the generation
+  // route (as a single formatted system message) regardless of preset
+  // configuration. Skip them here to avoid duplicate data.
+  const AUTO_INJECTED_TRACKERS = new Set([
+    "world-state",
+    "quest",
+    "character-tracker",
+    "persona-stats",
+    "custom-tracker",
+  ]);
+  if (AUTO_INJECTED_TRACKERS.has(agentType)) return { content: "" };
+
   // Per-chat active agent filter: if a per-chat list is set, only include agents in that list
   if (ctx.activeAgentIds.length > 0 && !ctx.activeAgentIds.includes(agentType)) {
     return { content: "" };

@@ -315,7 +315,10 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
 
   const combinedDepthEntries = allDepthEntries.flat();
   if (combinedDepthEntries.length > 0) {
-    finalMessages = injectAtDepth(finalMessages, combinedDepthEntries as Array<{ content: string; role: "system" | "user" | "assistant"; depth: number }>);
+    finalMessages = injectAtDepth(
+      finalMessages,
+      combinedDepthEntries as Array<{ content: string; role: "system" | "user" | "assistant"; depth: number }>,
+    );
     lorebookDepthEntriesCount = combinedDepthEntries.length;
   }
 

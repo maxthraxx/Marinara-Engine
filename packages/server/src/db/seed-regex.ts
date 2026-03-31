@@ -10,9 +10,7 @@ const CLEAN_HTML_ID = "default-clean-html";
 const COLLAPSE_NEWLINES_ID = "default-collapse-newlines";
 
 export async function seedDefaultRegexScripts(db: DB) {
-  const existing = await db
-    .select({ id: regexScripts.id })
-    .from(regexScripts);
+  const existing = await db.select({ id: regexScripts.id }).from(regexScripts);
 
   const existingIds = new Set(existing.map((r) => r.id));
   const timestamp = now();

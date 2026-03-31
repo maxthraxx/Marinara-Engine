@@ -29,6 +29,8 @@ export interface ImageGenRequest {
   width?: number;
   height?: number;
   model?: string;
+  /** Optional ComfyUI workflow JSON. Placeholders like %prompt%, %width%, %height%, %seed% will be replaced. */
+  comfyWorkflow?: string;
 }
 
 export interface ImageGenResult {
@@ -64,6 +66,10 @@ export async function generateImage(
       return generateTogetherAI(baseUrl, apiKey, request);
     case "novelai":
       return generateNovelAI(baseUrl, apiKey, request);
+    case "comfyui":
+      return generateComfyUI(baseUrl, request);
+    case "automatic1111":
+      return generateAutomatic1111(baseUrl, request);
     default:
       // Fallback: try OpenAI-compatible endpoint
       return generateOpenAI(baseUrl, apiKey, request);
@@ -311,8 +317,11 @@ function extractFirstFileFromZip(zip: Uint8Array): Uint8Array | null {
   if (eocdOffset + 19 >= zip.length) return null;
 
   // Read first central directory entry offset
-  const cdOffset = zip[eocdOffset + 16]! | (zip[eocdOffset + 17]! << 8) |
-    (zip[eocdOffset + 18]! << 16) | (zip[eocdOffset + 19]! << 24);
+  const cdOffset =
+    zip[eocdOffset + 16]! |
+    (zip[eocdOffset + 17]! << 8) |
+    (zip[eocdOffset + 18]! << 16) |
+    (zip[eocdOffset + 19]! << 24);
 
   // Parse central directory entry for the first file
   const cd = cdOffset;
@@ -419,4 +428,175 @@ async function generateViaChatCompletions(
   }
 
   return { base64, mimeType, ext };
+}
+
+// ── ComfyUI ──
+
+/** Default minimal txt2img workflow for ComfyUI. */
+const DEFAULT_COMFYUI_WORKFLOW: Record<string, unknown> = {
+  "3": {
+    class_type: "KSampler",
+    inputs: {
+      seed: 0,
+      steps: 20,
+      cfg: 7,
+      sampler_name: "euler_ancestral",
+      scheduler: "normal",
+      denoise: 1,
+      model: ["4", 0],
+      positive: ["6", 0],
+      negative: ["7", 0],
+      latent_image: ["5", 0],
+    },
+  },
+  "4": {
+    class_type: "CheckpointLoaderSimple",
+    inputs: { ckpt_name: "%model%" },
+  },
+  "5": {
+    class_type: "EmptyLatentImage",
+    inputs: { width: 512, height: 768, batch_size: 1 },
+  },
+  "6": {
+    class_type: "CLIPTextEncode",
+    inputs: { text: "%prompt%", clip: ["4", 1] },
+  },
+  "7": {
+    class_type: "CLIPTextEncode",
+    inputs: { text: "%negative_prompt%", clip: ["4", 1] },
+  },
+  "8": {
+    class_type: "VAEDecode",
+    inputs: { samples: ["3", 0], vae: ["4", 2] },
+  },
+  "9": {
+    class_type: "SaveImage",
+    inputs: { filename_prefix: "marinara", images: ["8", 0] },
+  },
+};
+
+async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promise<ImageGenResult> {
+  const base = baseUrl.replace(/\/+$/, "");
+  const seed = Math.floor(Math.random() * 2 ** 32);
+
+  // Parse custom workflow or use default
+  let workflow: Record<string, unknown>;
+  if (request.comfyWorkflow) {
+    try {
+      workflow = JSON.parse(request.comfyWorkflow) as Record<string, unknown>;
+    } catch {
+      throw new Error("Invalid ComfyUI workflow JSON");
+    }
+  } else {
+    workflow = JSON.parse(JSON.stringify(DEFAULT_COMFYUI_WORKFLOW));
+  }
+
+  // Replace placeholders in the workflow JSON string
+  let wfStr = JSON.stringify(workflow);
+  wfStr = wfStr.replace(/%prompt%/g, (request.prompt || "").replace(/"/g, '\\"'));
+  wfStr = wfStr.replace(/%negative_prompt%/g, (request.negativePrompt || "").replace(/"/g, '\\"'));
+  wfStr = wfStr.replace(/%width%/g, String(request.width ?? 512));
+  wfStr = wfStr.replace(/%height%/g, String(request.height ?? 768));
+  wfStr = wfStr.replace(/%seed%/g, String(seed));
+  if (request.model) {
+    wfStr = wfStr.replace(/%model%/g, request.model.replace(/"/g, '\\"'));
+  }
+  const resolvedWorkflow = JSON.parse(wfStr);
+
+  // Queue the workflow
+  const queueResp = await fetch(`${base}/prompt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: resolvedWorkflow }),
+  });
+
+  if (!queueResp.ok) {
+    const errText = await queueResp.text().catch(() => "Unknown error");
+    throw new Error(`ComfyUI queue failed (${queueResp.status}): ${sanitizeErrorText(errText)}`);
+  }
+
+  const { prompt_id } = (await queueResp.json()) as { prompt_id: string };
+
+  // Poll for completion (max ~120 seconds)
+  const maxAttempts = 120;
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+
+    const historyResp = await fetch(`${base}/history/${prompt_id}`);
+    if (!historyResp.ok) continue;
+
+    const history = (await historyResp.json()) as Record<
+      string,
+      {
+        outputs?: Record<string, { images?: Array<{ filename: string; subfolder: string; type: string }> }>;
+      }
+    >;
+
+    const entry = history[prompt_id];
+    if (!entry?.outputs) continue;
+
+    // Find the first output with images
+    for (const nodeOutput of Object.values(entry.outputs)) {
+      const images = nodeOutput.images;
+      if (images && images.length > 0) {
+        const img = images[0]!;
+        const params = new URLSearchParams({
+          filename: img.filename,
+          subfolder: img.subfolder || "",
+          type: img.type || "output",
+        });
+
+        const imgResp = await fetch(`${base}/view?${params}`);
+        if (!imgResp.ok) {
+          throw new Error(`ComfyUI image fetch failed (${imgResp.status})`);
+        }
+
+        const arrayBuffer = await imgResp.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString("base64");
+        const ext = img.filename.endsWith(".jpg") || img.filename.endsWith(".jpeg") ? "jpg" : "png";
+        const mimeType = ext === "jpg" ? "image/jpeg" : "image/png";
+        return { base64, mimeType, ext };
+      }
+    }
+  }
+
+  throw new Error("ComfyUI generation timed out after 120 seconds");
+}
+
+// ── AUTOMATIC1111 / SD Web UI / Forge ──
+
+async function generateAutomatic1111(baseUrl: string, request: ImageGenRequest): Promise<ImageGenResult> {
+  const base = baseUrl.replace(/\/+$/, "");
+  const body: Record<string, unknown> = {
+    prompt: request.prompt,
+    negative_prompt: request.negativePrompt || "",
+    width: request.width ?? 512,
+    height: request.height ?? 768,
+    steps: 20,
+    cfg_scale: 7,
+    seed: Math.floor(Math.random() * 2 ** 32),
+    sampler_name: "Euler a",
+    batch_size: 1,
+    n_iter: 1,
+  };
+  if (request.model) {
+    body.override_settings = { sd_model_checkpoint: request.model };
+  }
+
+  const resp = await fetch(`${base}/sdapi/v1/txt2img`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "Unknown error");
+    throw new Error(`AUTOMATIC1111 generation failed (${resp.status}): ${sanitizeErrorText(errText)}`);
+  }
+
+  const data = (await resp.json()) as { images?: string[] };
+  const b64 = data.images?.[0];
+  if (!b64) throw new Error("No image data in AUTOMATIC1111 response");
+
+  return { base64: b64, mimeType: "image/png", ext: "png" };
 }

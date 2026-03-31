@@ -137,12 +137,24 @@ export const useEncounterStore = create<EncounterState>((set) => ({
     }),
 
   updateCombat: (data) =>
-    set((s) => ({
-      party: Array.isArray(data.party) && data.party.length > 0 ? data.party : s.party,
-      enemies: Array.isArray(data.enemies) && data.enemies.length > 0 ? data.enemies : s.enemies,
-      playerActions: data.playerActions ?? s.playerActions,
-      isProcessing: false,
-    })),
+    set((s) => {
+      // Sanitize playerActions — AI may return attacks/items as non-arrays
+      let pa: CombatPlayerActions | null = data.playerActions ?? s.playerActions;
+      if (pa && typeof pa === "object") {
+        pa = {
+          attacks: Array.isArray(pa.attacks) ? pa.attacks : (s.playerActions?.attacks ?? []),
+          items: Array.isArray(pa.items) ? pa.items : (s.playerActions?.items ?? []),
+        };
+      } else {
+        pa = s.playerActions;
+      }
+      return {
+        party: Array.isArray(data.party) && data.party.length > 0 ? data.party : s.party,
+        enemies: Array.isArray(data.enemies) && data.enemies.length > 0 ? data.enemies : s.enemies,
+        playerActions: pa,
+        isProcessing: false,
+      };
+    }),
 
   addLogEntry: (action, result) =>
     set((s) => ({

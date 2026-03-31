@@ -16,7 +16,9 @@ function loadDrafts(): Map<string, string> {
   try {
     const raw = sessionStorage.getItem(DRAFTS_KEY);
     if (raw) return new Map(JSON.parse(raw));
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return new Map();
 }
 
@@ -25,7 +27,9 @@ function saveDrafts(m: Map<string, string>) {
   try {
     if (m.size === 0) sessionStorage.removeItem(DRAFTS_KEY);
     else sessionStorage.setItem(DRAFTS_KEY, JSON.stringify([...m]));
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 interface ChatState {
@@ -44,6 +48,8 @@ interface ChatState {
   streamingCharacterId: string | null;
   /** Character name(s) shown in typing indicator when generation is active. */
   typingCharacterName: string | null;
+  /** Human-readable label for the current server-side generation phase (e.g. "Running agents..."). */
+  generationPhase: string | null;
   /** Character name + status shown during DND/idle delay (before generation starts). */
   delayedCharacterInfo: { name: string; status: string } | null;
   /** Per-chat typing state so switching chats restores the correct indicator. */
@@ -75,6 +81,7 @@ interface ChatState {
   setRegenerateMessageId: (id: string | null) => void;
   setStreamingCharacterId: (id: string | null) => void;
   setTypingCharacterName: (name: string | null) => void;
+  setGenerationPhase: (phase: string | null) => void;
   setDelayedCharacterInfo: (info: { name: string; status: string } | null) => void;
   setPerChatTyping: (chatId: string, name: string | null) => void;
   setPerChatDelayed: (chatId: string, info: { name: string; status: string } | null) => void;
@@ -107,6 +114,7 @@ export const useChatStore = create<ChatState>()(
     regenerateMessageId: null,
     streamingCharacterId: null,
     typingCharacterName: null,
+    generationPhase: null,
     delayedCharacterInfo: null,
     perChatTyping: new Map(),
     perChatDelayed: new Map(),
@@ -175,7 +183,11 @@ export const useChatStore = create<ChatState>()(
       }),
 
     setStreaming: (streaming, chatId) =>
-      set({ isStreaming: streaming, streamingChatId: streaming ? (chatId ?? null) : null }),
+      set({
+        isStreaming: streaming,
+        streamingChatId: streaming ? (chatId ?? null) : null,
+        ...(!streaming ? { generationPhase: null } : {}),
+      }),
     setAbortController: (chatId, controller) =>
       set((state) => {
         const m = new Map(state.abortControllers);
@@ -199,6 +211,8 @@ export const useChatStore = create<ChatState>()(
     setStreamingCharacterId: (id) => set({ streamingCharacterId: id }),
 
     setTypingCharacterName: (name) => set({ typingCharacterName: name, delayedCharacterInfo: null }),
+
+    setGenerationPhase: (phase) => set({ generationPhase: phase }),
 
     setDelayedCharacterInfo: (info) => set({ delayedCharacterInfo: info, typingCharacterName: null }),
 
@@ -285,6 +299,7 @@ export const useChatStore = create<ChatState>()(
         regenerateMessageId: null,
         streamingCharacterId: null,
         typingCharacterName: null,
+        generationPhase: null,
         delayedCharacterInfo: null,
         perChatTyping: new Map(),
         perChatDelayed: new Map(),

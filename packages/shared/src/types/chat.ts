@@ -27,9 +27,25 @@ export interface Chat {
   connectionId: string | null;
   /** ID of a linked chat (conversation ↔ roleplay bidirectional link) */
   connectedChatId: string | null;
+  /** Folder this chat belongs to (null = root/unfiled) */
+  folderId: string | null;
+  /** Manual sort order within a folder (lower = higher). 0 = use default updatedAt sort. */
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
   metadata: ChatMetadata;
+}
+
+/** A folder for organising chats in the sidebar. */
+export interface ChatFolder {
+  id: string;
+  name: string;
+  mode: ChatMode;
+  color: string;
+  sortOrder: number;
+  collapsed: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Extra metadata stored on a chat. */
@@ -97,6 +113,8 @@ export interface MessageExtra {
   thinking?: string | null;
   /** Per-swipe sprite expressions from the Expression Engine agent */
   spriteExpressions?: Record<string, string> | null;
+  /** Per-swipe CYOA choices from the CYOA Choices agent */
+  cyoaChoices?: Array<{ label: string; text: string }> | null;
 }
 
 /** Metadata about how a message was generated. */

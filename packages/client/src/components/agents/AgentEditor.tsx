@@ -502,7 +502,16 @@ export function AgentEditor() {
               }}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             >
-              <option value="">Use default connection</option>
+              <option value="">
+                {(() => {
+                  const defaultAgentConn = (
+                    connections as
+                      | Array<{ id: string; name: string; provider: string; defaultForAgents: boolean | string }>
+                      | undefined
+                  )?.find((c) => c.defaultForAgents === true || c.defaultForAgents === "true");
+                  return defaultAgentConn ? `Agent default (${defaultAgentConn.name})` : "Use chat connection";
+                })()}
+              </option>
               {(connections as Array<{ id: string; name: string; provider: string }> | undefined)?.map((conn) => (
                 <option key={conn.id} value={conn.id}>
                   {conn.name} ({conn.provider})
@@ -510,7 +519,8 @@ export function AgentEditor() {
               ))}
             </select>
             <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              Optionally use a different API connection for this agent (e.g. a cheaper model for background tasks).
+              When empty, uses the agent default connection if one is set, otherwise falls back to the chat&apos;s
+              active connection.
             </p>
           </FieldGroup>
 
@@ -537,7 +547,8 @@ export function AgentEditor() {
               <span className="text-[0.6875rem] text-[var(--muted-foreground)]">messages</span>
             </div>
             <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              Each agent only sees its own context size. When agents are batched together (same model), the highest context size in the batch is used.
+              Each agent only sees its own context size. When agents are batched together (same model), the highest
+              context size in the batch is used.
             </p>
           </FieldGroup>
 

@@ -107,7 +107,9 @@ export function createAgentsStorage(db: DB) {
       const rows = await db
         .select({ resultData: agentRuns.resultData, createdAt: agentRuns.createdAt })
         .from(agentRuns)
-        .where(and(eq(agentRuns.chatId, chatId), eq(agentRuns.resultType, "echo_message"), eq(agentRuns.success, "true")))
+        .where(
+          and(eq(agentRuns.chatId, chatId), eq(agentRuns.resultType, "echo_message"), eq(agentRuns.success, "true")),
+        )
         .orderBy(agentRuns.createdAt);
 
       const messages: Array<{ characterName: string; reaction: string; timestamp: number }> = [];
@@ -121,7 +123,9 @@ export function createAgentsStorage(db: DB) {
               messages.push({ characterName: r.characterName, reaction: r.reaction, timestamp: ts });
             }
           }
-        } catch { /* skip malformed entries */ }
+        } catch {
+          /* skip malformed entries */
+        }
       }
       return messages.slice(-100);
     },

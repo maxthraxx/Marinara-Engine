@@ -30,9 +30,12 @@ import { conversationRoutes } from "./conversation.routes.js";
 import { backupRoutes } from "./backup.routes.js";
 import { translateRoutes } from "./translate.routes.js";
 import { hapticRoutes } from "./haptic.routes.js";
+import { botBrowserRoutes } from "./bot-browser.routes.js";
+import { chatFoldersRoutes } from "./chat-folders.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(chatsRoutes, { prefix: "/api/chats" });
+  await app.register(chatFoldersRoutes, { prefix: "/api/chat-folders" });
   await app.register(charactersRoutes, { prefix: "/api/characters" });
   await app.register(lorebooksRoutes, { prefix: "/api/lorebooks" });
   await app.register(promptsRoutes, { prefix: "/api/prompts" });
@@ -60,4 +63,5 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(backupRoutes, { prefix: "/api/backup" });
   await app.register(translateRoutes, { prefix: "/api/translate" });
   await app.register(hapticRoutes, { prefix: "/api/haptic" });
+  await app.register(botBrowserRoutes, { prefix: "/api/bot-browser" });
 }

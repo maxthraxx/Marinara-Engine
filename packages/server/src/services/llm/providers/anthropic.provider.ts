@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import {
   BaseLLMProvider,
+  llmFetch,
   sanitizeApiError,
   type ChatMessage,
   type ChatOptions,
@@ -86,7 +87,7 @@ export class AnthropicProvider extends BaseLLMProvider {
       delete body.temperature;
     }
 
-    const response = await fetch(url, {
+    const response = await llmFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -207,8 +208,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         merged.push({ ...msg });
       }
     }
-    // Ensure starts with user
-    if (merged.length > 0 && merged[0]!.role !== "user") {
+    // Claude requires at least one message; ensure it starts with a user turn
+    if (merged.length === 0) {
+      merged.push({ role: "user", content: "[Start]" });
+    } else if (merged[0]!.role !== "user") {
       merged.unshift({ role: "user", content: "[Start]" });
     }
     return merged;

@@ -477,6 +477,8 @@ export function inferImageSource(model: string, baseUrl: string): string {
   if (m.includes("black-forest") || m.includes("flux") || u.includes("together.xyz")) return "togetherai";
   if (u.includes("stablehorde.net")) return "horde";
   if (u.includes("blockentropy")) return "blockentropy";
+  if (u.includes(":8188") || u.includes("comfyui")) return "comfyui";
+  if (u.includes(":7860") && !u.includes("drawthings")) return "automatic1111";
   // OpenAI-compatible fallback (works for most proxies)
   return "openai";
 }

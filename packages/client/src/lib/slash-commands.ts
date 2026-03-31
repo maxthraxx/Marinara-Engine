@@ -63,6 +63,33 @@ function rollDice(count: number, sides: number): number[] {
   return results;
 }
 
+// ── Reminder parser ────────────────
+
+function parseReminder(input: string): { ms: number; timeStr: string; message: string } | null {
+  const match = input.match(/^((?:\d+[hms])+)\s+(.+)$/is);
+  if (!match) return null;
+
+  const timeRaw = match[1]!;
+  const message = match[2]!.trim();
+  if (!message) return null;
+
+  let ms = 0;
+  const h = timeRaw.match(/(\d+)h/i);
+  const m = timeRaw.match(/(\d+)m/i);
+  const s = timeRaw.match(/(\d+)s/i);
+  if (h) ms += parseInt(h[1]!, 10) * 3_600_000;
+  if (m) ms += parseInt(m[1]!, 10) * 60_000;
+  if (s) ms += parseInt(s[1]!, 10) * 1_000;
+  if (ms === 0) return null;
+
+  const parts: string[] = [];
+  if (h) parts.push(`${h[1]}h`);
+  if (m) parts.push(`${m[1]}m`);
+  if (s) parts.push(`${s[1]}s`);
+
+  return { ms, timeStr: parts.join(""), message };
+}
+
 // ── Command definitions ────────────────
 
 const COMMANDS: SlashCommand[] = [
@@ -149,15 +176,62 @@ const COMMANDS: SlashCommand[] = [
   {
     name: "impersonate",
     aliases: ["imp"],
-    description: "Generate a response as your character ({{user}})",
-    usage: "/impersonate",
-    async execute(_args, ctx) {
+    description: "Generate a response as your character ({{user}}), optionally with a direction",
+    usage: "/impersonate [direction]",
+    async execute(args, ctx) {
+      const direction = args.trim();
       await ctx.generate({
         chatId: ctx.chatId,
         connectionId: null,
         impersonate: true,
+        ...(direction && {
+          userMessage: `[Impersonation instruction — write {{user}}'s next response, steering it toward the following: ${direction}]`,
+        }),
       });
       return { handled: true };
+    },
+  },
+  {
+    name: "remind",
+    aliases: ["reminder", "timer"],
+    description: "Set a timed reminder — the AI will message you after the specified time",
+    usage: "/remind <time> <message>  (e.g. /remind 30m hang up laundry)",
+    local: true,
+    async execute(args, ctx) {
+      const parsed = parseReminder(args.trim());
+      if (!parsed) {
+        return {
+          handled: true,
+          feedback:
+            "Usage: /remind <time> <message>\nExamples: /remind 30m hang up laundry, /remind 1h30m check the oven",
+        };
+      }
+
+      const { ms, timeStr, message } = parsed;
+      const chatId = ctx.chatId;
+      const invalidate = ctx.invalidate;
+
+      setTimeout(async () => {
+        try {
+          await api.post(`/chats/${chatId}/messages`, {
+            role: "narrator",
+            content: `⏰ **Reminder:** ${message}`,
+          });
+          try {
+            invalidate();
+          } catch {
+            /* component may have unmounted */
+          }
+        } catch {
+          /* chat may have been deleted */
+        }
+        toast("⏰ Reminder!", { description: message, duration: 30_000 });
+      }, ms);
+
+      return {
+        handled: true,
+        feedback: `⏰ Reminder set for ${timeStr} from now: "${message}"\n(Keep this tab open — the reminder lives in your browser session.)`,
+      };
     },
   },
   {

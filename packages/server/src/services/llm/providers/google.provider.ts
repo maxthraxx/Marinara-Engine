@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import {
   BaseLLMProvider,
+  llmFetch,
   sanitizeApiError,
   type ChatMessage,
   type ChatOptions,
@@ -26,8 +27,12 @@ export class GoogleProvider extends BaseLLMProvider {
     // Gemini 3.x models use thinkingLevel; Gemini 2.5 uses thinkingBudget
     const isGemini3 = /gemini-3/i.test(model);
 
+    // Only models that actually support thinking should get thinkingConfig:
+    // Gemini 3.x, 2.5-flash/pro, and 2.0-flash-thinking.
+    const supportsThinking = isGemini3 || /gemini-2\.5|gemini-2\.0-flash-thinking/i.test(model);
+
     let thinkingConfig: Record<string, unknown> | undefined;
-    if (options.enableThinking || options.reasoningEffort) {
+    if (supportsThinking && (options.enableThinking || options.reasoningEffort)) {
       if (isGemini3) {
         const levelMap = { low: "low", medium: "medium", high: "high", xhigh: "high" } as const;
         thinkingConfig = {
@@ -98,11 +103,8 @@ export class GoogleProvider extends BaseLLMProvider {
         ...(options.topK ? { topK: options.topK } : {}),
         ...(options.frequencyPenalty ? { frequencyPenalty: options.frequencyPenalty } : {}),
         ...(options.presencePenalty ? { presencePenalty: options.presencePenalty } : {}),
-        // Some proxies only forward thinkingConfig when it's inside generationConfig
         ...(thinkingConfig ? { thinkingConfig } : {}),
       },
-      // Also send at top-level for direct Gemini API compatibility
-      ...(thinkingConfig ? { thinkingConfig } : {}),
     };
 
     if (systemMessages.length > 0) {
@@ -111,7 +113,7 @@ export class GoogleProvider extends BaseLLMProvider {
       };
     }
 
-    const response = await fetch(url, {
+    const response = await llmFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

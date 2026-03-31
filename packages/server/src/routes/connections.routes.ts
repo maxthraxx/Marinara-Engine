@@ -54,8 +54,6 @@ export async function connectionsRoutes(app: FastifyInstance) {
       const provider = PROVIDERS[conn.provider as keyof typeof PROVIDERS];
       const baseUrl = conn.baseUrl || provider?.defaultBaseUrl || "";
 
-      
-      
       if (!baseUrl) {
         return {
           success: false,
@@ -77,6 +75,15 @@ export async function connectionsRoutes(app: FastifyInstance) {
       if (conn.provider === "image_generation" && baseUrl.toLowerCase().includes("novelai.net")) {
         // NovelAI: validate the API key via the user subscription endpoint
         testUrl = "https://api.novelai.net/user/subscription";
+      } else if (
+        conn.provider === "image_generation" &&
+        (baseUrl.includes(":8188") || baseUrl.toLowerCase().includes("comfyui"))
+      ) {
+        // ComfyUI: ping the system stats endpoint
+        testUrl = `${baseUrl}/system_stats`;
+      } else if (conn.provider === "image_generation" && baseUrl.includes(":7860")) {
+        // AUTOMATIC1111 / SD Web UI: ping the internal ping endpoint
+        testUrl = `${baseUrl}/sdapi/v1/options`;
       } else {
         testUrl = `${baseUrl}${provider?.modelsEndpoint || "/models"}`;
       }
@@ -130,6 +137,36 @@ export async function connectionsRoutes(app: FastifyInstance) {
       // Anthropic requires version header for models endpoint
       if (conn.provider === "anthropic") {
         headers["anthropic-version"] = "2023-06-01";
+      }
+
+      // ── Special handling for local image gen services ──
+      const lowerBase = baseUrl.toLowerCase();
+
+      // ComfyUI: fetch checkpoints from object_info
+      if (conn.provider === "image_generation" && (lowerBase.includes(":8188") || lowerBase.includes("comfyui"))) {
+        const res = await fetch(`${baseUrl}/object_info/CheckpointLoaderSimple`);
+        if (!res.ok) {
+          return reply.status(502).send({ error: `ComfyUI returned ${res.status}` });
+        }
+        const info = (await res.json()) as {
+          CheckpointLoaderSimple?: { input?: { required?: { ckpt_name?: [string[]] } } };
+        };
+        const ckpts = info.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0] ?? [];
+        return { models: ckpts.map((name: string) => ({ id: name, name })) };
+      }
+
+      // AUTOMATIC1111 / SD Web UI: fetch models from /sdapi/v1/sd-models
+      if (conn.provider === "image_generation" && lowerBase.includes(":7860")) {
+        const res = await fetch(`${baseUrl}/sdapi/v1/sd-models`);
+        if (!res.ok) {
+          return reply.status(502).send({ error: `SD Web UI returned ${res.status}` });
+        }
+        const sdModels = (await res.json()) as Array<{ title?: string; model_name?: string }>;
+        return {
+          models: sdModels
+            .map((m) => ({ id: m.title ?? m.model_name ?? "", name: m.title ?? m.model_name ?? "" }))
+            .filter((m) => m.id),
+        };
       }
 
       let modelsUrl = `${baseUrl}${provider?.modelsEndpoint ?? "/models"}`;

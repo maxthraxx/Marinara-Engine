@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────
-// Importer: SillyTavern Character (JSON / V2 Card)
+// Importer: SillyTavern Character (JSON / V2 Card / CharX)
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
@@ -10,6 +10,7 @@ import { writeFile } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { DATA_DIR } from "../../utils/data-dir.js";
+import AdmZip from "adm-zip";
 
 const AVATAR_DIR = join(DATA_DIR, "avatars");
 
@@ -31,6 +32,10 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB) {
   const avatarDataUrl = raw._avatarDataUrl as string | null;
   delete raw._avatarDataUrl;
 
+  // Extract browser source marker if present
+  const botBrowserSource = raw._botBrowserSource as string | null;
+  delete raw._botBrowserSource;
+
   let data: CharacterData;
 
   // Detect format
@@ -46,6 +51,11 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB) {
   } else {
     // Try treating the whole object as character data
     data = normalizeV2(raw);
+  }
+
+  // Tag with browser source if imported from browser
+  if (botBrowserSource) {
+    data.extensions.botBrowserSource = botBrowserSource;
   }
 
   // Save avatar image if provided
@@ -100,6 +110,91 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB) {
     name: data.name,
     ...(lorebookResult ? { lorebook: lorebookResult } : {}),
   };
+}
+
+/**
+ * Import a CharX (.charx) file — RisuAI Character Card V3 zip format.
+ * Extracts card.json and the main icon asset from the zip.
+ */
+export async function importCharX(buf: Buffer, db: DB) {
+  const zip = new AdmZip(buf);
+
+  // Extract card.json from root of the zip
+  const cardEntry = zip.getEntry("card.json");
+  if (!cardEntry) {
+    return { success: false, error: "Invalid .charx file: missing card.json at root." };
+  }
+
+  const cardJson = JSON.parse(cardEntry.getData().toString("utf-8")) as Record<string, unknown>;
+
+  // Resolve the main icon asset from the zip
+  let avatarDataUrl: string | null = null;
+
+  // The card.json is a CCv3 wrapper: { spec: "chara_card_v3", data: { ... } }
+  const cardData = (cardJson.data ?? cardJson) as Record<string, unknown>;
+  const assets = cardData.assets as Array<{ type: string; uri: string; name: string; ext: string }> | undefined;
+
+  if (assets && Array.isArray(assets)) {
+    // Find the main icon asset
+    const mainIcon =
+      assets.find((a) => a.type === "icon" && a.name === "main") ?? assets.find((a) => a.type === "icon");
+
+    if (mainIcon && mainIcon.uri) {
+      avatarDataUrl = resolveCharXAsset(zip, mainIcon.uri, mainIcon.ext);
+    }
+  }
+
+  // If no icon found via assets, check for common fallback paths
+  if (!avatarDataUrl) {
+    for (const fallback of [
+      "assets/icon/images/main.png",
+      "assets/icon/images/main.webp",
+      "assets/icon/images/main.jpg",
+    ]) {
+      const entry = zip.getEntry(fallback);
+      if (entry) {
+        const ext = fallback.split(".").pop() ?? "png";
+        const mime = ext === "jpg" ? "jpeg" : ext;
+        avatarDataUrl = `data:image/${mime};base64,${entry.getData().toString("base64")}`;
+        break;
+      }
+    }
+  }
+
+  // Attach avatar and delegate to the standard importer
+  if (avatarDataUrl) {
+    cardJson._avatarDataUrl = avatarDataUrl;
+  }
+
+  return importSTCharacter(cardJson as Record<string, unknown>, db);
+}
+
+/** Resolve an asset URI from a CharX zip to a data URL. */
+function resolveCharXAsset(zip: AdmZip, uri: string, ext?: string): string | null {
+  // Handle embeded:// URIs (note: spec uses "embeded" not "embedded")
+  let zipPath: string | null = null;
+
+  if (uri.startsWith("embeded://")) {
+    zipPath = uri.slice("embeded://".length);
+  } else if (uri.startsWith("embedded://")) {
+    // Accept the common misspelling too
+    zipPath = uri.slice("embedded://".length);
+  } else if (uri.startsWith("data:image/")) {
+    // Already a data URL
+    return uri;
+  } else if (!uri.includes("://") && uri !== "ccdefault:") {
+    // Treat as a relative path within the zip
+    zipPath = uri;
+  }
+
+  if (!zipPath) return null;
+
+  const entry = zip.getEntry(zipPath);
+  if (!entry) return null;
+
+  const fileExt = ext ?? zipPath.split(".").pop() ?? "png";
+  const mime = fileExt === "jpg" ? "jpeg" : fileExt;
+  return `data:image/${mime};base64,${entry.getData().toString("base64")}`;
 }
 
 function normalizeV2(raw: Record<string, unknown>): CharacterData {

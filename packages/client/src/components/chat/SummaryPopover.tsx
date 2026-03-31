@@ -22,15 +22,22 @@ export function SummaryPopover({ chatId, summary, onClose }: SummaryPopoverProps
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Close on click outside
+  // Close on click outside — defer by one frame so the synthesised
+  // mousedown from the tap that *opened* the popover doesn't
+  // immediately close it on touch devices (Android / iPadOS).
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
         onClose();
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    const raf = requestAnimationFrame(() => {
+      document.addEventListener("mousedown", handler);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("mousedown", handler);
+    };
   }, [onClose]);
 
   // Close on Escape

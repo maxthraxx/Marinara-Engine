@@ -115,6 +115,17 @@ export function useDuplicatePreset() {
   });
 }
 
+export function useSetDefaultPreset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<PromptPreset>(`/prompts/${id}/set-default`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: presetKeys.list() });
+      qc.invalidateQueries({ queryKey: presetKeys.default() });
+    },
+  });
+}
+
 // ═══════════════════════════════════════════════
 //  Groups
 // ═══════════════════════════════════════════════

@@ -14,15 +14,28 @@ import {
   Circle,
   Moon,
   MinusCircle,
+  FolderOpen,
+  FolderPlus,
+  ChevronRight,
+  GripVertical,
 } from "lucide-react";
 import { useChats, useCreateChat, useDeleteChat, useDeleteChatGroup } from "../../hooks/use-chats";
+import {
+  useChatFolders,
+  useCreateFolder,
+  useUpdateFolder,
+  useDeleteFolder,
+  useReorderFolders,
+  useMoveChat,
+} from "../../hooks/use-chat-folders";
 import { useCharacters } from "../../hooks/use-characters";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore, type UserStatus } from "../../stores/ui.store";
 import { cn } from "../../lib/utils";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import type { ChatMode } from "@marinara-engine/shared";
+import type { ChatFolder, ChatMode } from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal";
+import { Reorder, useDragControls } from "framer-motion";
 
 const MODE_CONFIG: Record<
   string,
@@ -66,6 +79,14 @@ export function ChatSidebar() {
   const closeAllDetails = useUIStore((s) => s.closeAllDetails);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
 
+  // Folder hooks
+  const { data: folders } = useChatFolders();
+  const createFolderMut = useCreateFolder();
+  const updateFolderMut = useUpdateFolder();
+  const deleteFolderMut = useDeleteFolder();
+  const reorderFoldersMut = useReorderFolders();
+  const moveChatMut = useMoveChat();
+
   // Build character lookup: id → { name, avatarUrl, conversationStatus }
   const charLookup = useMemo(() => {
     const map = new Map<string, { name: string; avatarUrl: string | null; conversationStatus?: string }>();
@@ -91,6 +112,11 @@ export function ChatSidebar() {
     groupId: string | null;
     branchCount: number;
   } | null>(null);
+
+  // Folder UI state
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [movingChatId, setMovingChatId] = useState<string | null>(null);
 
   const filtered = chats?.filter(
     (c) => c.name.toLowerCase().includes(searchQuery.toLowerCase()) && c.mode === activeTab,
@@ -129,6 +155,34 @@ export function ChatSidebar() {
     return result;
   }, [chats, filtered]);
 
+  // ── Folder grouping ──
+  const modeFolders = useMemo(() => {
+    if (!folders) return [] as ChatFolder[];
+    return folders.filter((f) => f.mode === activeTab).sort((a, b) => a.sortOrder - b.sortOrder);
+  }, [folders, activeTab]);
+
+  const { unfiledChats, folderChatsMap } = useMemo(() => {
+    if (!displayChats.length)
+      return { unfiledChats: displayChats, folderChatsMap: new Map<string, typeof displayChats>() };
+    const unfiled: typeof displayChats = [];
+    const map = new Map<string, typeof displayChats>();
+    for (const entry of displayChats) {
+      const fid = entry.chat.folderId;
+      if (!fid) {
+        unfiled.push(entry);
+        continue;
+      }
+      if (!map.has(fid)) map.set(fid, []);
+      map.get(fid)!.push(entry);
+    }
+    return { unfiledChats: unfiled, folderChatsMap: map };
+  }, [displayChats]);
+
+  const [localFolderOrder, setLocalFolderOrder] = useState<string[]>([]);
+  useEffect(() => {
+    setLocalFolderOrder(modeFolders.map((f) => f.id));
+  }, [modeFolders]);
+
   // Detect if active chat belongs to a group (so its group row highlights)
   const activeChat = chats?.find((c) => c.id === activeChatId);
   const activeGroupId = activeChat?.groupId ?? null;
@@ -153,10 +207,252 @@ export function ChatSidebar() {
     handleNewChat(activeTab);
   }, [handleNewChat, activeTab]);
 
+  // ── Folder handlers ──
+  const handleCreateFolder = useCallback(() => {
+    if (!newFolderName.trim()) return;
+    createFolderMut.mutate({ name: newFolderName.trim(), mode: activeTab });
+    setNewFolderName("");
+    setCreatingFolder(false);
+  }, [newFolderName, activeTab, createFolderMut]);
+
+  const handleToggleCollapse = useCallback(
+    (folder: ChatFolder) => {
+      updateFolderMut.mutate({ id: folder.id, collapsed: !folder.collapsed });
+    },
+    [updateFolderMut],
+  );
+
+  const handleRenameFolder = useCallback(
+    (id: string, name: string) => {
+      if (!name.trim()) return;
+      updateFolderMut.mutate({ id, name: name.trim() });
+    },
+    [updateFolderMut],
+  );
+
+  const handleDeleteFolder = useCallback(
+    (id: string) => {
+      if (confirm("Delete this folder? Chats will be moved to the top level.")) {
+        deleteFolderMut.mutate(id);
+      }
+    },
+    [deleteFolderMut],
+  );
+
+  const handleFolderReorder = useCallback(
+    (newOrder: string[]) => {
+      setLocalFolderOrder(newOrder);
+      reorderFoldersMut.mutate(newOrder);
+    },
+    [reorderFoldersMut],
+  );
+
+  const handleMoveToFolder = useCallback(
+    (chatId: string, folderId: string | null) => {
+      moveChatMut.mutate({ chatId, folderId });
+      setMovingChatId(null);
+    },
+    [moveChatMut],
+  );
+
+  // ── Chat row renderer (shared between unfiled + folder sections) ──
+  const renderChatRow = ({ chat, branchCount }: (typeof displayChats)[number]) => {
+    const cfg = MODE_CONFIG[chat.mode] ?? MODE_CONFIG.conversation;
+    const isActive = activeChatId === chat.id || (chat.groupId != null && chat.groupId === activeGroupId);
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        key={chat.groupId ?? chat.id}
+        onClick={() => {
+          if (hasAnyDetailOpen()) {
+            if (editorDirty) {
+              if (!window.confirm("You have unsaved changes. Discard and continue?")) return;
+            }
+            closeAllDetails();
+          }
+          setActiveChatId(chat.id);
+          if (window.innerWidth < 768) setSidebarOpen(false);
+        }}
+        className={cn(
+          "group relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-all duration-150",
+          isActive ? "bg-[var(--sidebar-accent)] shadow-sm" : "hover:bg-[var(--sidebar-accent)]/60",
+        )}
+      >
+        {/* Active indicator */}
+        {isActive && (
+          <span
+            className="absolute -left-0.5 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full"
+            style={{ background: cfg.bg }}
+          />
+        )}
+
+        {/* Chat avatar(s) or mode icon fallback — with unread badge overlay */}
+        <div className="relative flex-shrink-0">
+          {(() => {
+            const charIds: string[] =
+              typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : (chat.characterIds ?? []);
+            const avatars = charIds
+              .slice(0, 3)
+              .map((id) => charLookup.get(id))
+              .filter(Boolean) as { name: string; avatarUrl: string | null; conversationStatus?: string }[];
+
+            const isConvoMode = chat.mode === "conversation";
+            const statusDot = (status?: string) => {
+              if (!isConvoMode) return null;
+              const s = status ?? "online";
+              const color =
+                s === "online"
+                  ? "bg-green-500"
+                  : s === "idle"
+                    ? "bg-yellow-500"
+                    : s === "dnd"
+                      ? "bg-red-500"
+                      : "bg-gray-400";
+              return (
+                <span
+                  className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-[1.5px] ring-[var(--sidebar-background)] ${color}`}
+                />
+              );
+            };
+
+            if (avatars.length === 0) {
+              return (
+                <div
+                  className={cn(
+                    "flex h-7 w-7 items-center justify-center rounded-lg text-xs transition-transform group-active:scale-90",
+                    isActive ? "text-white shadow-sm" : "bg-[var(--secondary)] text-[var(--muted-foreground)]",
+                  )}
+                  style={isActive ? { background: cfg.bg } : undefined}
+                >
+                  {cfg.icon}
+                </div>
+              );
+            }
+
+            if (avatars.length === 1) {
+              const a = avatars[0]!;
+              return a.avatarUrl ? (
+                <div className="relative h-7 w-7 flex-shrink-0 transition-transform group-active:scale-90">
+                  <img src={a.avatarUrl} alt={a.name} className="h-7 w-7 rounded-full object-cover" />
+                  {statusDot(a.conversationStatus)}
+                </div>
+              ) : (
+                <div className="relative h-7 w-7 flex-shrink-0 transition-transform group-active:scale-90">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--secondary)] text-[0.625rem] font-bold text-[var(--muted-foreground)]">
+                    {a.name[0]}
+                  </div>
+                  {statusDot(a.conversationStatus)}
+                </div>
+              );
+            }
+
+            // Multiple characters — stacked avatars
+            return (
+              <div className="relative h-7 w-7 flex-shrink-0 transition-transform group-active:scale-90">
+                {avatars.slice(0, 2).map((a, i) =>
+                  a.avatarUrl ? (
+                    <img
+                      key={i}
+                      src={a.avatarUrl}
+                      alt={a.name}
+                      className={cn(
+                        "absolute h-5 w-5 rounded-full object-cover ring-2 ring-[var(--sidebar-background)]",
+                        i === 0 ? "top-0 left-0 z-10" : "bottom-0 right-0",
+                      )}
+                    />
+                  ) : (
+                    <div
+                      key={i}
+                      className={cn(
+                        "absolute flex h-5 w-5 items-center justify-center rounded-full bg-[var(--secondary)] text-[0.5rem] font-bold text-[var(--muted-foreground)] ring-2 ring-[var(--sidebar-background)]",
+                        i === 0 ? "top-0 left-0 z-10" : "bottom-0 right-0",
+                      )}
+                    >
+                      {a.name[0]}
+                    </div>
+                  ),
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Unread count badge */}
+          {(() => {
+            const count = unreadCounts.get(chat.id) || 0;
+            if (count === 0 || isActive) return null;
+            return (
+              <span className="absolute -top-1 -right-1 z-20 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[0.5625rem] font-bold leading-none text-white shadow-sm ring-2 ring-[var(--sidebar-background)]">
+                {count > 99 ? "99+" : count}
+              </span>
+            );
+          })()}
+        </div>
+
+        {/* Name */}
+        <div className="min-w-0 flex-1">
+          <span
+            className={cn(
+              "block truncate text-sm",
+              isActive ? "font-medium text-[var(--sidebar-accent-foreground)]" : "text-[var(--sidebar-foreground)]",
+            )}
+          >
+            {chat.name}
+          </span>
+        </div>
+
+        {/* Branch count badge */}
+        {branchCount > 1 && (
+          <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+            <GitBranch size="0.625rem" />
+            {branchCount}
+          </span>
+        )}
+
+        {/* Mode badge on hover */}
+        <span className="shrink-0 text-[0.625rem] text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
+          {cfg.shortLabel}
+        </span>
+
+        {/* Move to folder */}
+        {modeFolders.length > 0 && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setMovingChatId(chat.id);
+            }}
+            className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--accent)] group-hover:opacity-100 max-md:opacity-100"
+            title="Move to folder"
+          >
+            <FolderOpen size="0.75rem" className="text-[var(--muted-foreground)]" />
+          </button>
+        )}
+
+        {/* Delete button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (branchCount > 1 && chat.groupId) {
+              setDeleteTarget({ chatId: chat.id, groupId: chat.groupId, branchCount });
+            } else {
+              if (confirm("Delete this chat?")) {
+                deleteChat.mutate(chat.id);
+                if (activeChatId === chat.id) setActiveChatId(null);
+              }
+            }
+          }}
+          className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--destructive)]/20 group-hover:opacity-100 max-md:opacity-100"
+        >
+          <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
+        </button>
+      </div>
+    );
+  };
+
   return (
     <nav data-component="ChatSidebar" aria-label="Chat navigation" className="mari-chat-sidebar flex h-full flex-col">
       {/* Header */}
-      <div className="relative flex h-12 items-center justify-between px-4">
+      <div className="relative flex h-12 items-center justify-between bg-[var(--card)]/80 px-4 backdrop-blur-sm">
         <div className="absolute inset-x-0 bottom-0 h-px bg-[var(--border)]/30" />
         <h2 className="retro-glow-text text-sm font-bold tracking-tight">✧ Chats</h2>
         <div className="flex items-center gap-1">
@@ -253,188 +549,72 @@ export function ChatSidebar() {
         )}
 
         <div className="stagger-children flex flex-col gap-0.5">
-          {displayChats.map(({ chat, branchCount }) => {
-            const cfg = MODE_CONFIG[chat.mode] ?? MODE_CONFIG.conversation;
-            const isActive = activeChatId === chat.id || (chat.groupId != null && chat.groupId === activeGroupId);
-
-            return (
-              <div
-                role="button"
-                tabIndex={0}
-                key={chat.groupId ?? chat.id}
-                onClick={() => {
-                  if (hasAnyDetailOpen()) {
-                    if (editorDirty) {
-                      if (!window.confirm("You have unsaved changes. Discard and continue?")) return;
-                    }
-                    closeAllDetails();
+          {/* New folder */}
+          {creatingFolder ? (
+            <div className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5">
+              <FolderPlus size="0.75rem" className="text-[var(--muted-foreground)]" />
+              <input
+                autoFocus
+                placeholder="Folder name..."
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateFolder();
+                  if (e.key === "Escape") {
+                    setCreatingFolder(false);
+                    setNewFolderName("");
                   }
-                  setActiveChatId(chat.id);
-                  if (window.innerWidth < 768) setSidebarOpen(false);
                 }}
-                className={cn(
-                  "group relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-all duration-150",
-                  isActive ? "bg-[var(--sidebar-accent)] shadow-sm" : "hover:bg-[var(--sidebar-accent)]/60",
-                )}
-              >
-                {/* Active indicator */}
-                {isActive && (
-                  <span
-                    className="absolute -left-0.5 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full"
-                    style={{ background: cfg.bg }}
+                onBlur={() => {
+                  if (newFolderName.trim()) handleCreateFolder();
+                  else {
+                    setCreatingFolder(false);
+                    setNewFolderName("");
+                  }
+                }}
+                className="flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+              />
+            </div>
+          ) : (
+            <button
+              onClick={() => setCreatingFolder(true)}
+              className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[0.6875rem] text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]"
+            >
+              <FolderPlus size="0.75rem" />
+              New Folder
+            </button>
+          )}
+
+          {/* Folders (drag-to-reorder) */}
+          {localFolderOrder.length > 0 && (
+            <Reorder.Group
+              axis="y"
+              values={localFolderOrder}
+              onReorder={handleFolderReorder}
+              as="div"
+              className="flex flex-col gap-0.5 mt-1"
+            >
+              {localFolderOrder.map((folderId) => {
+                const folder = modeFolders.find((f) => f.id === folderId);
+                if (!folder) return null;
+                const folderEntries = folderChatsMap.get(folderId) ?? [];
+                return (
+                  <FolderRow
+                    key={folderId}
+                    folder={folder}
+                    entries={folderEntries}
+                    renderChatRow={renderChatRow}
+                    onToggleCollapse={handleToggleCollapse}
+                    onRename={handleRenameFolder}
+                    onDelete={handleDeleteFolder}
                   />
-                )}
+                );
+              })}
+            </Reorder.Group>
+          )}
 
-                {/* Chat avatar(s) or mode icon fallback — with unread badge overlay */}
-                <div className="relative flex-shrink-0">
-                  {(() => {
-                    const charIds: string[] =
-                      typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : (chat.characterIds ?? []);
-                    const avatars = charIds
-                      .slice(0, 3)
-                      .map((id) => charLookup.get(id))
-                      .filter(Boolean) as { name: string; avatarUrl: string | null; conversationStatus?: string }[];
-
-                    const isConvoMode = chat.mode === "conversation";
-                    const statusDot = (status?: string) => {
-                      if (!isConvoMode) return null;
-                      const s = status ?? "online";
-                      const color =
-                        s === "online"
-                          ? "bg-green-500"
-                          : s === "idle"
-                            ? "bg-yellow-500"
-                            : s === "dnd"
-                              ? "bg-red-500"
-                              : "bg-gray-400";
-                      return (
-                        <span
-                          className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-[1.5px] ring-[var(--sidebar-background)] ${color}`}
-                        />
-                      );
-                    };
-
-                    if (avatars.length === 0) {
-                      // Fallback: mode icon
-                      return (
-                        <div
-                          className={cn(
-                            "flex h-7 w-7 items-center justify-center rounded-lg text-xs transition-transform group-active:scale-90",
-                            isActive ? "text-white shadow-sm" : "bg-[var(--secondary)] text-[var(--muted-foreground)]",
-                          )}
-                          style={isActive ? { background: cfg.bg } : undefined}
-                        >
-                          {cfg.icon}
-                        </div>
-                      );
-                    }
-
-                    if (avatars.length === 1) {
-                      const a = avatars[0]!;
-                      return a.avatarUrl ? (
-                        <div className="relative h-7 w-7 flex-shrink-0 transition-transform group-active:scale-90">
-                          <img src={a.avatarUrl} alt={a.name} className="h-7 w-7 rounded-full object-cover" />
-                          {statusDot(a.conversationStatus)}
-                        </div>
-                      ) : (
-                        <div className="relative h-7 w-7 flex-shrink-0 transition-transform group-active:scale-90">
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--secondary)] text-[0.625rem] font-bold text-[var(--muted-foreground)]">
-                            {a.name[0]}
-                          </div>
-                          {statusDot(a.conversationStatus)}
-                        </div>
-                      );
-                    }
-
-                    // Multiple characters — stacked avatars
-                    return (
-                      <div className="relative h-7 w-7 flex-shrink-0 transition-transform group-active:scale-90">
-                        {avatars.slice(0, 2).map((a, i) =>
-                          a.avatarUrl ? (
-                            <img
-                              key={i}
-                              src={a.avatarUrl}
-                              alt={a.name}
-                              className={cn(
-                                "absolute h-5 w-5 rounded-full object-cover ring-2 ring-[var(--sidebar-background)]",
-                                i === 0 ? "top-0 left-0 z-10" : "bottom-0 right-0",
-                              )}
-                            />
-                          ) : (
-                            <div
-                              key={i}
-                              className={cn(
-                                "absolute flex h-5 w-5 items-center justify-center rounded-full bg-[var(--secondary)] text-[0.5rem] font-bold text-[var(--muted-foreground)] ring-2 ring-[var(--sidebar-background)]",
-                                i === 0 ? "top-0 left-0 z-10" : "bottom-0 right-0",
-                              )}
-                            >
-                              {a.name[0]}
-                            </div>
-                          ),
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  {/* Unread count badge — overlaid on the avatar like Discord */}
-                  {(() => {
-                    const count = unreadCounts.get(chat.id) || 0;
-                    if (count === 0 || isActive) return null;
-                    return (
-                      <span className="absolute -top-1 -right-1 z-20 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[0.5625rem] font-bold leading-none text-white shadow-sm ring-2 ring-[var(--sidebar-background)]">
-                        {count > 99 ? "99+" : count}
-                      </span>
-                    );
-                  })()}
-                </div>
-
-                {/* Name + branch count */}
-                <div className="min-w-0 flex-1">
-                  <span
-                    className={cn(
-                      "block truncate text-sm",
-                      isActive
-                        ? "font-medium text-[var(--sidebar-accent-foreground)]"
-                        : "text-[var(--sidebar-foreground)]",
-                    )}
-                  >
-                    {chat.name}
-                  </span>
-                </div>
-
-                {/* Branch count badge */}
-                {branchCount > 1 && (
-                  <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                    <GitBranch size="0.625rem" />
-                    {branchCount}
-                  </span>
-                )}
-
-                {/* Mode badge on hover */}
-                <span className="shrink-0 text-[0.625rem] text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
-                  {cfg.shortLabel}
-                </span>
-
-                {/* Delete button */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (branchCount > 1 && chat.groupId) {
-                      setDeleteTarget({ chatId: chat.id, groupId: chat.groupId, branchCount });
-                    } else {
-                      if (confirm("Delete this chat?")) {
-                        deleteChat.mutate(chat.id);
-                        if (activeChatId === chat.id) setActiveChatId(null);
-                      }
-                    }
-                  }}
-                  className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--destructive)]/20 group-hover:opacity-100 max-md:opacity-100"
-                >
-                  <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
-                </button>
-              </div>
-            );
-          })}
+          {/* Unfiled chats */}
+          {unfiledChats.map(renderChatRow)}
         </div>
       </div>
 
@@ -484,7 +664,127 @@ export function ChatSidebar() {
           </div>
         )}
       </Modal>
+
+      {/* ── Move to Folder Modal ── */}
+      <Modal open={movingChatId !== null} onClose={() => setMovingChatId(null)} title="Move to Folder" width="max-w-xs">
+        {movingChatId && (
+          <div className="flex flex-col gap-1">
+            <button
+              onClick={() => handleMoveToFolder(movingChatId, null)}
+              className={cn(
+                "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-all hover:bg-[var(--accent)]",
+                !chats?.find((c) => c.id === movingChatId)?.folderId && "bg-[var(--accent)] font-medium",
+              )}
+            >
+              <MessageSquare size="0.75rem" className="text-[var(--muted-foreground)]" />
+              Unfiled
+            </button>
+            {modeFolders.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => handleMoveToFolder(movingChatId, f.id)}
+                className={cn(
+                  "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-all hover:bg-[var(--accent)]",
+                  chats?.find((c) => c.id === movingChatId)?.folderId === f.id && "bg-[var(--accent)] font-medium",
+                )}
+              >
+                <div className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: f.color || "#6b7280" }} />
+                {f.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </Modal>
     </nav>
+  );
+}
+
+// ── FolderRow (self-contained state for menu/rename) ──
+function FolderRow({
+  folder,
+  entries,
+  renderChatRow,
+  onToggleCollapse,
+  onRename,
+  onDelete,
+}: {
+  folder: ChatFolder;
+  entries: { chat: any; branchCount: number }[];
+  renderChatRow: (entry: any) => React.ReactNode;
+  onToggleCollapse: (folder: ChatFolder) => void;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const dragControls = useDragControls();
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(folder.name);
+
+  return (
+    <Reorder.Item value={folder.id} dragListener={false} dragControls={dragControls} as="div" className="flex flex-col">
+      {/* Folder header */}
+      <div className="group relative flex items-center gap-1.5 rounded-lg px-2 py-1.5 hover:bg-[var(--sidebar-accent)]/40">
+        <div
+          onPointerDown={(e) => dragControls.start(e)}
+          className="cursor-grab touch-none opacity-0 transition-opacity active:cursor-grabbing group-hover:opacity-100 max-md:opacity-100"
+        >
+          <GripVertical size="0.625rem" className="text-[var(--muted-foreground)]" />
+        </div>
+        <button onClick={() => onToggleCollapse(folder)} className="p-0.5 text-[var(--muted-foreground)]">
+          <ChevronRight size="0.75rem" className={cn("transition-transform", !folder.collapsed && "rotate-90")} />
+        </button>
+        <div className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: folder.color || "#6b7280" }} />
+        {renaming ? (
+          <input
+            autoFocus
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                onRename(folder.id, renameValue);
+                setRenaming(false);
+              }
+              if (e.key === "Escape") {
+                setRenaming(false);
+                setRenameValue(folder.name);
+              }
+            }}
+            onBlur={() => {
+              onRename(folder.id, renameValue);
+              setRenaming(false);
+            }}
+            className="flex-1 bg-transparent text-xs font-medium text-[var(--foreground)] outline-none"
+          />
+        ) : (
+          <span
+            onClick={() => {
+              setRenameValue(folder.name);
+              setRenaming(true);
+            }}
+            className="flex-1 cursor-text truncate text-xs font-medium text-[var(--muted-foreground)]"
+          >
+            {folder.name}
+          </span>
+        )}
+        {entries.length > 0 && (
+          <span className="text-[0.5625rem] text-[var(--muted-foreground)]">{entries.length}</span>
+        )}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(folder.id);
+          }}
+          className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--destructive)]/20 group-hover:opacity-100 max-md:opacity-100"
+        >
+          <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
+        </button>
+      </div>
+      {/* Folder contents */}
+      {!folder.collapsed && entries.length > 0 && (
+        <div className="ml-4 flex flex-col gap-0.5 border-l border-[var(--border)]/20 pl-1">
+          {entries.map(renderChatRow)}
+        </div>
+      )}
+    </Reorder.Item>
   );
 }
 

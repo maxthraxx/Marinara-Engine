@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import {
   BaseLLMProvider,
+  llmFetch,
   sanitizeApiError,
   type ChatMessage,
   type ChatOptions,
@@ -127,7 +128,12 @@ export class OpenAIProvider extends BaseLLMProvider {
       body.reasoning_effort = options.reasoningEffort;
     }
 
-    const response = await fetch(url, {
+    // OpenRouter provider routing preference
+    if (options.openrouterProvider && this.baseUrl.includes("openrouter.ai")) {
+      body.provider = { order: [options.openrouterProvider] };
+    }
+
+    const response = await llmFetch(url, {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(body),
@@ -252,7 +258,12 @@ export class OpenAIProvider extends BaseLLMProvider {
       body.reasoning_effort = options.reasoningEffort;
     }
 
-    const response = await fetch(url, {
+    // OpenRouter provider routing preference
+    if (options.openrouterProvider && this.baseUrl.includes("openrouter.ai")) {
+      body.provider = { order: [options.openrouterProvider] };
+    }
+
+    const response = await llmFetch(url, {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(body),
@@ -552,7 +563,7 @@ export class OpenAIProvider extends BaseLLMProvider {
     const url = `${this.baseUrl}/responses`;
     const body = this.buildResponsesBody(messages, options);
 
-    const response = await fetch(url, {
+    const response = await llmFetch(url, {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(body),
@@ -670,7 +681,7 @@ export class OpenAIProvider extends BaseLLMProvider {
     const useStream = !!options.onToken;
     const body = this.buildResponsesBody(messages, { ...options, stream: useStream });
 
-    const response = await fetch(url, {
+    const response = await llmFetch(url, {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(body),

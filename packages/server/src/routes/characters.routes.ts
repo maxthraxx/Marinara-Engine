@@ -10,9 +10,10 @@ import {
 } from "@marinara-engine/shared";
 import type { ExportEnvelope } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
-import { writeFile, mkdir } from "fs/promises";
+import { writeFile, mkdir, readFile } from "fs/promises";
 import { join } from "path";
 import { DATA_DIR } from "../utils/data-dir.js";
+import { existsSync } from "fs";
 
 export async function charactersRoutes(app: FastifyInstance) {
   const storage = createCharactersStorage(app.db);
@@ -69,6 +70,41 @@ export async function charactersRoutes(app: FastifyInstance) {
         `attachment; filename="${encodeURIComponent(charData.name || "character")}.marinara.json"`,
       )
       .send(envelope);
+  });
+
+  // ── Export as PNG ──
+
+  app.get<{ Params: { id: string } }>("/:id/export-png", async (req, reply) => {
+    const char = await storage.getById(req.params.id);
+    if (!char) return reply.status(404).send({ error: "Character not found" });
+
+    const charData = JSON.parse(char.data);
+    const v2Envelope = { spec: "chara_card_v2", spec_version: "2.0", data: charData };
+    const charaBase64 = Buffer.from(JSON.stringify(v2Envelope), "utf-8").toString("base64");
+
+    // Read avatar image or create a minimal 1x1 transparent PNG fallback
+    let pngBuffer: Buffer;
+    if (char.avatarPath) {
+      // avatarPath is like /api/avatars/file/abc123.png — extract filename
+      const filename = char.avatarPath.split("/").pop()!;
+      const avatarFile = join(DATA_DIR, "avatars", filename);
+      if (existsSync(avatarFile)) {
+        pngBuffer = await readFile(avatarFile);
+      } else {
+        pngBuffer = createMinimalPng();
+      }
+    } else {
+      pngBuffer = createMinimalPng();
+    }
+
+    // Inject "chara" tEXt chunk into the PNG
+    const resultPng = injectTextChunk(pngBuffer, "chara", charaBase64);
+
+    const safeName = encodeURIComponent(charData.name || "character");
+    return reply
+      .header("Content-Type", "image/png")
+      .header("Content-Disposition", `attachment; filename="${safeName}.png"`)
+      .send(Buffer.from(resultPng));
   });
 
   // ── Avatar Upload ──
@@ -203,4 +239,94 @@ export async function charactersRoutes(app: FastifyInstance) {
     await storage.removeGroup(req.params.id);
     return reply.status(204).send();
   });
+}
+
+// ── PNG helpers ──
+
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+/** Create a minimal 1×1 transparent PNG (for characters without avatars). */
+function createMinimalPng(): Buffer {
+  // IHDR chunk data: 1×1, 8-bit RGBA
+  const ihdrData = Buffer.alloc(13);
+  ihdrData.writeUInt32BE(1, 0); // width
+  ihdrData.writeUInt32BE(1, 4); // height
+  ihdrData[8] = 8; // bit depth
+  ihdrData[9] = 6; // color type (RGBA)
+  ihdrData[10] = 0; // compression
+  ihdrData[11] = 0; // filter
+  ihdrData[12] = 0; // interlace
+
+  // IDAT: deflate-compressed scanline (filter byte 0 + 4 zero bytes for transparent pixel)
+  // Pre-computed deflate of [0, 0, 0, 0, 0]
+  const idatData = Buffer.from([0x78, 0x01, 0x62, 0x60, 0x60, 0x60, 0x60, 0x00, 0x00, 0x00, 0x05, 0x00, 0x01]);
+
+  const chunks: Buffer[] = [
+    PNG_SIGNATURE,
+    buildChunk("IHDR", ihdrData),
+    buildChunk("IDAT", idatData),
+    buildChunk("IEND", Buffer.alloc(0)),
+  ];
+  return Buffer.concat(chunks);
+}
+
+/** Build a single PNG chunk (length + type + data + CRC). */
+function buildChunk(type: string, data: Buffer): Buffer {
+  const typeBytes = Buffer.from(type, "ascii");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const crcInput = Buffer.concat([typeBytes, data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(crcInput) >>> 0);
+  return Buffer.concat([length, typeBytes, data, crc]);
+}
+
+/** Inject a tEXt chunk into an existing PNG buffer, right before the first IDAT. */
+function injectTextChunk(png: Buffer, keyword: string, text: string): Buffer {
+  // Validate PNG signature
+  if (png.subarray(0, 8).compare(PNG_SIGNATURE) !== 0) {
+    throw new Error("Invalid PNG signature");
+  }
+
+  // Build the tEXt chunk: keyword\0text
+  const textData = Buffer.concat([Buffer.from(keyword, "latin1"), Buffer.from([0]), Buffer.from(text, "latin1")]);
+  const textChunk = buildChunk("tEXt", textData);
+
+  // Walk chunks, insert before first IDAT
+  const parts: Buffer[] = [PNG_SIGNATURE];
+  let offset = 8;
+  let inserted = false;
+
+  while (offset < png.length) {
+    const chunkLen = png.readUInt32BE(offset);
+    const chunkType = png.subarray(offset + 4, offset + 8).toString("ascii");
+    const totalChunkSize = 4 + 4 + chunkLen + 4; // length + type + data + crc
+    const chunkBuf = png.subarray(offset, offset + totalChunkSize);
+
+    if (chunkType === "IDAT" && !inserted) {
+      parts.push(textChunk);
+      inserted = true;
+    }
+    parts.push(chunkBuf);
+    offset += totalChunkSize;
+  }
+
+  // If no IDAT found (shouldn't happen), append before end
+  if (!inserted) {
+    parts.splice(parts.length - 1, 0, textChunk);
+  }
+
+  return Buffer.concat(parts);
+}
+
+/** CRC-32 as used by PNG (ISO 3309 / ITU-T V.42). */
+function crc32(buf: Buffer): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    crc ^= buf[i];
+    for (let j = 0; j < 8; j++) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }

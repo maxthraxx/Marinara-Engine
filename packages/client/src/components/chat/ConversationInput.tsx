@@ -2,7 +2,7 @@
 // Chat: Conversation Input — Discord-style
 // ──────────────────────────────────────────────
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Send, Smile, StopCircle, X, Plus, ImagePlay } from "lucide-react";
+import { Send, Smile, StopCircle, X, Plus, ImagePlay, AtSign } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { useChatStore } from "../../stores/chat.store";
@@ -81,6 +81,11 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [gifOpen, setGifOpen] = useState(false);
+  // @mention autocomplete
+  const [_mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionCompletions, setMentionCompletions] = useState<string[]>([]);
+  const [selectedMention, setSelectedMention] = useState(0);
+  const [mentionStartPos, setMentionStartPos] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
@@ -160,6 +165,44 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
     }
   }, []);
 
+  /** Extract @mentioned character names from a message string. */
+  const extractMentions = useCallback(
+    (text: string): string[] => {
+      if (!characterNames.length) return [];
+      const mentioned: string[] = [];
+      // Sort names longest-first so "Mary Jane" matches before "Mary"
+      const sorted = [...characterNames].sort((a, b) => b.length - a.length);
+      for (const name of sorted) {
+        // Match @Name (case-insensitive) — name may contain spaces
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const re = new RegExp(`@${escaped}\\b`, "gi");
+        if (re.test(text) && !mentioned.some((m) => m.toLowerCase() === name.toLowerCase())) {
+          mentioned.push(name);
+        }
+      }
+      return mentioned;
+    },
+    [characterNames],
+  );
+
+  /** Insert a mention completion into the textarea, replacing the @query. */
+  const insertMention = useCallback(
+    (name: string) => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const before = el.value.slice(0, mentionStartPos);
+      const after = el.value.slice(el.selectionStart);
+      el.value = `${before}@${name} ${after}`;
+      const cursorPos = before.length + name.length + 2; // +2 for @ and space
+      el.selectionStart = el.selectionEnd = cursorPos;
+      setHasInput(el.value.length > 0);
+      setMentionQuery(null);
+      setMentionCompletions([]);
+      el.focus();
+    },
+    [mentionStartPos],
+  );
+
   const handleSend = useCallback(async () => {
     if (!activeChatId) return;
     const raw = textareaRef.current?.value.trim() ?? "";
@@ -221,11 +264,15 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
     const pendingAttachments = attachments.map((a) => ({ type: a.type, data: a.data }));
     setAttachments([]);
 
+    // Extract @mentions from the raw message (before regex transforms)
+    const mentioned = extractMentions(raw);
+
     await generate({
       chatId: activeChatId,
       connectionId: null,
       userMessage: message,
       ...(pendingAttachments.length ? { attachments: pendingAttachments } : {}),
+      ...(mentioned.length ? { mentionedCharacterNames: mentioned } : {}),
     });
   }, [
     activeChatId,
@@ -233,6 +280,7 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
     isStreaming,
     generate,
     applyToUserInput,
+    extractMentions,
     clearInputDraft,
     createMessage,
     characterNames,
@@ -241,6 +289,31 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // @mention completions navigation
+      if (mentionCompletions.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSelectedMention((p) => (p + 1) % mentionCompletions.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSelectedMention((p) => (p - 1 + mentionCompletions.length) % mentionCompletions.length);
+          return;
+        }
+        if (e.key === "Tab" || e.key === "Enter") {
+          e.preventDefault();
+          const name = mentionCompletions[selectedMention];
+          if (name) insertMention(name);
+          return;
+        }
+        if (e.key === "Escape") {
+          setMentionQuery(null);
+          setMentionCompletions([]);
+          return;
+        }
+      }
+
       // Slash completions navigation
       if (completions.length > 0) {
         if (e.key === "ArrowDown") {
@@ -275,7 +348,7 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
         handleSend();
       }
     },
-    [completions, selectedCompletion, enterToSend, handleSend],
+    [completions, selectedCompletion, mentionCompletions, selectedMention, insertMention, enterToSend, handleSend],
   );
 
   const handleInput = useCallback(() => {
@@ -298,7 +371,30 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
     } else {
       setCompletions([]);
     }
-  }, []);
+
+    // @mention detection — look backwards from cursor for an @ trigger
+    const cursor = el.selectionStart;
+    const textBefore = el.value.slice(0, cursor);
+    // Find the last @ that isn't preceded by a word character
+    const atMatch = textBefore.match(/(?:^|[^a-zA-Z0-9])@([a-zA-Z0-9 ]*)$/);
+    if (atMatch && characterNames.length > 0) {
+      const query = atMatch[1]!.toLowerCase();
+      const startPos = cursor - atMatch[1]!.length - 1; // position of the @
+      const matches = characterNames.filter((n) => n.toLowerCase().startsWith(query));
+      if (matches.length > 0) {
+        setMentionQuery(query);
+        setMentionCompletions(matches);
+        setSelectedMention(0);
+        setMentionStartPos(startPos);
+      } else {
+        setMentionQuery(null);
+        setMentionCompletions([]);
+      }
+    } else {
+      setMentionQuery(null);
+      setMentionCompletions([]);
+    }
+  }, [characterNames]);
 
   const handleEmojiSelect = useCallback((emoji: string) => {
     if (!textareaRef.current) return;
@@ -369,6 +465,28 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
               {cmd.description && (
                 <span className="truncate text-[0.6875rem] text-[var(--muted-foreground)]">{cmd.description}</span>
               )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* @mention autocomplete */}
+      {mentionCompletions.length > 0 && (
+        <div className="absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-lg">
+          {mentionCompletions.map((name, i) => (
+            <button
+              key={name}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                insertMention(name);
+              }}
+              className={cn(
+                "flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors",
+                i === selectedMention ? "bg-foreground/10 text-foreground" : "hover:bg-[var(--accent)]",
+              )}
+            >
+              <AtSign size="0.75rem" className="shrink-0 text-cyan-400" />
+              <span className="font-medium">{name}</span>
             </button>
           ))}
         </div>
@@ -445,7 +563,9 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
               }}
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                gifOpen ? "text-foreground bg-foreground/10" : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
+                gifOpen
+                  ? "text-foreground bg-foreground/10"
+                  : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
               )}
               title="GIF"
             >
@@ -469,7 +589,9 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
               }}
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                emojiOpen ? "text-foreground bg-foreground/10" : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
+                emojiOpen
+                  ? "text-foreground bg-foreground/10"
+                  : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
               )}
               title="Emoji"
             >

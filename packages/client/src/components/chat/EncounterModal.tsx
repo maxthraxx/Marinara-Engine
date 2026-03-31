@@ -464,8 +464,16 @@ function PlayerControls({ onAction }: { onAction: (text: string) => void }) {
     );
   }
 
-  const attacks = playerActions?.attacks ?? player.attacks ?? [];
-  const items = playerActions?.items ?? player.items ?? [];
+  const attacks = Array.isArray(playerActions?.attacks)
+    ? playerActions.attacks
+    : Array.isArray(player.attacks)
+      ? player.attacks
+      : [];
+  const items = Array.isArray(playerActions?.items)
+    ? playerActions.items
+    : Array.isArray(player.items)
+      ? player.items
+      : [];
 
   const handleAttack = (attack: CombatAttack) => {
     setTargetSelection({ attackName: attack.name, attackType: attack.type });

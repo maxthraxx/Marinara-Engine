@@ -313,6 +313,16 @@ const CREATE_TABLES: string[] = [
     last_message_at TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS chat_folders (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    collapsed TEXT NOT NULL DEFAULT 'false',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
 ];
 
 // ── Column migrations (ALTER TABLE for schema evolution) ──
@@ -397,6 +407,36 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "lorebook_entries",
     column: "ephemeral",
     definition: "INTEGER",
+  },
+  {
+    table: "api_connections",
+    column: "default_for_agents",
+    definition: "TEXT NOT NULL DEFAULT 'false'",
+  },
+  {
+    table: "chats",
+    column: "folder_id",
+    definition: "TEXT",
+  },
+  {
+    table: "chats",
+    column: "sort_order",
+    definition: "INTEGER NOT NULL DEFAULT 0",
+  },
+  {
+    table: "api_connections",
+    column: "openrouter_provider",
+    definition: "TEXT",
+  },
+  {
+    table: "api_connections",
+    column: "comfyui_workflow",
+    definition: "TEXT",
+  },
+  {
+    table: "api_connections",
+    column: "embedding_base_url",
+    definition: "TEXT",
   },
 ];
 

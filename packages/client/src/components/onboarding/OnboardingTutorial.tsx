@@ -44,7 +44,7 @@ const STEPS: TourStep[] = [
   {
     target: "panel-buttons",
     title: "Tab Buttons",
-    body: "These buttons open panels on the right for Characters, Lorebooks, Presets, Connections, Agents, Persona, and Settings. Everything you need is one click away!",
+    body: "These buttons open panels on the right for Browser, Characters, Lorebooks, Presets, Connections, Agents, Persona, and Settings. Everything you need is one click away!",
     side: "bottom",
     sprite: { src: "/sprites/mari/Mari_point_up_left.png", flip: true },
   },

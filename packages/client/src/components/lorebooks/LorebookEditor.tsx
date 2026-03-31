@@ -458,9 +458,7 @@ export function LorebookEditor() {
                   <label className="mb-1 block text-[0.6875rem] text-[var(--muted-foreground)]">Position</label>
                   <select
                     value={entryForm.position ?? 0}
-                    onChange={(e) =>
-                      setEntryForm((f) => (f ? { ...f, position: Number(e.target.value) } : f))
-                    }
+                    onChange={(e) => setEntryForm((f) => (f ? { ...f, position: Number(e.target.value) } : f))}
                     className="w-full rounded-lg bg-[var(--secondary)] px-2 py-1.5 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                   >
                     <option value={0}>Before Chat</option>

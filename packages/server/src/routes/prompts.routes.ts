@@ -72,6 +72,13 @@ export async function promptsRoutes(app: FastifyInstance) {
     return result;
   });
 
+  app.post<{ Params: { id: string } }>("/:id/set-default", async (req, reply) => {
+    const existing = await storage.getById(req.params.id);
+    if (!existing) return reply.status(404).send({ error: "Preset not found" });
+    const updated = await storage.setDefault(req.params.id);
+    return updated;
+  });
+
   // ── Export ──
 
   app.get<{ Params: { id: string } }>("/:id/export", async (req, reply) => {

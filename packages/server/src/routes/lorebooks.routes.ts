@@ -216,7 +216,11 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     const entries = await storage.listEntries(req.params.id);
     if (!entries.length) return { vectorized: 0 };
 
-    const provider = createLLMProvider(conn.provider as string, conn.baseUrl as string, conn.apiKey as string);
+    // Use dedicated embedding base URL if configured, otherwise the connection's base URL
+    const embedBaseUrl = conn.embeddingBaseUrl
+      ? (conn.embeddingBaseUrl as string).replace(/\/+$/, "")
+      : (conn.baseUrl as string);
+    const provider = createLLMProvider(conn.provider as string, embedBaseUrl, conn.apiKey as string);
 
     // Build text for each entry: combine name, keys, and content
     const texts = (entries as Array<Record<string, unknown>>).map((e) => {

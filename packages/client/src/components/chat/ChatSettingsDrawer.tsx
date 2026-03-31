@@ -35,6 +35,10 @@ import {
   Maximize2,
   Languages,
   Vibrate,
+  LetterText,
+  Feather,
+  Activity,
+  Puzzle,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
@@ -330,17 +334,14 @@ export function ChatSettingsDrawer({ chat, open, onClose }: ChatSettingsDrawerPr
   const [showCharPicker, setShowCharPicker] = useState(false);
   const [showGroupPicker, setShowGroupPicker] = useState(false);
   const [showLbPicker, setShowLbPicker] = useState(false);
-  const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [showToolPicker, setShowToolPicker] = useState(false);
   const [showPersonaPicker, setShowPersonaPicker] = useState(false);
   const [showConnectionPicker, setShowConnectionPicker] = useState(false);
   const [connectionSearch, setConnectionSearch] = useState("");
   const [personaSearch, setPersonaSearch] = useState("");
-  const [pendingAgentIds, setPendingAgentIds] = useState<string[]>([]);
   const [pendingToolIds, setPendingToolIds] = useState<string[]>([]);
   const [charSearch, setCharSearch] = useState("");
   const [lbSearch, setLbSearch] = useState("");
-  const [agentSearch, setAgentSearch] = useState("");
   const [toolSearch, setToolSearch] = useState("");
   const [choiceModalPresetId, setChoiceModalPresetId] = useState<string | null>(null);
   const [scenePromptExpanded, setScenePromptExpanded] = useState(false);
@@ -375,7 +376,11 @@ export function ChatSettingsDrawer({ chat, open, onClose }: ChatSettingsDrawerPr
 
         <div className="flex-1 overflow-y-auto">
           {/* Chat Name */}
-          <Section label="Chat Name">
+          <Section
+            label="Chat Name"
+            icon={<LetterText size="0.875rem" />}
+            help="This name is only visible to you — it won't be sent to the AI or affect the conversation in any way."
+          >
             {editingName ? (
               <div className="flex gap-2">
                 <input
@@ -1087,17 +1092,50 @@ export function ChatSettingsDrawer({ chat, open, onClose }: ChatSettingsDrawerPr
                     className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
                   >
                     <option value="">None (selfies disabled)</option>
-                    {((connections ?? []) as Array<{ id: string; name: string; provider: string }>)
-                      .filter((c) => c.provider === "image_generation")
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
+                    {((connections ?? []) as Array<{ id: string; name: string; provider: string }>).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.provider})
+                      </option>
+                    ))}
                   </select>
                   <p className="text-[0.55rem] text-[var(--muted-foreground)]">
-                    Pick an image generation connection to let characters send selfie photos.
+                    Pick a connection to let characters send selfie photos. Any connection with image generation support
+                    works.
                   </p>
+
+                  {/* Selfie resolution picker */}
+                  {(metadata.imageGenConnectionId as string) && (
+                    <div className="mt-2 space-y-1">
+                      <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Resolution</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { label: "512×512", w: 512, h: 512 },
+                          { label: "512×768", w: 512, h: 768 },
+                          { label: "768×768", w: 768, h: 768 },
+                          { label: "768×1024", w: 768, h: 1024 },
+                          { label: "1024×1024", w: 1024, h: 1024 },
+                        ].map((opt) => {
+                          const current = (metadata.selfieResolution as string) ?? "512x768";
+                          const val = `${opt.w}x${opt.h}`;
+                          const active = current === val;
+                          return (
+                            <button
+                              key={val}
+                              type="button"
+                              onClick={() => updateMeta.mutate({ id: chat.id, selfieResolution: val })}
+                              className={`rounded-md px-2 py-1 text-[0.625rem] font-medium transition-colors ${
+                                active
+                                  ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                                  : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Schedule status */}
@@ -1462,269 +1500,286 @@ export function ChatSettingsDrawer({ chat, open, onClose }: ChatSettingsDrawerPr
                   </button>
                 )}
 
-                {/* Per-chat agent list */}
+                {/* Love Toys Control — inside Agents, visible when agents enabled */}
+                {metadata.enableAgents && (
+                  <div className="space-y-1.5">
+                    <button
+                      onClick={() => {
+                        updateMeta.mutate({ id: chat.id, enableHapticFeedback: !metadata.enableHapticFeedback });
+                      }}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+                        metadata.enableHapticFeedback
+                          ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                          : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+                      )}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <span className="text-[0.6875rem] font-medium flex items-center gap-1.5">
+                          <Vibrate size="0.75rem" /> Love Toys Control
+                        </span>
+                        <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                          Control connected intimate toys based on narrative content
+                        </p>
+                      </div>
+                      <div
+                        className={cn(
+                          "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                          metadata.enableHapticFeedback ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                            metadata.enableHapticFeedback && "translate-x-3.5",
+                          )}
+                        />
+                      </div>
+                    </button>
+                    {metadata.enableHapticFeedback && (
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)] px-1">
+                        <strong>Setup:</strong> Install{" "}
+                        <a
+                          href="https://intiface.com/central/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline text-[var(--primary)]"
+                        >
+                          Intiface Central
+                        </a>
+                        , scan for your toy, start the server. See the{" "}
+                        <a
+                          href="https://docs.intiface.com/docs/intiface-central/quickstart"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline text-[var(--primary)]"
+                        >
+                          quickstart guide
+                        </a>
+                        .
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Categorized agent sub-sections */}
                 {metadata.enableAgents && (
                   <>
-                    {activeAgentIds.length === 0 ? (
+                    {activeAgentIds.length === 0 && (
                       <p className="text-[0.6875rem] text-[var(--muted-foreground)] px-1">
                         No per-chat agent overrides. Workspace default agents will be used for this chat.
                       </p>
-                    ) : (
-                      <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
-                        {activeAgentIds.map((agentId) => {
-                          const agent = availableAgents.find((a) => a.id === agentId);
-                          if (!agent) return null;
-                          return (
-                            <div
-                              key={agent.id}
-                              className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
-                            >
-                              <Sparkles size="0.875rem" className="text-[var(--primary)]" />
-                              <div className="flex-1 min-w-0">
-                                <span className="block truncate text-xs">{agent.name}</span>
-                              </div>
-                              <button
-                                onClick={() => toggleAgent(agent.id)}
-                                className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                                title="Remove from chat"
-                              >
-                                <Trash2 size="0.6875rem" />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
                     )}
 
-                    {/* Add agent picker */}
-                    {!showAgentPicker ? (
-                      <button
-                        onClick={() => {
-                          setShowAgentPicker(true);
-                          setAgentSearch("");
-                          setPendingAgentIds([]);
-                        }}
-                        className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
-                      >
-                        <Plus size="0.75rem" /> Add Agents
-                      </button>
-                    ) : (
-                      <PickerDropdown
-                        search={agentSearch}
-                        onSearchChange={setAgentSearch}
-                        onClose={() => setShowAgentPicker(false)}
-                        placeholder="Search agents…"
-                        footer={
-                          pendingAgentIds.length > 0 ? (
-                            <div className="border-t border-[var(--border)] px-3 py-2">
-                              <button
-                                onClick={() => {
-                                  const next = [...activeAgentIds, ...pendingAgentIds];
-                                  updateMeta.mutate({ id: chat.id, activeAgentIds: next });
-                                  setPendingAgentIds([]);
-                                  setShowAgentPicker(false);
-                                }}
-                                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
-                              >
-                                <Plus size="0.75rem" /> Add {pendingAgentIds.length} Agent
-                                {pendingAgentIds.length > 1 ? "s" : ""}
-                              </button>
-                            </div>
-                          ) : undefined
-                        }
-                      >
-                        {(() => {
-                          const CATEGORY_LABELS: Record<string, string> = {
-                            writer: "Writer",
-                            tracker: "Tracker",
-                            misc: "Miscellaneous",
-                            custom: "Custom",
-                          };
-                          const CATEGORY_ORDER = ["writer", "tracker", "misc", "custom"];
-                          const filtered = availableAgents
-                            .filter((a) => !activeAgentIds.includes(a.id))
-                            .filter((a) => a.name.toLowerCase().includes(agentSearch.toLowerCase()));
-                          const grouped = new Map<string, typeof filtered>();
-                          for (const a of filtered) {
-                            const cat = a.category || "misc";
-                            if (!grouped.has(cat)) grouped.set(cat, []);
-                            grouped.get(cat)!.push(a);
-                          }
-                          const elements: React.ReactNode[] = [];
-                          for (const cat of CATEGORY_ORDER) {
-                            const agents = grouped.get(cat);
-                            if (!agents || agents.length === 0) continue;
-                            elements.push(
-                              <div
-                                key={`header-${cat}`}
-                                className="px-3 pt-2 pb-0.5 text-[0.5625rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]/60"
-                              >
-                                {CATEGORY_LABELS[cat] ?? cat}
-                              </div>,
-                            );
-                            for (const a of agents) {
-                              const selected = pendingAgentIds.includes(a.id);
-                              elements.push(
-                                <button
-                                  key={a.id}
-                                  onClick={() =>
-                                    setPendingAgentIds((prev) =>
-                                      prev.includes(a.id) ? prev.filter((id) => id !== a.id) : [...prev, a.id],
-                                    )
-                                  }
-                                  className={cn(
-                                    "flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]",
-                                    selected && "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30",
-                                  )}
+                    {/* Agent category sub-sections */}
+                    {(
+                      [
+                        {
+                          key: "writer",
+                          label: "Writer Agents",
+                          icon: <Feather size="0.75rem" />,
+                          description:
+                            "Improve prose quality, maintain continuity, and shape the narrative direction of your roleplay.",
+                        },
+                        {
+                          key: "tracker",
+                          label: "Tracker Agents",
+                          icon: <Activity size="0.75rem" />,
+                          description:
+                            "Automatically track world state, character stats, quests, expressions, and other data that changes over time.",
+                        },
+                        {
+                          key: "misc",
+                          label: "Misc Agents",
+                          icon: <Puzzle size="0.75rem" />,
+                          description:
+                            "Specialized utilities — image generation, combat systems, music, summaries, and other extras.",
+                        },
+                      ] as const
+                    ).map((cat) => {
+                      const catAgents = availableAgents.filter((a) => a.category === cat.key);
+                      const activeInCat = catAgents.filter((a) => activeAgentIds.includes(a.id));
+                      const inactiveInCat = catAgents.filter((a) => !activeAgentIds.includes(a.id));
+                      if (catAgents.length === 0) return null;
+                      return (
+                        <AgentCategorySection
+                          key={cat.key}
+                          label={cat.label}
+                          icon={cat.icon}
+                          description={cat.description}
+                          count={activeInCat.length}
+                        >
+                          {/* Active agents in this category */}
+                          {activeInCat.length > 0 && (
+                            <div className="flex flex-col gap-1 mb-1.5">
+                              {activeInCat.map((agent) => (
+                                <div
+                                  key={agent.id}
+                                  className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
                                 >
-                                  <div
-                                    className={cn(
-                                      "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-                                      selected
-                                        ? "border-[var(--primary)] bg-[var(--primary)] text-white"
-                                        : "border-[var(--border)]",
-                                    )}
-                                  >
-                                    {selected && <Check size="0.625rem" />}
-                                  </div>
+                                  <Sparkles size="0.875rem" className="text-[var(--primary)]" />
                                   <div className="flex-1 min-w-0">
-                                    <span className="block truncate text-xs">{a.name}</span>
+                                    <span className="block truncate text-xs">{agent.name}</span>
                                     <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
-                                      {a.description}
+                                      {agent.description}
                                     </span>
                                   </div>
-                                </button>,
-                              );
-                            }
-                          }
-                          if (elements.length === 0) {
-                            elements.push(
-                              <p key="empty" className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                                {availableAgents.filter((a) => !activeAgentIds.includes(a.id)).length === 0
-                                  ? "All agents already added."
-                                  : "No matches."}
-                              </p>,
-                            );
-                          }
-                          return elements;
-                        })()}
-                      </PickerDropdown>
-                    )}
+                                  <button
+                                    onClick={() => toggleAgent(agent.id)}
+                                    className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                                    title="Remove from chat"
+                                  >
+                                    <Trash2 size="0.6875rem" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {/* Available agents to add */}
+                          {inactiveInCat.length > 0 ? (
+                            <div className="flex flex-col gap-1">
+                              {inactiveInCat.map((agent) => (
+                                <button
+                                  key={agent.id}
+                                  onClick={() => {
+                                    const next = [...activeAgentIds, agent.id];
+                                    updateMeta.mutate({ id: chat.id, activeAgentIds: next });
+                                  }}
+                                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)] bg-[var(--secondary)]"
+                                >
+                                  <Plus size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                                  <div className="flex-1 min-w-0">
+                                    <span className="block truncate text-xs">{agent.name}</span>
+                                    <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
+                                      {agent.description}
+                                    </span>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[0.625rem] text-[var(--muted-foreground)] px-1">
+                              All agents in this category are active.
+                            </p>
+                          )}
+                        </AgentCategorySection>
+                      );
+                    })}
+
+                    {/* Custom agents */}
+                    {(() => {
+                      const customAgents = availableAgents.filter((a) => a.category === "custom");
+                      if (customAgents.length === 0) return null;
+                      const activeCustom = customAgents.filter((a) => activeAgentIds.includes(a.id));
+                      const inactiveCustom = customAgents.filter((a) => !activeAgentIds.includes(a.id));
+                      return (
+                        <AgentCategorySection
+                          label="Custom Agents"
+                          icon={<Settings2 size="0.75rem" />}
+                          description="Your custom-created agents."
+                          count={activeCustom.length}
+                        >
+                          {activeCustom.length > 0 && (
+                            <div className="flex flex-col gap-1 mb-1.5">
+                              {activeCustom.map((agent) => (
+                                <div
+                                  key={agent.id}
+                                  className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
+                                >
+                                  <Sparkles size="0.875rem" className="text-[var(--primary)]" />
+                                  <div className="flex-1 min-w-0">
+                                    <span className="block truncate text-xs">{agent.name}</span>
+                                  </div>
+                                  <button
+                                    onClick={() => toggleAgent(agent.id)}
+                                    className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                                    title="Remove from chat"
+                                  >
+                                    <Trash2 size="0.6875rem" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {inactiveCustom.length > 0 && (
+                            <div className="flex flex-col gap-1">
+                              {inactiveCustom.map((agent) => (
+                                <button
+                                  key={agent.id}
+                                  onClick={() => {
+                                    const next = [...activeAgentIds, agent.id];
+                                    updateMeta.mutate({ id: chat.id, activeAgentIds: next });
+                                  }}
+                                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)] bg-[var(--secondary)]"
+                                >
+                                  <Plus size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                                  <div className="flex-1 min-w-0">
+                                    <span className="block truncate text-xs">{agent.name}</span>
+                                    <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
+                                      {agent.description}
+                                    </span>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </AgentCategorySection>
+                      );
+                    })()}
                   </>
                 )}
               </div>
             </Section>
           )}
 
-          {/* Memory Recall */}
-          <Section
-            label="Memory Recall"
-            icon={<Brain size="0.875rem" />}
-            help="When enabled, relevant fragments from past conversations with the same character(s) are automatically recalled and injected into the prompt as memories. Uses a local embedding model — no API cost."
-          >
-            {(() => {
-              const isScene = metadata.sceneStatus === "active";
-              const defaultOn = isConversation || isScene;
-              const effectiveValue =
-                metadata.enableMemoryRecall !== undefined ? metadata.enableMemoryRecall === true : defaultOn;
-              return (
-                <button
-                  onClick={() => {
-                    updateMeta.mutate({ id: chat.id, enableMemoryRecall: !effectiveValue });
-                  }}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                    effectiveValue
-                      ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                      : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-                  )}
-                >
-                  <div className="flex-1 min-w-0">
-                    <span className="text-[0.6875rem] font-medium">Enable Memory Recall</span>
-                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Recall fragments from past conversations with the same characters and inject them as context.
-                    </p>
-                  </div>
-                  <div
+          {/* Memory Recall — conversation mode: show here; roleplay: shown after Function Calling */}
+          {isConversation && (
+            <Section
+              label="Memory Recall"
+              icon={<Brain size="0.875rem" />}
+              help="When enabled, relevant fragments from past conversations with the same character(s) are automatically recalled and injected into the prompt as memories. Uses a local embedding model — no API cost."
+            >
+              {(() => {
+                const isScene = metadata.sceneStatus === "active";
+                const defaultOn = isConversation || isScene;
+                const effectiveValue =
+                  metadata.enableMemoryRecall !== undefined ? metadata.enableMemoryRecall === true : defaultOn;
+                return (
+                  <button
+                    onClick={() => {
+                      updateMeta.mutate({ id: chat.id, enableMemoryRecall: !effectiveValue });
+                    }}
                     className={cn(
-                      "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                      effectiveValue ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                      "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+                      effectiveValue
+                        ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                        : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
                     )}
                   >
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[0.6875rem] font-medium">Enable Memory Recall</span>
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                        Recall fragments from past conversations with the same characters and inject them as context.
+                      </p>
+                    </div>
                     <div
                       className={cn(
-                        "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                        effectiveValue && "translate-x-3.5",
+                        "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                        effectiveValue ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
                       )}
-                    />
-                  </div>
-                </button>
-              );
-            })()}
-          </Section>
-
-          {/* Love Toys Control — both modes, requires Intiface Central */}
-          <Section
-            label="Love Toys Control"
-            icon={<Vibrate size="0.875rem" />}
-            help="Control connected intimate toys based on narrative content. In Conversation mode, the character can send device commands directly. In Roleplay mode, add the Love Toys Control agent."
-          >
-            <button
-              onClick={() => {
-                updateMeta.mutate({ id: chat.id, enableHapticFeedback: !metadata.enableHapticFeedback });
-              }}
-              className={cn(
-                "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                metadata.enableHapticFeedback
-                  ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                  : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-              )}
-            >
-              <div className="flex-1 min-w-0">
-                <span className="text-[0.6875rem] font-medium">Enable Love Toys Control</span>
-                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                  {isConversation
-                    ? "Lets the character control your connected toys during the conversation"
-                    : "Enable the Love Toys Control agent to control devices based on the narrative"}
-                </p>
-              </div>
-              <div
-                className={cn(
-                  "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                  metadata.enableHapticFeedback ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-                )}
-              >
-                <div
-                  className={cn(
-                    "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                    metadata.enableHapticFeedback && "translate-x-3.5",
-                  )}
-                />
-              </div>
-            </button>
-            <p className="text-[0.625rem] text-[var(--muted-foreground)] px-1 mt-1">
-              <strong>How to connect:</strong> Install and open{" "}
-              <a
-                href="https://intiface.com/central/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline text-[var(--primary)]"
-              >
-                Intiface Central
-              </a>
-              , scan for your toy under "Devices", then start the server. Marinara will detect it automatically.
-              See the{" "}
-              <a
-                href="https://docs.intiface.com/docs/intiface-central/quickstart"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline text-[var(--primary)]"
-              >
-                quickstart guide
-              </a>{" "}
-              for detailed setup.
-            </p>
-          </Section>
+                    >
+                      <div
+                        className={cn(
+                          "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                          effectiveValue && "translate-x-3.5",
+                        )}
+                      />
+                    </div>
+                  </button>
+                );
+              })()}
+            </Section>
+          )}
 
           {/* Discord Webhook — conversation mode only */}
           {isConversation && (
@@ -1924,6 +1979,55 @@ export function ChatSettingsDrawer({ chat, open, onClose }: ChatSettingsDrawerPr
                   </>
                 )}
               </div>
+            </Section>
+          )}
+
+          {/* Memory Recall — roleplay mode: show after Function Calling */}
+          {!isConversation && (
+            <Section
+              label="Memory Recall"
+              icon={<Brain size="0.875rem" />}
+              help="When enabled, relevant fragments from past conversations with the same character(s) are automatically recalled and injected into the prompt as memories. Uses a local embedding model — no API cost."
+            >
+              {(() => {
+                const isScene = metadata.sceneStatus === "active";
+                const defaultOn = isScene;
+                const effectiveValue =
+                  metadata.enableMemoryRecall !== undefined ? metadata.enableMemoryRecall === true : defaultOn;
+                return (
+                  <button
+                    onClick={() => {
+                      updateMeta.mutate({ id: chat.id, enableMemoryRecall: !effectiveValue });
+                    }}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+                      effectiveValue
+                        ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                        : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+                    )}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[0.6875rem] font-medium">Enable Memory Recall</span>
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                        Recall fragments from past conversations with the same characters and inject them as context.
+                      </p>
+                    </div>
+                    <div
+                      className={cn(
+                        "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                        effectiveValue ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                          effectiveValue && "translate-x-3.5",
+                        )}
+                      />
+                    </div>
+                  </button>
+                );
+              })()}
             </Section>
           )}
 
@@ -2489,7 +2593,7 @@ function Section({
   help?: string;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
 
   return (
     <div className="border-b border-[var(--border)]">
@@ -2499,14 +2603,14 @@ function Section({
       >
         {icon && <span className="text-[var(--muted-foreground)]">{icon}</span>}
         <span className="flex-1 text-xs font-semibold">{label}</span>
-        {help && (
-          <span onClick={(e) => e.stopPropagation()}>
-            <HelpTooltip text={help} side="left" />
-          </span>
-        )}
         {count != null && count > 0 && (
           <span className="rounded-full bg-[var(--primary)]/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-[var(--primary)]">
             {count}
+          </span>
+        )}
+        {help && (
+          <span onClick={(e) => e.stopPropagation()}>
+            <HelpTooltip text={help} side="left" />
           </span>
         )}
         <ChevronDown
@@ -2514,7 +2618,56 @@ function Section({
           className={cn("text-[var(--muted-foreground)] transition-transform", open && "rotate-180")}
         />
       </button>
-      {open && <div className="px-4 pb-3">{children}</div>}
+      {open && <div className="px-6 py-3">{children}</div>}
+    </div>
+  );
+}
+
+// ── Agent category sub-section (collapsible within Agents section) ──
+function AgentCategorySection({
+  label,
+  icon,
+  description,
+  count,
+  children,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  description: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-[var(--border)] overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--accent)]/50"
+      >
+        <span className="text-[var(--muted-foreground)]">{icon}</span>
+        <div className="flex-1 min-w-0">
+          <span className="text-[0.6875rem] font-semibold">{label}</span>
+          {!open && (
+            <p className="text-[0.5625rem] text-[var(--muted-foreground)] leading-tight truncate">{description}</p>
+          )}
+        </div>
+        {count != null && count > 0 && (
+          <span className="rounded-full bg-[var(--primary)]/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--primary)]">
+            {count}
+          </span>
+        )}
+        <ChevronDown
+          size="0.625rem"
+          className={cn("text-[var(--muted-foreground)] transition-transform shrink-0", open && "rotate-180")}
+        />
+      </button>
+      {open && (
+        <div className="px-3 pb-2.5 space-y-1.5">
+          <p className="text-[0.5625rem] text-[var(--muted-foreground)] leading-tight">{description}</p>
+          {children}
+        </div>
+      )}
     </div>
   );
 }

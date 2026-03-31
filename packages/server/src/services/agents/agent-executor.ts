@@ -9,7 +9,10 @@ const VERBOSE = process.env.DEBUG_AGENTS === "1" || process.env.DEBUG_AGENTS ===
 
 /** Strip HTML/XML-style tags (e.g. <div style="..."> <br> <speaker>) from text to save tokens. */
 function stripHtmlTags(text: string): string {
-  return text.replace(/<\/?[a-zA-Z][^>]*>/g, "").replace(/\n{3,}/g, "\n\n").trim();
+  return text
+    .replace(/<\/?[a-zA-Z][^>]*>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /** Minimal agent config needed for execution. */
@@ -342,8 +345,12 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
 
   // ── Role ──
   parts.push(`<role>`);
-  parts.push(`You are a collection of ${configs.length} specialized agents. Fulfill all tasks and return all requested outputs.`);
-  parts.push(`You MUST wrap each task's output in a <result> tag with the agent ID. Output ALL ${configs.length} result blocks.`);
+  parts.push(
+    `You are a collection of ${configs.length} specialized agents. Fulfill all tasks and return all requested outputs.`,
+  );
+  parts.push(
+    `You MUST wrap each task's output in a <result> tag with the agent ID. Output ALL ${configs.length} result blocks.`,
+  );
   parts.push(`</role>`);
 
   // ── Lore ──
@@ -382,7 +389,9 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
     );
   }
   parts.push(``);
-  parts.push(`CRITICAL: Output ALL ${configs.length} result blocks. Use exact agent IDs: ${configs.map((c) => c.type).join(", ")}. JSON agents must output valid JSON (no markdown fences). No text outside <result> blocks.`);
+  parts.push(
+    `CRITICAL: Output ALL ${configs.length} result blocks. Use exact agent IDs: ${configs.map((c) => c.type).join(", ")}. JSON agents must output valid JSON (no markdown fences). No text outside <result> blocks.`,
+  );
 
   return parts.join("\n");
 }
@@ -744,6 +753,18 @@ function buildAgentExtras(context: AgentContext): string {
       parts.push(`- ${d.name} (index ${d.index}): ${d.capabilities.join(", ")}`);
     }
     parts.push(`</connected_devices>`);
+  }
+
+  if (context.memory._lastCyoaChoices) {
+    const lastChoices = context.memory._lastCyoaChoices as Array<{ label: string; text: string }>;
+    parts.push(`<previous_cyoa_choices>`);
+    parts.push(
+      `These are the choices you generated last time. Do NOT repeat them — provide fresh, meaningfully different options.`,
+    );
+    for (const c of lastChoices) {
+      parts.push(`- ${c.label}: ${c.text}`);
+    }
+    parts.push(`</previous_cyoa_choices>`);
   }
 
   return parts.join("\n");

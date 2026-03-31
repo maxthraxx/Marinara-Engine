@@ -33,12 +33,24 @@ export function createConnectionsStorage(db: DB) {
       return rows[0] ?? null;
     },
 
+    /** Get the connection marked as default for agents (with decrypted key). */
+    async getDefaultForAgents() {
+      const rows = await db.select().from(apiConnections).where(eq(apiConnections.defaultForAgents, "true"));
+      const row = rows[0];
+      if (!row) return null;
+      return { ...row, apiKey: decryptApiKey(row.apiKeyEncrypted) };
+    },
+
     async create(input: CreateConnectionInput) {
       const id = newId();
       const timestamp = now();
       // If this is set as default, unset others
       if (input.isDefault) {
         await db.update(apiConnections).set({ isDefault: "false" });
+      }
+      // If this is set as default for agents, unset others
+      if (input.defaultForAgents) {
+        await db.update(apiConnections).set({ defaultForAgents: "false" });
       }
       await db.insert(apiConnections).values({
         id,
@@ -50,9 +62,13 @@ export function createConnectionsStorage(db: DB) {
         maxContext: input.maxContext ?? 128000,
         isDefault: String(input.isDefault ?? false),
         useForRandom: String(input.useForRandom ?? false),
+        defaultForAgents: String(input.defaultForAgents ?? false),
         enableCaching: String(input.enableCaching ?? false),
         embeddingModel: input.embeddingModel ?? "",
+        embeddingBaseUrl: input.embeddingBaseUrl ?? "",
         embeddingConnectionId: input.embeddingConnectionId ?? null,
+        openrouterProvider: input.openrouterProvider ?? null,
+        comfyuiWorkflow: input.comfyuiWorkflow ?? null,
         createdAt: timestamp,
         updatedAt: timestamp,
       });
@@ -76,14 +92,29 @@ export function createConnectionsStorage(db: DB) {
       if (data.useForRandom !== undefined) {
         updateFields.useForRandom = String(data.useForRandom);
       }
+      if (data.defaultForAgents !== undefined) {
+        if (data.defaultForAgents) {
+          await db.update(apiConnections).set({ defaultForAgents: "false" });
+        }
+        updateFields.defaultForAgents = String(data.defaultForAgents);
+      }
       if (data.enableCaching !== undefined) {
         updateFields.enableCaching = String(data.enableCaching);
       }
       if (data.embeddingModel !== undefined) {
         updateFields.embeddingModel = data.embeddingModel;
       }
+      if (data.embeddingBaseUrl !== undefined) {
+        updateFields.embeddingBaseUrl = data.embeddingBaseUrl;
+      }
       if (data.embeddingConnectionId !== undefined) {
         updateFields.embeddingConnectionId = data.embeddingConnectionId;
+      }
+      if (data.openrouterProvider !== undefined) {
+        updateFields.openrouterProvider = data.openrouterProvider;
+      }
+      if (data.comfyuiWorkflow !== undefined) {
+        updateFields.comfyuiWorkflow = data.comfyuiWorkflow;
       }
       await db.update(apiConnections).set(updateFields).where(eq(apiConnections.id, id));
       return this.getById(id);
@@ -105,6 +136,7 @@ export function createConnectionsStorage(db: DB) {
         maxContext: source.maxContext,
         isDefault: "false",
         useForRandom: source.useForRandom,
+        defaultForAgents: "false",
         enableCaching: source.enableCaching,
         embeddingModel: source.embeddingModel,
         embeddingConnectionId: source.embeddingConnectionId,

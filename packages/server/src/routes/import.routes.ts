@@ -7,7 +7,7 @@ import { platform, homedir } from "os";
 import { readdir, stat } from "fs/promises";
 import { resolve as pathResolve } from "path";
 import { importSTChat } from "../services/import/st-chat.importer.js";
-import { importSTCharacter } from "../services/import/st-character.importer.js";
+import { importSTCharacter, importCharX } from "../services/import/st-character.importer.js";
 import { importSTPreset } from "../services/import/st-prompt.importer.js";
 import { importSTLorebook } from "../services/import/st-lorebook.importer.js";
 import { importMarinara } from "../services/import/marinara.importer.js";
@@ -250,6 +250,10 @@ export async function importRoutes(app: FastifyInstance) {
         return importSTCharacter(charData, app.db);
       }
 
+      if (filename.toLowerCase().endsWith(".charx")) {
+        return importCharX(buf, app.db);
+      }
+
       // Non-PNG file upload — try parsing as JSON
       try {
         const json = JSON.parse(buf.toString("utf-8"));
@@ -257,7 +261,8 @@ export async function importRoutes(app: FastifyInstance) {
       } catch {
         return {
           success: false,
-          error: "Invalid file format. Expected a JSON character card or a PNG with embedded character data.",
+          error:
+            "Invalid file format. Expected a JSON character card, a PNG with embedded character data, or a .charx file.",
         };
       }
     }

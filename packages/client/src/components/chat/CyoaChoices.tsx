@@ -1,18 +1,43 @@
 // ──────────────────────────────────────────────
 // CYOA Choices — interactive choice buttons after assistant messages
 // ──────────────────────────────────────────────
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { Sparkles } from "lucide-react";
 import { useAgentStore } from "../../stores/agent.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useChatStore } from "../../stores/chat.store";
+import type { Message } from "@marinara-engine/shared";
 
-export function CyoaChoices() {
+interface CyoaChoice {
+  label: string;
+  text: string;
+}
+
+interface Props {
+  messages?: Message[];
+}
+
+export function CyoaChoices({ messages }: Props) {
   const choices = useAgentStore((s) => s.cyoaChoices);
+  const setCyoaChoices = useAgentStore((s) => s.setCyoaChoices);
   const clearCyoaChoices = useAgentStore((s) => s.clearCyoaChoices);
   const { generate } = useGenerate();
   const activeChatId = useChatStore((s) => s.activeChatId);
   const isStreaming = useChatStore((s) => s.isStreaming);
+
+  // Hydrate CYOA choices from the last assistant message's extras on mount / chat switch
+  const persistedChoices = useMemo(() => {
+    if (!messages) return null;
+    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!lastAssistant?.extra) return null;
+    const saved = lastAssistant.extra.cyoaChoices;
+    return saved && saved.length > 0 ? saved : null;
+  }, [messages]);
+
+  useEffect(() => {
+    if (choices.length > 0 || isStreaming || !persistedChoices) return;
+    setCyoaChoices(persistedChoices);
+  }, [persistedChoices, choices.length, isStreaming, setCyoaChoices]);
 
   const handleChoice = useCallback(
     async (text: string) => {

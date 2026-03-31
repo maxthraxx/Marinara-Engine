@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useConnections } from "../../hooks/use-connections";
-import { usePresets, usePresetFull } from "../../hooks/use-presets";
+import { usePresets, usePresetFull, useDefaultPreset } from "../../hooks/use-presets";
 import { useCharacters, usePersonas } from "../../hooks/use-characters";
 import { useLorebooks } from "../../hooks/use-lorebooks";
 import { useUpdateChat, useUpdateChatMetadata, useCreateMessage, chatKeys } from "../../hooks/use-chats";
@@ -525,6 +525,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
 
   const { data: connections } = useConnections();
   const { data: presets } = usePresets();
+  const { data: defaultPreset } = useDefaultPreset();
   const { data: allPersonas } = usePersonas();
   const { data: allCharacters } = useCharacters();
   const { data: lorebooks } = useLorebooks();
@@ -587,6 +588,13 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     },
     [chat.id, updateChat],
   );
+
+  // Auto-select the default preset for new chats
+  useEffect(() => {
+    if (!chat.promptPresetId && defaultPreset?.id) {
+      updateChat.mutate({ id: chat.id, promptPresetId: defaultPreset.id });
+    }
+  }, [defaultPreset?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setPersona = useCallback(
     (personaId: string | null) => {

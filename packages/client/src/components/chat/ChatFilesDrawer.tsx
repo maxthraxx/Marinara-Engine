@@ -35,6 +35,9 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
         mode: chat.mode,
         characterIds: charIds,
         groupId,
+        connectionId: (chat as any).connectionId ?? null,
+        personaId: (chat as any).personaId ?? null,
+        promptPresetId: (chat as any).promptPresetId ?? null,
       },
       {
         onSuccess: (newChat) => {
@@ -76,7 +79,9 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
             </button>
           </div>
           <div className="border-b border-[var(--border)] px-4 py-3">
-            <p className="mb-1.5 text-[0.625rem] font-medium uppercase tracking-wider text-[var(--muted-foreground)]/60">Export Chat</p>
+            <p className="mb-1.5 text-[0.625rem] font-medium uppercase tracking-wider text-[var(--muted-foreground)]/60">
+              Export Chat
+            </p>
             <div className="flex gap-2">
               <button
                 onClick={() => exportChat.mutate({ chatId: chat.id, format: "jsonl" })}
@@ -136,7 +141,9 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
             <Plus size="0.8125rem" />
             Start New Chat
           </button>
-          <p className="mt-1.5 mb-1.5 text-[0.625rem] font-medium uppercase tracking-wider text-[var(--muted-foreground)]/60">Export Chat</p>
+          <p className="mt-1.5 mb-1.5 text-[0.625rem] font-medium uppercase tracking-wider text-[var(--muted-foreground)]/60">
+            Export Chat
+          </p>
           <div className="flex gap-2">
             <button
               onClick={() => exportChat.mutate({ chatId: activeChatId ?? chat.id, format: "jsonl" })}

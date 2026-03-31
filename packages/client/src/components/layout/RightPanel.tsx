@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Layout: Right Panel (polished with panel transitions)
 // ──────────────────────────────────────────────
-import { X, Users, BookOpen, FileText, Link, Sparkles, Settings, UserCircle } from "lucide-react";
+import { X, Users, BookOpen, FileText, Link, Sparkles, Settings, UserCircle, Bot } from "lucide-react";
 import { useUIStore } from "../../stores/ui.store";
 import { CharactersPanel } from "../panels/CharactersPanel";
 import { LorebooksPanel } from "../panels/LorebooksPanel";
@@ -10,8 +10,10 @@ import { ConnectionsPanel } from "../panels/ConnectionsPanel";
 import { AgentsPanel } from "../panels/AgentsPanel";
 import { PersonasPanel } from "../panels/PersonasPanel";
 import { SettingsPanel } from "../panels/SettingsPanel";
+import { BotBrowserPanel } from "../panels/BotBrowserPanel";
 
 const PANEL_CONFIG: Record<string, { title: string; icon: React.ReactNode; gradient: string }> = {
+  "bot-browser": { title: "Browser", icon: <Bot size="0.875rem" />, gradient: "from-cyan-400 to-blue-500" },
   characters: { title: "Characters", icon: <Users size="0.875rem" />, gradient: "from-pink-400 to-rose-500" },
   lorebooks: { title: "Lorebooks", icon: <BookOpen size="0.875rem" />, gradient: "from-amber-400 to-orange-500" },
   presets: { title: "Presets", icon: <FileText size="0.875rem" />, gradient: "from-purple-400 to-violet-500" },
@@ -22,6 +24,7 @@ const PANEL_CONFIG: Record<string, { title: string; icon: React.ReactNode; gradi
 };
 
 const PANELS: Record<string, React.FC> = {
+  "bot-browser": BotBrowserPanel,
   characters: CharactersPanel,
   lorebooks: LorebooksPanel,
   presets: PresetsPanel,
@@ -51,7 +54,7 @@ export function RightPanel() {
       className="mari-right-panel-content flex h-full flex-col"
     >
       {/* Header - OS window style */}
-      <div className="relative flex h-12 flex-shrink-0 items-center justify-between px-4">
+      <div className="relative flex h-12 flex-shrink-0 items-center justify-between bg-[var(--card)]/80 px-4 backdrop-blur-sm">
         <div className="absolute inset-x-0 bottom-0 h-px bg-[var(--border)]/30" />
         <div className="flex items-center gap-2.5">
           <div

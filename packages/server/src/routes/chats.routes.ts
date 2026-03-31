@@ -371,9 +371,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           // ── Apply prompt-only regex scripts (mirrors generate.routes.ts) ──
           const regexStore = createRegexScriptsStorage(app.db);
           const allRegexScripts = await regexStore.list();
-          const promptOnlyScripts = allRegexScripts.filter(
-            (s: any) => s.enabled === "true" && s.promptOnly === "true",
-          );
+          const promptOnlyScripts = allRegexScripts.filter((s: any) => s.enabled === "true" && s.promptOnly === "true");
           if (promptOnlyScripts.length > 0) {
             const totalMessages = mappedMessages.length;
             for (let msgIdx = 0; msgIdx < totalMessages; msgIdx++) {
@@ -383,7 +381,11 @@ export async function chatsRoutes(app: FastifyInstance) {
               let text = msg.content;
               for (const script of promptOnlyScripts) {
                 const placements: string[] = (() => {
-                  try { return JSON.parse(script.placement as string); } catch { return []; }
+                  try {
+                    return JSON.parse(script.placement as string);
+                  } catch {
+                    return [];
+                  }
                 })();
                 if (!placements.includes(placement)) continue;
                 const sMinDepth = script.minDepth as number | null;
@@ -394,10 +396,18 @@ export async function chatsRoutes(app: FastifyInstance) {
                   const re = new RegExp(script.findRegex as string, script.flags as string);
                   text = text.replace(re, script.replaceString as string);
                   const trims: string[] = (() => {
-                    try { return JSON.parse(script.trimStrings as string); } catch { return []; }
+                    try {
+                      return JSON.parse(script.trimStrings as string);
+                    } catch {
+                      return [];
+                    }
                   })();
-                  for (const t of trims) { if (t) text = text.split(t).join(""); }
-                } catch { /* invalid regex — skip */ }
+                  for (const t of trims) {
+                    if (t) text = text.split(t).join("");
+                  }
+                } catch {
+                  /* invalid regex — skip */
+                }
               }
               msg.content = text;
             }
@@ -623,11 +633,16 @@ export async function chatsRoutes(app: FastifyInstance) {
               if (charDesc) parts.push(wrapContent(charDesc, "description", wrapFormat, 2));
               if (charData.personality) parts.push(wrapContent(charData.personality, "personality", wrapFormat, 2));
               if (charData.scenario) parts.push(wrapContent(charData.scenario, "scenario", wrapFormat, 2));
-              if (charData.extensions?.backstory) parts.push(wrapContent(charData.extensions.backstory, "backstory", wrapFormat, 2));
-              if (charData.extensions?.appearance) parts.push(wrapContent(charData.extensions.appearance, "appearance", wrapFormat, 2));
-              if (charData.system_prompt) parts.push(wrapContent(charData.system_prompt, "system_prompt", wrapFormat, 2));
-              if (charData.mes_example) parts.push(wrapContent(charData.mes_example, "example_dialogue", wrapFormat, 2));
-              if (charData.post_history_instructions) parts.push(wrapContent(charData.post_history_instructions, "post_history_instructions", wrapFormat, 2));
+              if (charData.extensions?.backstory)
+                parts.push(wrapContent(charData.extensions.backstory, "backstory", wrapFormat, 2));
+              if (charData.extensions?.appearance)
+                parts.push(wrapContent(charData.extensions.appearance, "appearance", wrapFormat, 2));
+              if (charData.system_prompt)
+                parts.push(wrapContent(charData.system_prompt, "system_prompt", wrapFormat, 2));
+              if (charData.mes_example)
+                parts.push(wrapContent(charData.mes_example, "example_dialogue", wrapFormat, 2));
+              if (charData.post_history_instructions)
+                parts.push(wrapContent(charData.post_history_instructions, "post_history_instructions", wrapFormat, 2));
               if (parts.length > 0) {
                 const block = wrapContent(parts.join("\n"), charName, wrapFormat, 1);
                 const firstSysIdx = assembled.messages.findIndex((m) => m.role === "system");
@@ -648,13 +663,21 @@ export async function chatsRoutes(app: FastifyInstance) {
             if (!hasPersonaInfo) {
               const fieldParts: string[] = [];
               if (personaDescription) fieldParts.push(wrapContent(personaDescription, "description", wrapFormat, 2));
-              if (personaFields.personality) fieldParts.push(wrapContent(personaFields.personality, "personality", wrapFormat, 2));
-              if (personaFields.backstory) fieldParts.push(wrapContent(personaFields.backstory, "backstory", wrapFormat, 2));
-              if (personaFields.appearance) fieldParts.push(wrapContent(personaFields.appearance, "appearance", wrapFormat, 2));
-              if (personaFields.scenario) fieldParts.push(wrapContent(personaFields.scenario, "scenario", wrapFormat, 2));
+              if (personaFields.personality)
+                fieldParts.push(wrapContent(personaFields.personality, "personality", wrapFormat, 2));
+              if (personaFields.backstory)
+                fieldParts.push(wrapContent(personaFields.backstory, "backstory", wrapFormat, 2));
+              if (personaFields.appearance)
+                fieldParts.push(wrapContent(personaFields.appearance, "appearance", wrapFormat, 2));
+              if (personaFields.scenario)
+                fieldParts.push(wrapContent(personaFields.scenario, "scenario", wrapFormat, 2));
               // Include enabled RPG attributes
               if (personaStats?.rpgStats?.enabled) {
-                const rpg = personaStats.rpgStats as { attributes: Array<{ name: string; value: number }>; hp: { value: number; max: number }; mp: { value: number; max: number } };
+                const rpg = personaStats.rpgStats as {
+                  attributes: Array<{ name: string; value: number }>;
+                  hp: { value: number; max: number };
+                  mp: { value: number; max: number };
+                };
                 const rpgLines = [`Max HP: ${rpg.hp.max}`, `Max MP: ${rpg.mp.max}`];
                 for (const attr of rpg.attributes) {
                   rpgLines.push(`${attr.name}: ${attr.value}`);
@@ -837,6 +860,15 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     if (!newChat) return reply.status(500).send({ error: "Failed to create branch" });
 
+    // Copy metadata (preset, lorebooks, agents, persona settings, etc.) from source chat
+    if (sourceChat.metadata) {
+      const srcMeta =
+        typeof sourceChat.metadata === "string" ? JSON.parse(sourceChat.metadata) : (sourceChat.metadata ?? {});
+      // Preserve all settings but clear transient state like summaries
+      const { summary, daySummaries, weekSummaries, ...settingsToKeep } = srcMeta;
+      await storage.updateMetadata(newChat.id, settingsToKeep);
+    }
+
     // Copy messages from source chat
     const msgs = await storage.listMessages(req.params.id);
     for (const msg of msgs) {
@@ -850,7 +882,8 @@ export async function chatsRoutes(app: FastifyInstance) {
       if (upToMessageId && msg.id === upToMessageId) break;
     }
 
-    return newChat;
+    // Return the fully-updated chat (including copied metadata)
+    return storage.getById(newChat.id);
   });
 
   // ── Generate Summary ──

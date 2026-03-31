@@ -19,10 +19,18 @@ export const apiConnections = sqliteTable("api_connections", {
   useForRandom: text("use_for_random").notNull().default("false"),
   /** Whether to enable Anthropic prompt caching */
   enableCaching: text("enable_caching").notNull().default("false"),
+  /** Whether this connection is the default for all agents (only one allowed) */
+  defaultForAgents: text("default_for_agents").notNull().default("false"),
   /** Model to use for embedding generation (e.g. text-embedding-3-small) */
   embeddingModel: text("embedding_model"),
+  /** Optional: separate base URL for the embedding backend (e.g. a second llama.cpp instance) */
+  embeddingBaseUrl: text("embedding_base_url"),
   /** Optional: use a different connection for embeddings */
   embeddingConnectionId: text("embedding_connection_id"),
+  /** OpenRouter: preferred provider for model routing (e.g. "Anthropic", "Google") */
+  openrouterProvider: text("openrouter_provider"),
+  /** ComfyUI: custom workflow JSON with placeholders (%prompt%, %width%, etc.) */
+  comfyuiWorkflow: text("comfyui_workflow"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

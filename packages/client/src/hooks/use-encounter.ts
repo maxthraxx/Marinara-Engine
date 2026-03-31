@@ -22,13 +22,13 @@ function sanitizeParty(arr: unknown[], fallback: CombatPartyMember[]): CombatPar
     if (!raw || typeof raw !== "object") return fallback[i] ?? fallback[0];
     const m = raw as Record<string, unknown>;
     return {
-      name: typeof m.name === "string" && m.name ? m.name : fallback[i]?.name ?? "Unknown",
-      hp: typeof m.hp === "number" ? m.hp : fallback[i]?.hp ?? 0,
-      maxHp: typeof m.maxHp === "number" && m.maxHp > 0 ? m.maxHp : fallback[i]?.maxHp ?? 1,
-      attacks: Array.isArray(m.attacks) ? m.attacks : fallback[i]?.attacks ?? [],
-      items: Array.isArray(m.items) ? m.items : fallback[i]?.items ?? [],
-      statuses: Array.isArray(m.statuses) ? m.statuses : fallback[i]?.statuses ?? [],
-      isPlayer: typeof m.isPlayer === "boolean" ? m.isPlayer : fallback[i]?.isPlayer ?? false,
+      name: typeof m.name === "string" && m.name ? m.name : (fallback[i]?.name ?? "Unknown"),
+      hp: typeof m.hp === "number" ? m.hp : (fallback[i]?.hp ?? 0),
+      maxHp: typeof m.maxHp === "number" && m.maxHp > 0 ? m.maxHp : (fallback[i]?.maxHp ?? 1),
+      attacks: Array.isArray(m.attacks) ? m.attacks : (fallback[i]?.attacks ?? []),
+      items: Array.isArray(m.items) ? m.items : (fallback[i]?.items ?? []),
+      statuses: Array.isArray(m.statuses) ? m.statuses : (fallback[i]?.statuses ?? []),
+      isPlayer: typeof m.isPlayer === "boolean" ? m.isPlayer : (fallback[i]?.isPlayer ?? false),
     } satisfies CombatPartyMember;
   });
 }
@@ -39,13 +39,13 @@ function sanitizeEnemies(arr: unknown[], fallback: CombatEnemy[]): CombatEnemy[]
     if (!raw || typeof raw !== "object") return fallback[i] ?? fallback[0];
     const m = raw as Record<string, unknown>;
     return {
-      name: typeof m.name === "string" && m.name ? m.name : fallback[i]?.name ?? "Enemy",
-      hp: typeof m.hp === "number" ? m.hp : fallback[i]?.hp ?? 0,
-      maxHp: typeof m.maxHp === "number" && m.maxHp > 0 ? m.maxHp : fallback[i]?.maxHp ?? 1,
-      attacks: Array.isArray(m.attacks) ? m.attacks : fallback[i]?.attacks ?? [],
-      statuses: Array.isArray(m.statuses) ? m.statuses : fallback[i]?.statuses ?? [],
-      description: typeof m.description === "string" ? m.description : fallback[i]?.description ?? "",
-      sprite: typeof m.sprite === "string" ? m.sprite : fallback[i]?.sprite ?? "",
+      name: typeof m.name === "string" && m.name ? m.name : (fallback[i]?.name ?? "Enemy"),
+      hp: typeof m.hp === "number" ? m.hp : (fallback[i]?.hp ?? 0),
+      maxHp: typeof m.maxHp === "number" && m.maxHp > 0 ? m.maxHp : (fallback[i]?.maxHp ?? 1),
+      attacks: Array.isArray(m.attacks) ? m.attacks : (fallback[i]?.attacks ?? []),
+      statuses: Array.isArray(m.statuses) ? m.statuses : (fallback[i]?.statuses ?? []),
+      description: typeof m.description === "string" ? m.description : (fallback[i]?.description ?? ""),
+      sprite: typeof m.sprite === "string" ? m.sprite : (fallback[i]?.sprite ?? ""),
     } satisfies CombatEnemy;
   });
 }
@@ -161,7 +161,7 @@ export function useEncounter() {
               logs.push({ message: `${pa.memberName}: ${pa.action}`, type: "party-action" });
           }
         }
-        if (r.narrative) {
+        if (r.narrative && typeof r.narrative === "string") {
           for (const line of r.narrative.split("\n").filter((l: string) => l.trim())) {
             logs.push({ message: line, type: "narrative" });
           }

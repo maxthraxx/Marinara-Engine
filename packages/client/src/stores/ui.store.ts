@@ -2,9 +2,18 @@
 // Zustand Store: UI Slice
 // ──────────────────────────────────────────────
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 
-type Panel = "chat" | "characters" | "lorebooks" | "presets" | "connections" | "agents" | "personas" | "settings";
+type Panel =
+  | "chat"
+  | "characters"
+  | "lorebooks"
+  | "presets"
+  | "connections"
+  | "agents"
+  | "personas"
+  | "settings"
+  | "bot-browser";
 type FontSize = 12 | 14 | 16 | 17 | 19 | 22;
 export type VisualTheme = "default" | "sillytavern";
 export type HudPosition = "top" | "left" | "right";
@@ -58,6 +67,8 @@ interface UIState {
   personaDetailId: string | null;
   /** When set, the main area shows the full-page regex script editor */
   regexDetailId: string | null;
+  /** When true, the main area shows the browser */
+  botBrowserOpen: boolean;
   /** True when any open detail editor has unsaved changes */
   editorDirty: boolean;
 
@@ -79,6 +90,20 @@ interface UIState {
   messagesPerPage: number;
   /** Bold and color text inside quotation marks in chat messages */
   boldDialogue: boolean;
+
+  // ── Text Appearance ──
+  /** Color for narrator text in RP mode (empty = default amber) */
+  narrationFontColor: string;
+  /** Opacity for narrator text (0–100) */
+  narrationOpacity: number;
+  /** Color for chat message text (empty = theme default) */
+  chatFontColor: string;
+  /** Opacity for roleplay message backgrounds (0–100) */
+  chatFontOpacity: number;
+  /** Text outline/stroke width in px (0 = off) */
+  textStrokeWidth: number;
+  /** Text outline/stroke color */
+  textStrokeColor: string;
 
   // ── Visual Theme ──
   visualTheme: VisualTheme;
@@ -155,6 +180,8 @@ interface UIState {
   closePersonaDetail: () => void;
   openRegexDetail: (id: string) => void;
   closeRegexDetail: () => void;
+  openBotBrowser: () => void;
+  closeBotBrowser: () => void;
 
   /** Returns true if any full-page detail editor is currently open */
   hasAnyDetailOpen: () => boolean;
@@ -176,6 +203,12 @@ interface UIState {
   setConfirmBeforeDelete: (v: boolean) => void;
   setMessagesPerPage: (n: number) => void;
   setBoldDialogue: (v: boolean) => void;
+  setNarrationFontColor: (v: string) => void;
+  setNarrationOpacity: (v: number) => void;
+  setChatFontColor: (v: string) => void;
+  setChatFontOpacity: (v: number) => void;
+  setTextStrokeWidth: (v: number) => void;
+  setTextStrokeColor: (v: string) => void;
   setVisualTheme: (v: VisualTheme) => void;
   setConvoGradientFrom: (v: string) => void;
   setConvoGradientTo: (v: string) => void;
@@ -220,6 +253,7 @@ export const useUIStore = create<UIState>()(
       toolDetailId: null,
       personaDetailId: null,
       regexDetailId: null,
+      botBrowserOpen: false,
       editorDirty: false,
 
       // Settings defaults
@@ -235,6 +269,12 @@ export const useUIStore = create<UIState>()(
       confirmBeforeDelete: true,
       messagesPerPage: 20,
       boldDialogue: true,
+      narrationFontColor: "",
+      narrationOpacity: 80,
+      chatFontColor: "",
+      chatFontOpacity: 90,
+      textStrokeWidth: 0.5,
+      textStrokeColor: "#000000",
       visualTheme: "default" as VisualTheme,
       convoGradientFrom: "#0a0a0e",
       convoGradientTo: "#1c2133",
@@ -373,6 +413,20 @@ export const useUIStore = create<UIState>()(
           ...(window.innerWidth < 768 && { rightPanelOpen: false }),
         }),
       closeRegexDetail: () => set({ regexDetailId: null, editorDirty: false }),
+      openBotBrowser: () =>
+        set({
+          botBrowserOpen: true,
+          regexDetailId: null,
+          personaDetailId: null,
+          characterDetailId: null,
+          lorebookDetailId: null,
+          presetDetailId: null,
+          connectionDetailId: null,
+          agentDetailId: null,
+          toolDetailId: null,
+          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
+        }),
+      closeBotBrowser: () => set({ botBrowserOpen: false }),
 
       hasAnyDetailOpen: () => {
         const s = get();
@@ -384,7 +438,8 @@ export const useUIStore = create<UIState>()(
           s.agentDetailId ||
           s.toolDetailId ||
           s.personaDetailId ||
-          s.regexDetailId
+          s.regexDetailId ||
+          s.botBrowserOpen
         );
       },
       closeAllDetails: () =>
@@ -397,6 +452,7 @@ export const useUIStore = create<UIState>()(
           toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          botBrowserOpen: false,
           editorDirty: false,
         }),
       setEditorDirty: (dirty) => set({ editorDirty: dirty }),
@@ -414,6 +470,12 @@ export const useUIStore = create<UIState>()(
       setConfirmBeforeDelete: (v) => set({ confirmBeforeDelete: v }),
       setMessagesPerPage: (n) => set({ messagesPerPage: n }),
       setBoldDialogue: (v) => set({ boldDialogue: v }),
+      setNarrationFontColor: (v) => set({ narrationFontColor: v }),
+      setNarrationOpacity: (v) => set({ narrationOpacity: Math.max(0, Math.min(100, v)) }),
+      setChatFontColor: (v) => set({ chatFontColor: v }),
+      setChatFontOpacity: (v) => set({ chatFontOpacity: Math.max(0, Math.min(100, v)) }),
+      setTextStrokeWidth: (v) => set({ textStrokeWidth: Math.max(0, Math.min(5, v)) }),
+      setTextStrokeColor: (v) => set({ textStrokeColor: v }),
       setVisualTheme: (v) => set({ visualTheme: v }),
       setConvoGradientFrom: (v) => set({ convoGradientFrom: v }),
       setConvoGradientTo: (v) => set({ convoGradientTo: v }),
@@ -453,7 +515,44 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 5,
+      version: 6,
+      // Debounce localStorage writes to avoid sync I/O on every state change
+      storage: createJSONStorage(() => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let pendingName: string | null = null;
+        let pendingValue: string | null = null;
+
+        const flush = () => {
+          if (pendingName !== null && pendingValue !== null) {
+            localStorage.setItem(pendingName, pendingValue);
+            pendingName = null;
+            pendingValue = null;
+          }
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+        };
+
+        // Flush pending writes before the tab closes
+        if (typeof window !== "undefined") {
+          window.addEventListener("beforeunload", flush);
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "hidden") flush();
+          });
+        }
+
+        return {
+          getItem: (name: string) => localStorage.getItem(name),
+          setItem: (name: string, value: string) => {
+            pendingName = name;
+            pendingValue = value;
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(flush, 1000);
+          },
+          removeItem: (name: string) => localStorage.removeItem(name),
+        };
+      }),
       migrate: (persisted: any, version: number) => {
         if (version === 0 && persisted.fontSize === 14) {
           persisted.fontSize = 17;
@@ -489,6 +588,15 @@ export const useUIStore = create<UIState>()(
             persisted.rpNotificationSound = true;
           }
         }
+        // v5 → v6: add text appearance settings
+        if (version <= 5) {
+          if (persisted.narrationFontColor === undefined) persisted.narrationFontColor = "";
+          if (persisted.narrationOpacity === undefined) persisted.narrationOpacity = 80;
+          if (persisted.chatFontColor === undefined) persisted.chatFontColor = "";
+          if (persisted.chatFontOpacity === undefined) persisted.chatFontOpacity = 90;
+          if (persisted.textStrokeWidth === undefined) persisted.textStrokeWidth = 0;
+          if (persisted.textStrokeColor === undefined) persisted.textStrokeColor = "#000000";
+        }
         return persisted;
       },
       partialize: (state) => ({
@@ -508,6 +616,12 @@ export const useUIStore = create<UIState>()(
         confirmBeforeDelete: state.confirmBeforeDelete,
         messagesPerPage: state.messagesPerPage,
         boldDialogue: state.boldDialogue,
+        narrationFontColor: state.narrationFontColor,
+        narrationOpacity: state.narrationOpacity,
+        chatFontColor: state.chatFontColor,
+        chatFontOpacity: state.chatFontOpacity,
+        textStrokeWidth: state.textStrokeWidth,
+        textStrokeColor: state.textStrokeColor,
         visualTheme: state.visualTheme,
         convoGradientFrom: state.convoGradientFrom,
         convoGradientTo: state.convoGradientTo,

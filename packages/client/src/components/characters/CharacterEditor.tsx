@@ -45,6 +45,7 @@ import {
   Swords,
   Crop,
   Maximize2,
+  ImageDown,
 } from "lucide-react";
 import { cn, getAvatarCropStyle } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
@@ -279,6 +280,15 @@ export function CharacterEditor() {
             />
             <rect x="3" y="15" width="14" height="2" rx="1" fill="currentColor" />
           </svg>
+        </button>
+
+        {/* Export as PNG */}
+        <button
+          onClick={() => api.download(`/characters/${characterId}/export-png`, "character.png")}
+          className="rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+          title="Export as PNG card"
+        >
+          <ImageDown size="1.125rem" />
         </button>
 
         {/* Delete */}
@@ -1257,7 +1267,12 @@ function SpritesTab({ characterId }: { characterId: string }) {
                 <img src={sprite.url} alt={sprite.expression} loading="lazy" className="h-full w-full object-contain" />
               </div>
               <div className="flex items-center justify-between p-2">
-                <span className="max-w-[10rem] truncate text-[0.6875rem] font-medium capitalize" title={sprite.expression}>{sprite.expression}</span>
+                <span
+                  className="max-w-[10rem] truncate text-[0.6875rem] font-medium capitalize"
+                  title={sprite.expression}
+                >
+                  {sprite.expression}
+                </span>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 max-md:opacity-100 transition-opacity">
                   <button
                     onClick={() => startUpload(sprite.expression)}

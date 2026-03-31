@@ -19,6 +19,7 @@
 // - [create_character: name="...", description="...", personality="...", first_message="...", scenario="..."]
 // - [create_chat: character="...", mode="conversation|roleplay"]
 // - [navigate: panel="...", tab="..."]
+// - [fetch: type="character|persona|lorebook|chat|preset", name="..."]
 
 export interface ScheduleUpdateCommand {
   type: "schedule_update";
@@ -92,6 +93,23 @@ export interface CreateCharacterCommand {
   scenario?: string;
 }
 
+export interface UpdateCharacterCommand {
+  type: "update_character";
+  name: string;
+  description?: string;
+  personality?: string;
+  firstMessage?: string;
+  scenario?: string;
+}
+
+export interface UpdatePersonaCommand {
+  type: "update_persona";
+  name: string;
+  description?: string;
+  personality?: string;
+  appearance?: string;
+}
+
 export interface CreateChatCommand {
   type: "create_chat";
   character: string;
@@ -104,7 +122,22 @@ export interface NavigateCommand {
   tab?: string;
 }
 
-export type AssistantCommand = CreatePersonaCommand | CreateCharacterCommand | CreateChatCommand | NavigateCommand;
+export interface FetchCommand {
+  type: "fetch";
+  /** What kind of item to fetch */
+  fetchType: "character" | "persona" | "lorebook" | "chat" | "preset";
+  /** Name of the item to retrieve */
+  name: string;
+}
+
+export type AssistantCommand =
+  | CreatePersonaCommand
+  | CreateCharacterCommand
+  | UpdateCharacterCommand
+  | UpdatePersonaCommand
+  | CreateChatCommand
+  | NavigateCommand
+  | FetchCommand;
 
 export type CharacterCommand =
   | ScheduleUpdateCommand
@@ -128,8 +161,11 @@ const INFLUENCE_RE = /<influence>([\s\S]*?)<\/influence>/gi;
 // Assistant command regexes
 const CREATE_PERSONA_RE = /\[create_persona:\s*([^\]]+)\]/gi;
 const CREATE_CHARACTER_RE = /\[create_character:\s*([^\]]+)\]/gi;
+const UPDATE_CHARACTER_RE = /\[update_character:\s*([^\]]+)\]/gi;
+const UPDATE_PERSONA_RE = /\[update_persona:\s*([^\]]+)\]/gi;
 const CREATE_CHAT_RE = /\[create_chat:\s*([^\]]+)\]/gi;
 const NAVIGATE_RE = /\[navigate:\s*([^\]]+)\]/gi;
+const FETCH_RE = /\[fetch:\s*([^\]]+)\]/gi;
 /**
  * Parse all character commands from a message and return the cleaned message
  * with commands stripped out.
@@ -256,6 +292,36 @@ export function parseCharacterCommands(content: string): {
     if (cmd.name) commands.push(cmd);
   }
 
+  for (const match of content.matchAll(UPDATE_CHARACTER_RE)) {
+    const params = match[1]!;
+    const cmd: UpdateCharacterCommand = { type: "update_character", name: "" };
+    const nameMatch = params.match(/name="([^"]+)"/);
+    if (nameMatch) cmd.name = nameMatch[1]!;
+    const descMatch = params.match(/description="([^"]+)"/);
+    if (descMatch) cmd.description = descMatch[1]!;
+    const persMatch = params.match(/personality="([^"]+)"/);
+    if (persMatch) cmd.personality = persMatch[1]!;
+    const fmMatch = params.match(/first_message="([^"]+)"/);
+    if (fmMatch) cmd.firstMessage = fmMatch[1]!;
+    const scenMatch = params.match(/scenario="([^"]+)"/);
+    if (scenMatch) cmd.scenario = scenMatch[1]!;
+    if (cmd.name) commands.push(cmd);
+  }
+
+  for (const match of content.matchAll(UPDATE_PERSONA_RE)) {
+    const params = match[1]!;
+    const cmd: UpdatePersonaCommand = { type: "update_persona", name: "" };
+    const nameMatch = params.match(/name="([^"]+)"/);
+    if (nameMatch) cmd.name = nameMatch[1]!;
+    const descMatch = params.match(/description="([^"]+)"/);
+    if (descMatch) cmd.description = descMatch[1]!;
+    const persMatch = params.match(/personality="([^"]+)"/);
+    if (persMatch) cmd.personality = persMatch[1]!;
+    const appMatch = params.match(/appearance="([^"]+)"/);
+    if (appMatch) cmd.appearance = appMatch[1]!;
+    if (cmd.name) commands.push(cmd);
+  }
+
   for (const match of content.matchAll(CREATE_CHAT_RE)) {
     const params = match[1]!;
     const cmd: CreateChatCommand = { type: "create_chat", character: "" };
@@ -278,6 +344,21 @@ export function parseCharacterCommands(content: string): {
     if (cmd.panel) commands.push(cmd);
   }
 
+  for (const match of content.matchAll(FETCH_RE)) {
+    const params = match[1]!;
+    const cmd: FetchCommand = { type: "fetch", fetchType: "character", name: "" };
+    const typeMatch = params.match(/type="([^"]+)"/);
+    if (typeMatch) {
+      const t = typeMatch[1]!.toLowerCase();
+      if (["character", "persona", "lorebook", "chat", "preset"].includes(t)) {
+        cmd.fetchType = t as FetchCommand["fetchType"];
+      }
+    }
+    const nameMatch = params.match(/name="([^"]+)"/);
+    if (nameMatch) cmd.name = nameMatch[1]!;
+    if (cmd.name) commands.push(cmd);
+  }
+
   // Strip all commands from the visible content
   let cleanContent = content
     .replace(SCHEDULE_UPDATE_RE, "")
@@ -289,8 +370,11 @@ export function parseCharacterCommands(content: string): {
     .replace(INFLUENCE_RE, "")
     .replace(CREATE_PERSONA_RE, "")
     .replace(CREATE_CHARACTER_RE, "")
+    .replace(UPDATE_CHARACTER_RE, "")
+    .replace(UPDATE_PERSONA_RE, "")
     .replace(CREATE_CHAT_RE, "")
     .replace(NAVIGATE_RE, "")
+    .replace(FETCH_RE, "")
     .replace(/\n{3,}/g, "\n\n") // collapse excessive newlines left by removals
     .trim();
 

@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Layout: Top Bar (polished, with hover glow)
 // ──────────────────────────────────────────────
-import { PanelLeft, Home, Settings, Link, BookOpen, Users, Sparkles, FileText, UserCircle } from "lucide-react";
+import { PanelLeft, Home, Settings, Link, BookOpen, Users, Sparkles, FileText, UserCircle, Bot } from "lucide-react";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
@@ -13,7 +13,6 @@ const RIGHT_PANEL_BUTTONS = [
   { panel: "connections" as const, icon: Link, label: "Connections", color: "from-sky-400 to-blue-500" },
   { panel: "agents" as const, icon: Sparkles, label: "Agents", color: "from-pink-300 to-purple-400" },
   { panel: "personas" as const, icon: UserCircle, label: "Personas", color: "from-emerald-400 to-teal-500" },
-  { panel: "settings" as const, icon: Settings, label: "Settings", color: "from-gray-400 to-gray-500" },
 ] as const;
 
 export function TopBar() {
@@ -23,6 +22,8 @@ export function TopBar() {
   const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
   const closeAllDetails = useUIStore((s) => s.closeAllDetails);
+
+  const isBotBrowserActive = rightPanelOpen && rightPanel === "bot-browser";
 
   return (
     <header
@@ -61,6 +62,23 @@ export function TopBar() {
         aria-label="Panel navigation"
         className="flex items-center gap-0.5 rounded-xl p-1 max-sm:gap-0 max-sm:p-0.5"
       >
+        {/* Browser */}
+        <button
+          onClick={() => toggleRightPanel("bot-browser")}
+          className={cn(
+            "relative rounded-lg p-2 transition-all duration-200 max-sm:p-1.5",
+            isBotBrowserActive
+              ? "bg-[var(--accent)] text-[var(--primary)] shadow-sm"
+              : "text-[var(--muted-foreground)] hover:text-[var(--primary)]",
+          )}
+          title="Browser"
+        >
+          <Bot size="0.9375rem" />
+          {isBotBrowserActive && (
+            <span className="absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500" />
+          )}
+        </button>
+
         {RIGHT_PANEL_BUTTONS.map(({ panel, icon: Icon, label, color }) => {
           const isActive = rightPanelOpen && rightPanel === panel;
           return (
@@ -87,6 +105,23 @@ export function TopBar() {
             </button>
           );
         })}
+
+        {/* Settings */}
+        <button
+          onClick={() => toggleRightPanel("settings")}
+          className={cn(
+            "relative rounded-lg p-2 transition-all duration-200 max-sm:p-1.5",
+            rightPanelOpen && rightPanel === "settings"
+              ? "bg-[var(--accent)] text-[var(--primary)] shadow-sm"
+              : "text-[var(--muted-foreground)] hover:text-[var(--primary)]",
+          )}
+          title="Settings"
+        >
+          <Settings size="0.9375rem" />
+          {rightPanelOpen && rightPanel === "settings" && (
+            <span className="absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full bg-gradient-to-r from-gray-400 to-gray-500" />
+          )}
+        </button>
       </nav>
     </header>
   );

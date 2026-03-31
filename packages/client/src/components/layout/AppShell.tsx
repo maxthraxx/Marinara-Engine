@@ -11,6 +11,7 @@ import { AgentEditor } from "../agents/AgentEditor";
 import { ToolEditor } from "../agents/ToolEditor";
 import { PersonaEditor } from "../personas/PersonaEditor";
 import { RegexScriptEditor } from "../agents/RegexScriptEditor";
+import { BotBrowserView } from "../bot-browser/BotBrowserView";
 import { RightPanel } from "./RightPanel";
 import { TopBar } from "./TopBar";
 import { OnboardingTutorial } from "../onboarding/OnboardingTutorial";
@@ -49,8 +50,7 @@ export function AppShell() {
     const handleResize = () => {
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
-        const { rightPanelOpen: rp, sidebarOpen: sb, sidebarWidth: sw, closeRightPanel: close } =
-          useUIStore.getState();
+        const { rightPanelOpen: rp, sidebarOpen: sb, sidebarWidth: sw, closeRightPanel: close } = useUIStore.getState();
         if (!rp) return;
         const panelWidth = 320; // 20rem
         const reserved = (sb ? sw : 0) + panelWidth;
@@ -72,6 +72,7 @@ export function AppShell() {
   const toolDetailId = useUIStore((s) => s.toolDetailId);
   const personaDetailId = useUIStore((s) => s.personaDetailId);
   const regexDetailId = useUIStore((s) => s.regexDetailId);
+  const botBrowserOpen = useUIStore((s) => s.botBrowserOpen);
 
   return (
     <div
@@ -120,7 +121,9 @@ export function AppShell() {
         className="mari-main flex min-w-0 flex-1 flex-col overflow-hidden"
       >
         <TopBar />
-        {regexDetailId ? (
+        {botBrowserOpen ? (
+          <BotBrowserView />
+        ) : regexDetailId ? (
           <RegexScriptEditor />
         ) : personaDetailId ? (
           <PersonaEditor />

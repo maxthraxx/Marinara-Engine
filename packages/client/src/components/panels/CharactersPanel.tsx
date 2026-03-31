@@ -34,6 +34,7 @@ import {
   Pencil,
   Tag,
   MessageCircle,
+  Star,
 } from "lucide-react";
 import { useUIStore } from "../../stores/ui.store";
 import { cn, getAvatarCropStyle } from "../../lib/utils";
@@ -75,6 +76,7 @@ export function CharactersPanel() {
   } | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [tagsExpanded, setTagsExpanded] = useState(false);
+  const [favFilter, setFavFilter] = useState<"all" | "favorites" | "non-favorites">("all");
 
   const chatCharacterIds: string[] = activeChat
     ? ((typeof activeChat.characterIds === "string" ? JSON.parse(activeChat.characterIds) : activeChat.characterIds) ??
@@ -106,6 +108,12 @@ export function CharactersPanel() {
 
   const filteredCharacters = useMemo(() => {
     let list = parsedCharacters;
+    // Filter by favorites
+    if (favFilter === "favorites") {
+      list = list.filter((c) => c.parsed.extensions?.fav);
+    } else if (favFilter === "non-favorites") {
+      list = list.filter((c) => !c.parsed.extensions?.fav);
+    }
     // Filter by active tag
     if (activeTag) {
       list = list.filter((c) => (c.parsed.tags ?? []).some((t: string) => t === activeTag));
@@ -121,7 +129,7 @@ export function CharactersPanel() {
       );
     }
     return list;
-  }, [parsedCharacters, search, activeTag]);
+  }, [parsedCharacters, search, activeTag, favFilter]);
 
   // Collect all unique tags across characters for the filter bar
   const allTags = useMemo(() => {
@@ -296,6 +304,25 @@ export function CharactersPanel() {
             className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
           />
         </div>
+      </div>
+
+      {/* Favorites filter */}
+      <div className="flex gap-1">
+        {(["all", "favorites", "non-favorites"] as const).map((opt) => (
+          <button
+            key={opt}
+            onClick={() => setFavFilter(opt)}
+            className={cn(
+              "flex items-center gap-1 rounded-lg px-2 py-1 text-[0.625rem] font-medium transition-all",
+              favFilter === opt
+                ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
+                : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+            )}
+          >
+            {opt === "favorites" && <Star size="0.5625rem" />}
+            {opt === "all" ? "All" : opt === "favorites" ? "Favorites" : "Non-favorites"}
+          </button>
+        ))}
       </div>
 
       {/* Tag filter bar */}
@@ -530,7 +557,8 @@ export function CharactersPanel() {
                         return (
                           <div
                             key={memberId}
-                            className="group/member flex items-center gap-2 rounded-lg p-1.5 transition-all hover:bg-[var(--sidebar-accent)]"
+                            onClick={() => openCharacterDetail(memberId)}
+                            className="group/member flex cursor-pointer items-center gap-2 rounded-lg p-1.5 transition-all hover:bg-[var(--sidebar-accent)]"
                           >
                             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg overflow-hidden bg-gradient-to-br from-pink-400 to-rose-500 text-white">
                               {member.avatarPath ? (

@@ -59,6 +59,7 @@ export function useGenerate() {
       regenerateMessageId?: string;
       impersonate?: boolean;
       attachments?: Array<{ type: string; data: string }>;
+      mentionedCharacterNames?: string[];
     }) => {
       // Prevent concurrent generations for the SAME chat — stops race conditions
       // where autonomous messaging + user input both fire generate at once.
@@ -134,7 +135,6 @@ export function useGenerate() {
       let typingActive = false;
       let typewriterDone: (() => void) | null = null;
       let rafId = 0;
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
       // ── Streaming think-tag filter ──
       // Models may emit <think>...</think> or <thinking>...</thinking> at the
@@ -145,18 +145,21 @@ export function useGenerate() {
       // States: "detect" (start of response, looking for opening tag),
       //         "inside" (inside a think block, suppressing tokens),
       //         "done" (think block closed or no think tag found — passthrough).
-      let thinkState: "detect" | "inside" | "done" = "detect";
+      // Think-tag filtering disabled — skip straight to passthrough
+      let thinkState: string = "done";
       let thinkBuf = ""; // Raw token accumulator during detect/inside phases
       let thinkTagName = "think"; // Which variant was matched ("think" or "thinking")
       const THINK_OPEN_RE = /^(\s*)<(think(?:ing)?)>/i;
 
       // Derive typewriter parameters from speed (1–100)
-      // speed 1  → 1 char every 80ms  (very slow, easy to read)
-      // speed 50 → ~2 chars every 16ms (moderate, default)
+      // Uses an exponential curve so each notch on the slider feels perceptibly different.
+      // speed 1   → 1 char/tick  → ~60 chars/sec   (slow typewriter effect)
+      // speed 50  → 22 chars/tick → ~1300 chars/sec (fast but visible)
       // speed 100 → flush instantly (no typewriter)
-      const charsPerTick = speed >= 100 ? Infinity : Math.max(1, Math.round(speed / 20));
-      // Delay between ticks in ms (0 = use rAF at ~60fps, >0 = use setTimeout)
-      const tickDelay = speed >= 80 ? 0 : Math.round(80 - speed);
+      //
+      // All ticks use rAF (~16ms intervals) for smooth rendering; only charsPerTick varies.
+      const charsPerTick =
+        speed >= 100 ? Infinity : Math.max(1, Math.round(Math.exp((Math.log(500) / 98) * (speed - 1))));
 
       // Adaptive catch-up: when the queue gets very long, temporarily increase
       // chars-per-tick to prevent the typewriter lagging far behind real completion.
@@ -165,10 +168,6 @@ export function useGenerate() {
 
       const flushTypewriterBuffer = () => {
         cancelAnimationFrame(rafId);
-        if (timeoutId !== undefined) {
-          clearTimeout(timeoutId);
-          timeoutId = undefined;
-        }
         fullBuffer += pendingText;
         pendingText = "";
         typingActive = false;
@@ -195,17 +194,9 @@ export function useGenerate() {
           pendingText = pendingText.slice(n);
           fullBuffer += batch;
           if (isActiveChat()) setStreamBuffer(fullBuffer);
-          if (tickDelay > 0) {
-            timeoutId = setTimeout(tick, tickDelay);
-          } else {
-            rafId = requestAnimationFrame(tick);
-          }
-        };
-        if (tickDelay > 0) {
-          timeoutId = setTimeout(tick, tickDelay);
-        } else {
           rafId = requestAnimationFrame(tick);
-        }
+        };
+        rafId = requestAnimationFrame(tick);
       };
 
       try {
@@ -230,6 +221,7 @@ export function useGenerate() {
               if (isActiveChat()) {
                 setTypingCharacterName(null); // Clear typing indicator once response starts
                 setDelayedCharacterInfo(null); // Clear delayed indicator too
+                useChatStore.getState().setGenerationPhase(null); // Clear phase indicator
               }
 
               let chunk = event.data as string;
@@ -291,6 +283,25 @@ export function useGenerate() {
 
             case "agent_start": {
               if (isActiveChat()) setProcessing(true);
+              break;
+            }
+
+            case "progress": {
+              if (!isActiveChat()) break;
+              const phase = (event.data as { phase?: string })?.phase;
+              const labels: Record<string, string> = {
+                embedding: "Preparing context...",
+                assembling: "Building prompt...",
+                lorebooks: "Scanning lorebooks...",
+                memory_recall: "Recalling memories...",
+                agents: "Running agents...",
+                knowledge_retrieval: "Retrieving knowledge...",
+                generating: "Generating...",
+              };
+              const label = phase ? (labels[phase] ?? null) : null;
+              if (label) {
+                useChatStore.getState().setGenerationPhase(label);
+              }
               break;
             }
 
@@ -497,8 +508,18 @@ export function useGenerate() {
                 const m = msgArr[i] as { role?: string; content?: string };
                 const role = (m.role ?? "unknown").toUpperCase();
                 const color =
-                  role === "SYSTEM" ? "#a78bfa" : role === "USER" ? "#60a5fa" : role === "ASSISTANT" ? "#34d399" : "#f59e0b";
-                console.log(`%c[${i + 1}/${msgArr.length}] ${role}`, `color: ${color}; font-weight: bold`, m.content ?? m);
+                  role === "SYSTEM"
+                    ? "#a78bfa"
+                    : role === "USER"
+                      ? "#60a5fa"
+                      : role === "ASSISTANT"
+                        ? "#34d399"
+                        : "#f59e0b";
+                console.log(
+                  `%c[${i + 1}/${msgArr.length}] ${role}`,
+                  `color: ${color}; font-weight: bold`,
+                  m.content ?? m,
+                );
               }
               console.groupEnd();
               break;
@@ -564,7 +585,7 @@ export function useGenerate() {
                 // Reset the stream buffer for the new character
                 fullBuffer = "";
                 pendingText = "";
-                thinkState = "detect";
+                thinkState = "done";
                 thinkBuf = "";
                 thinkTagName = "think";
                 if (isActiveChat()) setStreamBuffer("");
@@ -619,10 +640,6 @@ export function useGenerate() {
                   // Drain any pending typewriter first
                   if (pendingText.length > 0 || typingActive) {
                     cancelAnimationFrame(rafId);
-                    if (timeoutId !== undefined) {
-                      clearTimeout(timeoutId);
-                      timeoutId = undefined;
-                    }
                     pendingText = "";
                     typingActive = false;
                   }
@@ -638,10 +655,6 @@ export function useGenerate() {
               const cleanContent = event.data as string;
               if (streamingEnabled && isActiveChat()) {
                 cancelAnimationFrame(rafId);
-                if (timeoutId !== undefined) {
-                  clearTimeout(timeoutId);
-                  timeoutId = undefined;
-                }
                 pendingText = "";
                 typingActive = false;
                 setStreamBuffer(cleanContent);
@@ -687,6 +700,18 @@ export function useGenerate() {
               break;
             }
 
+            case "illustration": {
+              const illData = event.data as {
+                messageId: string;
+                imageUrl: string;
+                reason?: string;
+              };
+              toast(illData.reason ? `🎨 ${illData.reason}` : "🎨 Scene illustration generated");
+              // Invalidate messages to show the new attachment
+              qc.invalidateQueries({ queryKey: ["chats", "messages", params.chatId] });
+              break;
+            }
+
             case "scene_created": {
               const sceneData = event.data as {
                 sceneChatId: string;
@@ -709,11 +734,21 @@ export function useGenerate() {
             }
 
             case "haptic_command": {
-              const hapData = event.data as { action?: string; intensity?: number; duration?: number; commands?: unknown[]; reasoning?: string };
+              const hapData = event.data as {
+                action?: string;
+                intensity?: number;
+                duration?: number;
+                commands?: unknown[];
+                reasoning?: string;
+              };
               if (hapData.commands) {
-                console.log(`[haptic] Agent sent ${(hapData.commands as unknown[]).length} command(s): ${hapData.reasoning ?? ""}`);
+                console.log(
+                  `[haptic] Agent sent ${(hapData.commands as unknown[]).length} command(s): ${hapData.reasoning ?? ""}`,
+                );
               } else {
-                console.log(`[haptic] ${hapData.action} intensity=${hapData.intensity ?? "?"} duration=${hapData.duration ?? "indefinite"}`);
+                console.log(
+                  `[haptic] ${hapData.action} intensity=${hapData.intensity ?? "?"} duration=${hapData.duration ?? "indefinite"}`,
+                );
               }
               break;
             }
@@ -723,8 +758,14 @@ export function useGenerate() {
               if (actionData.action === "persona_created") {
                 toast(`Created persona: ${actionData.name}`, { icon: "🎭" });
                 qc.invalidateQueries({ queryKey: ["personas"] });
+              } else if (actionData.action === "persona_updated") {
+                toast(`Updated persona: ${actionData.name}`, { icon: "🎭" });
+                qc.invalidateQueries({ queryKey: ["personas"] });
               } else if (actionData.action === "character_created") {
                 toast(`Created character: ${actionData.name}`, { icon: "✨" });
+                qc.invalidateQueries({ queryKey: characterKeys.list() });
+              } else if (actionData.action === "character_updated") {
+                toast(`Updated character: ${actionData.name}`, { icon: "✏️" });
                 qc.invalidateQueries({ queryKey: characterKeys.list() });
               } else if (actionData.action === "chat_created") {
                 toast(`Started ${actionData.mode} chat with ${actionData.characterName}`, { icon: "💬" });
@@ -826,9 +867,8 @@ export function useGenerate() {
         const msg = error instanceof Error ? error.message : "Generation failed";
         showError(msg);
       } finally {
-        // Cancel any pending animation frame / timeout to prevent leaks
+        // Cancel any pending animation frame to prevent leaks
         cancelAnimationFrame(rafId);
-        if (timeoutId !== undefined) clearTimeout(timeoutId);
         // Invalidate messages to pick up saved messages / new swipes from backend
         await qc.invalidateQueries({
           queryKey: chatKeys.messages(params.chatId),

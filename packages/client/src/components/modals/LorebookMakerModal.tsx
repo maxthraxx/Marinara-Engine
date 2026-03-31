@@ -3,9 +3,10 @@
 // Streams lorebook generation and lets user review / auto-save entries.
 // ──────────────────────────────────────────────
 import { useState, useCallback, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "../ui/Modal";
 import { useConnections } from "../../hooks/use-connections";
-import { useLorebooks, useCreateLorebook } from "../../hooks/use-lorebooks";
+import { useLorebooks, useCreateLorebook, lorebookKeys } from "../../hooks/use-lorebooks";
 import { useUIStore } from "../../stores/ui.store";
 import { Loader2, Wand2, CheckCircle, AlertCircle, ChevronDown, BookOpen, Plus } from "lucide-react";
 import { api } from "../../lib/api-client";
@@ -43,6 +44,7 @@ export function LorebookMakerModal({ open, onClose }: Props) {
   const { data: rawLorebooks } = useLorebooks();
   const createLorebook = useCreateLorebook();
   const openLorebookDetail = useUIStore((s) => s.openLorebookDetail);
+  const qc = useQueryClient();
 
   const [prompt, setPrompt] = useState("");
   const [connectionId, setConnectionId] = useState("");
@@ -50,6 +52,11 @@ export function LorebookMakerModal({ open, onClose }: Props) {
   const [entryCount, setEntryCount] = useState(10);
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
+  const [batchProgress, setBatchProgress] = useState<{
+    batch: number;
+    totalBatches: number;
+    entriesSoFar: number;
+  } | null>(null);
   const [generated, setGenerated] = useState<GeneratedData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -72,9 +79,14 @@ export function LorebookMakerModal({ open, onClose }: Props) {
     setGenerated(null);
     setError(null);
     setSaved(false);
+    setBatchProgress(null);
+
+    const abort = new AbortController();
+    abortRef.current = abort;
 
     try {
       let fullText = "";
+      let finalData: GeneratedData | null = null;
       const body: Record<string, unknown> = {
         prompt,
         connectionId,
@@ -86,29 +98,87 @@ export function LorebookMakerModal({ open, onClose }: Props) {
         body.lorebookId = targetLorebookId;
       }
 
-      for await (const chunk of api.stream("/lorebook-maker/generate", body)) {
-        fullText += chunk;
-        setStreamText(fullText);
+      for await (const event of api.streamEvents("/lorebook-maker/generate", body, abort.signal)) {
+        switch (event.type) {
+          case "token":
+            fullText += event.data as string;
+            setStreamText(fullText);
+            break;
+
+          case "batch_start": {
+            const bs = event.data as {
+              batch: number;
+              totalBatches: number;
+              totalEntriesSoFar?: number;
+              entriesSoFar: number;
+            };
+            setBatchProgress({ batch: bs.batch, totalBatches: bs.totalBatches, entriesSoFar: bs.entriesSoFar });
+            // Visual separator between batches in the stream preview
+            if (bs.batch > 1) {
+              fullText += `\n\n── Batch ${bs.batch}/${bs.totalBatches} ──\n\n`;
+              setStreamText(fullText);
+            }
+            break;
+          }
+
+          case "batch_done": {
+            const bd = event.data as { batch: number; totalBatches: number; totalEntriesSoFar: number };
+            setBatchProgress({ batch: bd.batch, totalBatches: bd.totalBatches, entriesSoFar: bd.totalEntriesSoFar });
+            break;
+          }
+
+          case "batch_warning": {
+            const bw = event.data as { batch: number; message: string };
+            setError(bw.message);
+            break;
+          }
+
+          case "saved": {
+            setSaved(true);
+            // Invalidate lorebook queries so entries appear in the UI
+            qc.invalidateQueries({ queryKey: lorebookKeys.all });
+            break;
+          }
+
+          case "done": {
+            try {
+              const raw = typeof event.data === "string" ? event.data : JSON.stringify(event.data);
+              finalData = JSON.parse(raw) as GeneratedData;
+            } catch {
+              // Fall back to parsing the raw stream text
+              try {
+                const jsonMatch = fullText.match(/```(?:json)?\s*([\s\S]*?)```/) ?? [null, fullText];
+                const jsonStr = (jsonMatch[1] ?? fullText).trim();
+                finalData = JSON.parse(jsonStr) as GeneratedData;
+              } catch {
+                /* parsing failed */
+              }
+            }
+            break;
+          }
+
+          case "error":
+            setError(event.data as string);
+            break;
+        }
       }
 
-      // Try parsing the final text as JSON
-      try {
-        const jsonMatch = fullText.match(/```(?:json)?\s*([\s\S]*?)```/) ?? [null, fullText];
-        const jsonStr = (jsonMatch[1] ?? fullText).trim();
-        const parsed = JSON.parse(jsonStr) as GeneratedData;
-        setGenerated(parsed);
-
-        // If entries were sent to an existing lorebook, mark as saved
+      if (finalData) {
+        setGenerated(finalData);
         if (targetLorebookId !== "__new__") {
           setSaved(true);
         }
-      } catch {
+      } else if (!error) {
         setError("Generated text wasn't valid JSON. You can try again.");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Generation failed");
+      if ((err as Error).name !== "AbortError") {
+        setError(err instanceof Error ? err.message : "Generation failed");
+      }
     } finally {
       setStreaming(false);
+      setBatchProgress(null);
+      abortRef.current = null;
     }
   }, [prompt, connectionId, entryCount, targetLorebookId]);
 
@@ -139,6 +209,8 @@ export function LorebookMakerModal({ open, onClose }: Props) {
         }));
 
         await api.post(`/lorebooks/${lbId}/entries/bulk`, { entries: entriesToCreate });
+        // Invalidate so entries appear immediately
+        qc.invalidateQueries({ queryKey: lorebookKeys.entries(lbId) });
       }
 
       setSaved(true);
@@ -218,9 +290,9 @@ export function LorebookMakerModal({ open, onClose }: Props) {
             <input
               type="number"
               value={entryCount}
-              onChange={(e) => setEntryCount(Math.max(1, Math.min(50, parseInt(e.target.value) || 10)))}
+              onChange={(e) => setEntryCount(Math.max(1, Math.min(200, parseInt(e.target.value) || 10)))}
               min={1}
-              max={50}
+              max={200}
               className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
             />
           </div>
@@ -257,11 +329,22 @@ export function LorebookMakerModal({ open, onClose }: Props) {
 
         {/* Stream preview */}
         {(streaming || streamText) && !generated && (
-          <div className="max-h-48 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--background)] p-3">
-            <pre className="whitespace-pre-wrap break-words text-xs font-mono text-[var(--muted-foreground)]">
-              {streamText}
-              {streaming && <span className="animate-pulse">▋</span>}
-            </pre>
+          <div className="space-y-2">
+            {batchProgress && (
+              <div className="flex items-center gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-400">
+                <Loader2 size="0.75rem" className="animate-spin" />
+                <span>
+                  Batch {batchProgress.batch}/{batchProgress.totalBatches}
+                  {batchProgress.entriesSoFar > 0 && ` · ${batchProgress.entriesSoFar} entries so far`}
+                </span>
+              </div>
+            )}
+            <div className="max-h-48 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--background)] p-3">
+              <pre className="whitespace-pre-wrap break-words text-xs font-mono text-[var(--muted-foreground)]">
+                {streamText}
+                {streaming && <span className="animate-pulse">▋</span>}
+              </pre>
+            </div>
           </div>
         )}
 

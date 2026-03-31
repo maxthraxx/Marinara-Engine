@@ -1,6 +1,21 @@
 // ──────────────────────────────────────────────
 // LLM Provider — Abstract Base
 // ──────────────────────────────────────────────
+import { Agent } from "undici";
+
+/**
+ * Shared undici Agent with no body timeout — prevents "Body Timeout Error"
+ * on long-running streaming LLM requests (default is 300s).
+ */
+const llmDispatcher = new Agent({ bodyTimeout: 0, headersTimeout: 0 });
+
+/**
+ * Drop-in replacement for `fetch()` that uses a custom undici dispatcher
+ * with no body/headers timeout. Use this for all outgoing LLM requests.
+ */
+export function llmFetch(url: string | URL, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, dispatcher: llmDispatcher } as RequestInit);
+}
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -61,6 +76,8 @@ export interface ChatOptions {
   signal?: AbortSignal;
   /** Callback to receive the full response parts (for providers that return structured metadata like Gemini thought signatures) */
   onResponseParts?: (parts: unknown[]) => void;
+  /** OpenRouter: preferred provider for model routing */
+  openrouterProvider?: string | null;
 }
 
 /** Token usage statistics returned by the model */

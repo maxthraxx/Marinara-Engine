@@ -52,14 +52,17 @@ import {
   type HapticCommand,
   type CreatePersonaCommand,
   type CreateCharacterCommand,
+  type UpdateCharacterCommand,
+  type UpdatePersonaCommand,
   type CreateChatCommand,
   type NavigateCommand,
+  type FetchCommand,
 } from "../services/conversation/character-commands.js";
 import { MARI_ASSISTANT_PROMPT } from "../db/seed-mari.js";
 import { executeKnowledgeRetrieval } from "../services/agents/knowledge-retrieval.js";
 import { extractFileText, getSourceFilePath } from "./knowledge-sources.routes.js";
 import { gameStateSnapshots as gameStateSnapshotsTable } from "../db/schema/index.js";
-import { eq } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { PROVIDERS, PROFESSOR_MARI_ID } from "@marinara-engine/shared";
 import { chunkAndEmbedMessages, recallMemories } from "../services/memory-recall.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
@@ -243,6 +246,15 @@ export async function generateRoutes(app: FastifyInstance) {
     const abortController = new AbortController();
     const onClose = () => abortController.abort();
     req.raw.on("close", onClose);
+
+    // ── SSE progress helper: tells the client what phase we're in ──
+    const sendProgress = (phase: string) => {
+      try {
+        reply.raw.write(`data: ${JSON.stringify({ type: "progress", data: { phase } })}\n\n`);
+      } catch {
+        /* stream closed */
+      }
+    };
 
     try {
       // Get chat messages
@@ -439,6 +451,8 @@ export async function generateRoutes(app: FastifyInstance) {
         : [];
 
       // ── Compute chat embedding for semantic lorebook matching (if any entries are vectorized) ──
+      sendProgress("embedding");
+      const _tEmbed = Date.now();
       let chatContextEmbedding: number[] | null = null;
       try {
         const activeEntries = await lorebooksStore.listActiveEntries({
@@ -468,6 +482,10 @@ export async function generateRoutes(app: FastifyInstance) {
                 embedBaseUrl = resolveBaseUrl(ec);
               }
             }
+            // Use the dedicated embedding base URL if configured
+            if (embedConn.embeddingBaseUrl) {
+              embedBaseUrl = (embedConn.embeddingBaseUrl as string).replace(/\/+$/, "");
+            }
             const embeddingModel =
               (embedConn.embeddingModel as string | undefined) || (conn.embeddingModel as string | undefined);
             if (embeddingModel) {
@@ -484,7 +502,10 @@ export async function generateRoutes(app: FastifyInstance) {
       } catch {
         // Embedding generation is optional — if it fails, fall back to keyword-only matching
       }
+      console.log(`[timing] Embedding: ${Date.now() - _tEmbed}ms`);
 
+      sendProgress("assembling");
+      const _tAssemble = Date.now();
       if (presetId) {
         const preset = await presets.getById(presetId);
         if (preset) {
@@ -595,12 +616,18 @@ export async function generateRoutes(app: FastifyInstance) {
         // ── Typing delay: DND/idle characters don't respond instantly ──
         if (!input.regenerateMessageId && !input.impersonate) {
           const schedSvc = await import("../services/conversation/schedule.service.js");
+          // Check if any characters were @mentioned
+          const mentionedNames = new Set((input.mentionedCharacterNames ?? []).map((n: string) => n.toLowerCase()));
+          const hasMentions = mentionedNames.size > 0;
           // Use the "worst" (longest-delay) status among all characters
           const worstStatus = convoCharInfo.reduce((worst, c) => {
             const rank = { online: 0, idle: 1, dnd: 2, offline: 3 } as Record<string, number>;
             return (rank[c.status] ?? 0) > (rank[worst] ?? 0) ? c.status : worst;
           }, "online");
-          const delayMs = schedSvc.getDirectMessageDelay(worstStatus as "online" | "idle" | "dnd" | "offline");
+          // If user @mentioned a character, use reduced mention delay instead
+          const delayMs = hasMentions
+            ? schedSvc.getMentionDelay(worstStatus as "online" | "idle" | "dnd" | "offline")
+            : schedSvc.getDirectMessageDelay(worstStatus as "online" | "idle" | "dnd" | "offline");
           if (delayMs > 0) {
             // Send "delayed" event first — client shows "will respond in a moment" / "when they're back"
             reply.raw.write(
@@ -708,10 +735,22 @@ export async function generateRoutes(app: FastifyInstance) {
         }
         if (currentBucket) buckets.push(currentBucket);
 
-        // ── Auto-summarize days older than 7 days ──
-        const SUMMARY_AGE_DAYS = 7;
-        const cutoffMs = now.getTime() - SUMMARY_AGE_DAYS * 86400000;
-        const daySummaries: Record<string, string> = (chatMeta.daySummaries as Record<string, string>) ?? {};
+        // ── Auto-summarize all past days (any day before today) ──
+        // Each summary includes a narrative recap and a list of key details the
+        // characters must remember going forward (promises, plans, unresolved topics, etc.).
+        type DaySummaryEntry = { summary: string; keyDetails: string[] };
+        const rawDaySummaries: Record<string, string | DaySummaryEntry> =
+          (chatMeta.daySummaries as Record<string, string | DaySummaryEntry>) ?? {};
+
+        // Normalize legacy string-only summaries → { summary, keyDetails: [] }
+        const daySummaries: Record<string, DaySummaryEntry> = {};
+        for (const [k, v] of Object.entries(rawDaySummaries)) {
+          if (typeof v === "string") {
+            daySummaries[k] = { summary: v, keyDetails: [] };
+          } else {
+            daySummaries[k] = v;
+          }
+        }
         let summariesChanged = false;
 
         // Parse DD.MM.YYYY → Date for age comparison
@@ -720,18 +759,18 @@ export async function generateRoutes(app: FastifyInstance) {
           return new Date(Number(yyyy), Number(mm) - 1, Number(dd));
         };
 
-        // Collect old-day buckets that need summarization
+        // Collect past-day buckets that haven't been summarized yet (anything before today)
         const bucketsToSummarize: Bucket[] = [];
         for (const b of buckets) {
           if (!("date" in b && "msgs" in b)) continue;
           const bucket = b as Bucket;
           const bucketDate = parseDateKey(bucket.date);
-          if (bucketDate.getTime() < cutoffMs && !daySummaries[bucket.date]) {
-            bucketsToSummarize.push(bucket);
-          }
+          // Skip today and already-summarized days
+          if (isSameDay(bucketDate) || daySummaries[bucket.date]) continue;
+          bucketsToSummarize.push(bucket);
         }
 
-        // Summarize each unsummarized old day (in parallel for speed)
+        // Summarize each unsummarized past day (in parallel for speed)
         if (bucketsToSummarize.length > 0) {
           const summaryProvider = createLLMProvider(conn.provider, baseUrl, conn.apiKey);
           const summaryResults = await Promise.allSettled(
@@ -742,21 +781,54 @@ export async function generateRoutes(app: FastifyInstance) {
                   {
                     role: "system" as const,
                     content: [
-                      `You are a conversation summarizer. Summarize the following DM conversation from ${bucket.date} into a brief, natural paragraph.`,
-                      `Focus on: topics discussed, key moments, emotional tone, and any important information exchanged.`,
-                      `Keep it concise (2-4 sentences). Write in third person. Do not use any XML or special formatting.`,
+                      `You are a conversation memory assistant. You will receive a full day's DM conversation from ${bucket.date}.`,
+                      `Produce a JSON object with two fields:`,
+                      ``,
+                      `1. "summary" — A brief narrative paragraph (2-4 sentences, third person) covering what happened: topics discussed, key moments, emotional tone, and important exchanges.`,
+                      ``,
+                      `2. "keyDetails" — An array of short, specific strings listing things the characters MUST remember going forward. Include:`,
+                      `   - Promises or commitments made ("Alice promised to call Bob tomorrow morning")`,
+                      `   - Plans or appointments ("They agreed to watch a movie together on Friday")`,
+                      `   - Unresolved questions or topics left hanging ("Bob asked about Alice's job interview — she said she'd tell him later")`,
+                      `   - Emotional events that would affect future interactions ("Alice confided she's been feeling lonely lately")`,
+                      `   - New information revealed ("Bob mentioned he has a sister named Clara")`,
+                      `   - Requests or things someone said they'd do ("Alice said she'd send the recipe")`,
+                      `   If nothing important needs to be carried forward, use an empty array.`,
+                      ``,
+                      `Respond with ONLY valid JSON. No markdown fences, no extra text.`,
+                      `Example: { "summary": "Alice and Bob caught up after work...", "keyDetails": ["Alice promised to send Bob the recipe for pasta", "They planned to meet for coffee on Saturday"] }`,
                     ].join("\n"),
                   },
                   { role: "user" as const, content: chatLog },
                 ],
                 { model: conn.model, temperature: 0.3, maxTokens: 4096 },
               );
-              return { date: bucket.date, summary: (result.content ?? "").trim() };
+              const raw = (result.content ?? "").trim();
+              // Parse the JSON response
+              try {
+                let jsonStr = raw;
+                const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+                if (fenceMatch) jsonStr = fenceMatch[1]!.trim();
+                const parsed = JSON.parse(jsonStr);
+                return {
+                  date: bucket.date,
+                  summary: (typeof parsed.summary === "string" ? parsed.summary : raw).trim(),
+                  keyDetails: Array.isArray(parsed.keyDetails)
+                    ? parsed.keyDetails.filter((d: unknown) => typeof d === "string" && d.trim())
+                    : [],
+                };
+              } catch {
+                // Fallback: treat the entire response as a plain summary
+                return { date: bucket.date, summary: raw, keyDetails: [] as string[] };
+              }
             }),
           );
           for (const r of summaryResults) {
             if (r.status === "fulfilled" && r.value.summary) {
-              daySummaries[r.value.date] = r.value.summary;
+              daySummaries[r.value.date] = {
+                summary: r.value.summary,
+                keyDetails: r.value.keyDetails,
+              };
               summariesChanged = true;
             }
           }
@@ -767,20 +839,202 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        // Flatten: old days with summaries → <summary> blocks, recent days → per-message with date wrapper + author, today → individual timestamped messages
+        // ── Weekly consolidation: roll completed weeks into a single week summary ──
+        // A week is Monday→Sunday. Once the entire week is in the past (today >= next Monday),
+        // all individual day summaries from that week are merged into one week summary.
+        type WeekSummaryEntry = { summary: string; keyDetails: string[] };
+        const weekSummaries: Record<string, WeekSummaryEntry> =
+          (chatMeta.weekSummaries as Record<string, WeekSummaryEntry>) ?? {};
+
+        // Helper: get the Monday (start) of a date's ISO week
+        const getWeekMonday = (d: Date) => {
+          const day = d.getDay(); // 0=Sun,1=Mon,...
+          const diff = day === 0 ? -6 : 1 - day; // shift to Monday
+          const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
+          return monday;
+        };
+        const fmtDateKey = (d: Date) =>
+          `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
+
+        // Group summarized days by their week-Monday key
+        const daysByWeek = new Map<string, { dateKey: string; entry: DaySummaryEntry }[]>();
+        for (const [dateKey, entry] of Object.entries(daySummaries)) {
+          const d = parseDateKey(dateKey);
+          const monday = getWeekMonday(d);
+          const weekKey = fmtDateKey(monday);
+          if (!daysByWeek.has(weekKey)) daysByWeek.set(weekKey, []);
+          daysByWeek.get(weekKey)!.push({ dateKey, entry });
+        }
+
+        // Determine which weeks are complete (Sunday is in the past)
+        const weeksToConsolidate: { weekKey: string; days: { dateKey: string; entry: DaySummaryEntry }[] }[] = [];
+        for (const [weekKey, days] of daysByWeek) {
+          if (weekSummaries[weekKey]) continue; // already consolidated
+          const monday = parseDateKey(weekKey);
+          const nextMonday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7);
+          if (now.getTime() >= nextMonday.getTime()) {
+            // This week is fully in the past — consolidate
+            weeksToConsolidate.push({ weekKey, days });
+          }
+        }
+
+        let weekSummariesChanged = false;
+        if (weeksToConsolidate.length > 0) {
+          const weekProvider = createLLMProvider(conn.provider, baseUrl, conn.apiKey);
+          const weekResults = await Promise.allSettled(
+            weeksToConsolidate.map(async ({ weekKey, days }) => {
+              // Sort days chronologically within the week
+              days.sort((a, b) => parseDateKey(a.dateKey).getTime() - parseDateKey(b.dateKey).getTime());
+              const monday = parseDateKey(weekKey);
+              const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+              const rangeLabel = `${weekKey} – ${fmtDateKey(sunday)}`;
+
+              // Build the input: each day's summary + key details
+              const dayBlocks = days.map((d) => {
+                let block = `[${d.dateKey}]\n${d.entry.summary}`;
+                if (d.entry.keyDetails.length > 0) {
+                  block += `\nKey details: ${d.entry.keyDetails.join("; ")}`;
+                }
+                return block;
+              });
+
+              const result = await weekProvider.chatComplete(
+                [
+                  {
+                    role: "system" as const,
+                    content: [
+                      `You are a conversation memory assistant. You will receive daily conversation summaries for the week of ${rangeLabel}.`,
+                      `Produce a JSON object with two fields:`,
+                      ``,
+                      `1. "summary" — A cohesive narrative paragraph (3-6 sentences, third person) covering the week: major topics, relationship developments, emotional arc, and significant events. Weave the days together naturally — don't just list each day separately.`,
+                      ``,
+                      `2. "keyDetails" — A consolidated array of short, specific strings listing things the characters MUST still remember going forward. Review the daily key details and:`,
+                      `   - KEEP details that are still relevant (upcoming plans, ongoing commitments, unresolved topics)`,
+                      `   - MERGE duplicates or evolving items into their latest state`,
+                      `   - DROP details that were already resolved during the week (e.g. "promised to send recipe" if it was sent later that week)`,
+                      `   - ADD any overarching patterns or relationship developments worth remembering`,
+                      ``,
+                      `Respond with ONLY valid JSON. No markdown fences, no extra text.`,
+                    ].join("\n"),
+                  },
+                  { role: "user" as const, content: dayBlocks.join("\n\n") },
+                ],
+                { model: conn.model, temperature: 0.3, maxTokens: 4096 },
+              );
+              const raw = (result.content ?? "").trim();
+              try {
+                let jsonStr = raw;
+                const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+                if (fenceMatch) jsonStr = fenceMatch[1]!.trim();
+                const parsed = JSON.parse(jsonStr);
+                return {
+                  weekKey,
+                  summary: (typeof parsed.summary === "string" ? parsed.summary : raw).trim(),
+                  keyDetails: Array.isArray(parsed.keyDetails)
+                    ? parsed.keyDetails.filter((d: unknown) => typeof d === "string" && d.trim())
+                    : [],
+                };
+              } catch {
+                return { weekKey, summary: raw, keyDetails: [] as string[] };
+              }
+            }),
+          );
+          for (const r of weekResults) {
+            if (r.status === "fulfilled" && r.value.summary) {
+              weekSummaries[r.value.weekKey] = {
+                summary: r.value.summary,
+                keyDetails: r.value.keyDetails,
+              };
+              weekSummariesChanged = true;
+            }
+          }
+          if (weekSummariesChanged) {
+            const updatedMeta = { ...chatMeta, daySummaries, weekSummaries };
+            await chats.updateMetadata(input.chatId, updatedMeta);
+          }
+        }
+
+        // Build a lookup: dateKey → weekKey for days that belong to a consolidated week
+        const dayToWeek = new Map<string, string>();
+        for (const [weekKey] of Object.entries(weekSummaries)) {
+          const monday = parseDateKey(weekKey);
+          for (let i = 0; i < 7; i++) {
+            const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+            dayToWeek.set(fmtDateKey(d), weekKey);
+          }
+        }
+
+        // Collect all key details for persistent memory injection
+        // Use week-level details for consolidated weeks, day-level for the rest
+        const allKeyDetails: { label: string; details: string[] }[] = [];
+        const weekDetailsEmitted = new Set<string>();
+        // First: week summaries (chronological by week start)
+        const sortedWeekKeys = Object.keys(weekSummaries).sort(
+          (a, b) => parseDateKey(a).getTime() - parseDateKey(b).getTime(),
+        );
+        for (const wk of sortedWeekKeys) {
+          const entry = weekSummaries[wk]!;
+          if (entry.keyDetails.length > 0) {
+            const monday = parseDateKey(wk);
+            const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+            allKeyDetails.push({
+              label: `Week of ${wk} – ${fmtDateKey(sunday)}`,
+              details: entry.keyDetails,
+            });
+          }
+          weekDetailsEmitted.add(wk);
+        }
+        // Then: non-consolidated day details
+        for (const [date, entry] of Object.entries(daySummaries)) {
+          if (dayToWeek.has(date)) continue; // covered by week summary
+          if (entry.keyDetails.length > 0) {
+            allKeyDetails.push({ label: date, details: entry.keyDetails });
+          }
+        }
+
+        // Flatten: consolidated weeks → single <summary week="..."> block,
+        // non-consolidated summarized days → <summary date="..."> block,
+        // today → individual timestamped messages
+        const weekBlocksEmitted = new Set<string>();
         finalMessages = buckets.flatMap((b) => {
           if ("date" in b && "msgs" in b) {
             const bucket = b as Bucket;
-            if (daySummaries[bucket.date]) {
+            const weekKey = dayToWeek.get(bucket.date);
+
+            // Day belongs to a consolidated week → emit one week summary block (first occurrence)
+            if (weekKey && weekSummaries[weekKey]) {
+              if (weekBlocksEmitted.has(weekKey)) return []; // already emitted for this week
+              weekBlocksEmitted.add(weekKey);
+              const wEntry = weekSummaries[weekKey]!;
+              const monday = parseDateKey(weekKey);
+              const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+              let block = wEntry.summary;
+              if (wEntry.keyDetails.length > 0) {
+                block += `\nKey details: ${wEntry.keyDetails.join("; ")}`;
+              }
               return [
                 {
                   role: "user" as const,
-                  content: `<summary date="${bucket.date}">\n${daySummaries[bucket.date]}\n</summary>`,
+                  content: `<summary week="${weekKey} – ${fmtDateKey(sunday)}">\n${block}\n</summary>`,
                 },
               ];
             }
-            // Keep each message as its own user/assistant turn with "Author: content" format,
-            // wrapping the first message with <date> and the last with </date>
+
+            // Non-consolidated day with a summary
+            const entry = daySummaries[bucket.date];
+            if (entry) {
+              let block = entry.summary;
+              if (entry.keyDetails.length > 0) {
+                block += `\nKey details: ${entry.keyDetails.join("; ")}`;
+              }
+              return [
+                {
+                  role: "user" as const,
+                  content: `<summary date="${bucket.date}">\n${block}\n</summary>`,
+                },
+              ];
+            }
+            // Unsummarized day (today) — keep each message as its own turn
             return bucket.msgs.map((m, idx) => {
               let content = `${m.author}: ${m.content}`;
               if (idx === 0) content = `<date="${bucket.date}">\n${content}`;
@@ -1018,39 +1272,56 @@ export async function generateRoutes(app: FastifyInstance) {
         if (isMariChat) {
           conversationSystemPrompt += "\n\n" + MARI_ASSISTANT_PROMPT;
 
-          // Inject available characters & personas so Mari can answer questions about them
+          // Inject names-only lists so Mari knows what's available (not full data)
           try {
             const allChars = await chars.list();
             const allPersonasList = await chars.listPersonas();
+            const allLorebooks = await lorebooksStore.list();
+            const allChats = await chats.list();
 
-            if (allChars.length > 0) {
-              const charSummaries = allChars
-                .filter((c: any) => c.id !== PROFESSOR_MARI_ID)
-                .map((c: any) => {
-                  const d = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-                  const parts = [`Name: ${d.name}`];
-                  if (d.description) parts.push(`Description: ${d.description}`);
-                  if (d.personality) parts.push(`Personality: ${d.personality}`);
-                  if (d.scenario) parts.push(`Scenario: ${d.scenario}`);
-                  return parts.join("\n");
-                });
-              if (charSummaries.length > 0) {
-                conversationSystemPrompt += `\n\n<available_characters>\nThe user has ${charSummaries.length} character(s) in their library. You can reference these when helping the user:\n\n${charSummaries.join("\n---\n")}\n</available_characters>`;
-              }
-            }
+            const charNames = allChars
+              .filter((c: any) => c.id !== PROFESSOR_MARI_ID)
+              .map((c: any) => {
+                const d = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
+                return d.name;
+              })
+              .filter(Boolean);
 
-            if (allPersonasList.length > 0) {
-              const personaSummaries = allPersonasList.map((p: any) => {
-                const parts = [`Name: ${p.name}`];
-                if (p.description) parts.push(`Description: ${p.description}`);
-                if (p.personality) parts.push(`Personality: ${p.personality}`);
-                if (p.appearance) parts.push(`Appearance: ${p.appearance}`);
-                return parts.join("\n");
-              });
-              conversationSystemPrompt += `\n\n<available_personas>\nThe user has ${personaSummaries.length} persona(s):\n\n${personaSummaries.join("\n---\n")}\n</available_personas>`;
+            const personaNames = allPersonasList.map((p: any) => p.name).filter(Boolean);
+            const lorebookNames = allLorebooks.map((lb: any) => lb.name).filter(Boolean);
+            const chatNames = allChats
+              .slice(0, 50)
+              .map((c: any) => c.name)
+              .filter(Boolean);
+
+            const namesSections: string[] = [];
+            if (charNames.length > 0)
+              namesSections.push(`<available_names type="character">\n${charNames.join(", ")}\n</available_names>`);
+            if (personaNames.length > 0)
+              namesSections.push(`<available_names type="persona">\n${personaNames.join(", ")}\n</available_names>`);
+            if (lorebookNames.length > 0)
+              namesSections.push(`<available_names type="lorebook">\n${lorebookNames.join(", ")}\n</available_names>`);
+            if (chatNames.length > 0)
+              namesSections.push(`<available_names type="chat">\n${chatNames.join(", ")}\n</available_names>`);
+
+            if (namesSections.length > 0) {
+              conversationSystemPrompt += "\n\n" + namesSections.join("\n\n");
             }
           } catch {
-            // Non-critical — continue without character/persona context
+            // Non-critical — continue without name lists
+          }
+
+          // Inject previously fetched context from chatMeta.mariContext
+          const mariContext = chatMeta.mariContext as Record<string, string> | undefined;
+          if (mariContext && Object.keys(mariContext).length > 0) {
+            const contextSections: string[] = [];
+            for (const [key, value] of Object.entries(mariContext)) {
+              contextSections.push(`<fetched_data key="${key}">\n${value}\n</fetched_data>`);
+            }
+            conversationSystemPrompt +=
+              "\n\n<loaded_context>\nThe following items were previously fetched and are available for reference:\n\n" +
+              contextSections.join("\n\n") +
+              "\n</loaded_context>";
           }
         }
 
@@ -1094,10 +1365,24 @@ export async function generateRoutes(app: FastifyInstance) {
         };
         const userStatusLabel = userStatusLabels[input.userStatus ?? "active"] ?? "active";
 
+        // Build @mention line — tells the LLM which characters were directly pinged
+        const mentionedNames = (input.mentionedCharacterNames ?? []).filter((n: string) =>
+          convoCharInfo.some((c) => c.name.toLowerCase() === n.toLowerCase()),
+        );
+        let mentionLine: string | null = null;
+        if (mentionedNames.length > 0) {
+          if (convoCharInfo.length === 1) {
+            mentionLine = `${personaName} @mentioned you directly — treat this as an urgent ping that demands your attention even if you are busy or away.`;
+          } else {
+            mentionLine = `${personaName} @mentioned: ${mentionedNames.join(", ")} — this is an urgent ping directed at ${mentionedNames.length === 1 ? "that person" : "those people"} specifically. The mentioned character(s) should feel compelled to respond promptly even if busy or away.`;
+          }
+        }
+
         const contextBlock = [
           `<context>`,
           `Your current status: ${statusLine}.`,
           `${personaName}'s status: ${userStatusLabel}.`,
+          ...(mentionLine ? [mentionLine] : []),
           ...scheduleLines,
           `The current time and date: ${timeStr}, ${dateStr}.`,
           `</context>`,
@@ -1183,6 +1468,26 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
+        // Inject key details from past-day summaries as persistent memory
+        if (allKeyDetails.length > 0) {
+          // Sort chronologically so the model sees the most recent details last
+          allKeyDetails.sort((a, b) => {
+            // Parse the first date-like token from each label for ordering
+            const extractDate = (s: string) => {
+              const m = s.match(/(\d{2}\.\d{2}\.\d{4})/);
+              return m ? parseDateKey(m[1]!).getTime() : 0;
+            };
+            return extractDate(a.label) - extractDate(b.label);
+          });
+          const memoryLines = [`<important_memories>`, `Things you must remember from past conversations:`];
+          for (const { label, details } of allKeyDetails) {
+            memoryLines.push(`[${label}]`);
+            for (const d of details) memoryLines.push(`- ${d}`);
+          }
+          memoryLines.push(`</important_memories>`);
+          conversationSystemPrompt += "\n\n" + memoryLines.join("\n");
+        }
+
         finalMessages = [
           { role: "system" as const, content: conversationSystemPrompt },
           ...finalMessages,
@@ -1192,6 +1497,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
         // ── Lorebook injection for conversation mode ──
         if (chatActiveLorebookIds.length > 0) {
+          sendProgress("lorebooks");
           const scanMessages = mappedMessages.map((m) => ({
             role: m.role as "user" | "assistant" | "system",
             content: m.content,
@@ -1217,6 +1523,15 @@ export async function generateRoutes(app: FastifyInstance) {
             finalMessages = injectAtDepth(finalMessages, lorebookResult.depthEntries);
           }
         }
+      }
+
+      // ── Author's Notes injection ──
+      const authorNotes = (chatMeta.authorNotes as string | undefined)?.trim();
+      if (authorNotes) {
+        const authorNotesDepth = (chatMeta.authorNotesDepth as number) ?? 4;
+        finalMessages = injectAtDepth(finalMessages, [
+          { content: authorNotes, role: "system", depth: authorNotesDepth },
+        ]);
       }
 
       // ── Roleplay: inject pending OOC influences from connected conversation ──
@@ -1308,6 +1623,13 @@ export async function generateRoutes(app: FastifyInstance) {
         showThoughts = true;
       }
 
+      // enableThinking tells providers to activate reasoning mode (e.g. Anthropic
+      // extended thinking, Gemini thinkingConfig). Only true when the user has
+      // explicitly requested reasoning via reasoningEffort — showThoughts alone
+      // just controls whether thinking tokens are *displayed*, not whether
+      // reasoning mode is activated.
+      const enableThinking = !!resolvedEffort;
+
       // Create provider
       const provider = createLLMProvider(conn.provider, baseUrl, conn.apiKey);
 
@@ -1326,6 +1648,18 @@ export async function generateRoutes(app: FastifyInstance) {
       // Cache per-connection providers so agents sharing the same connection batch together
       const agentProviderCache = new Map<string, { provider: ReturnType<typeof createLLMProvider>; model: string }>();
 
+      // Check if there's a connection marked as default for all agents
+      const defaultAgentConn = await connections.getDefaultForAgents();
+      if (defaultAgentConn) {
+        const dBaseUrl = resolveBaseUrl(defaultAgentConn);
+        if (dBaseUrl) {
+          agentProviderCache.set(defaultAgentConn.id, {
+            provider: createLLMProvider(defaultAgentConn.provider, dBaseUrl, defaultAgentConn.apiKey),
+            model: defaultAgentConn.model,
+          });
+        }
+      }
+
       for (const cfg of enabledConfigs) {
         // Chat Summary agent is manual-only — skip it in the generation pipeline
         if (cfg.type === "chat-summary") continue;
@@ -1335,20 +1669,21 @@ export async function generateRoutes(app: FastifyInstance) {
         let agentProvider = provider;
         let agentModel = conn.model;
 
-        // Per-agent connection override
-        if (cfg.connectionId) {
-          const cached = agentProviderCache.get(cfg.connectionId);
+        // Resolve connection: per-agent override > default-for-agents > chat connection
+        const effectiveConnectionId = cfg.connectionId ?? defaultAgentConn?.id ?? null;
+        if (effectiveConnectionId) {
+          const cached = agentProviderCache.get(effectiveConnectionId);
           if (cached) {
             agentProvider = cached.provider;
             agentModel = cached.model;
           } else {
-            const agentConn = await connections.getWithKey(cfg.connectionId);
+            const agentConn = await connections.getWithKey(effectiveConnectionId);
             if (agentConn) {
               const agentBaseUrl = resolveBaseUrl(agentConn);
               if (agentBaseUrl) {
                 agentProvider = createLLMProvider(agentConn.provider, agentBaseUrl, agentConn.apiKey);
                 agentModel = agentConn.model;
-                agentProviderCache.set(cfg.connectionId, { provider: agentProvider, model: agentModel });
+                agentProviderCache.set(effectiveConnectionId, { provider: agentProvider, model: agentModel });
               }
             }
           }
@@ -1378,16 +1713,18 @@ export async function generateRoutes(app: FastifyInstance) {
             })
           : [];
       for (const builtIn of builtInFallbacks) {
+        // Built-in agents also respect the default-for-agents connection
+        const builtInCached = defaultAgentConn ? agentProviderCache.get(defaultAgentConn.id) : null;
         resolvedAgents.push({
           id: `builtin:${builtIn.id}`,
           type: builtIn.id,
           name: builtIn.name,
           phase: builtIn.phase,
           promptTemplate: "",
-          connectionId: null,
+          connectionId: defaultAgentConn?.id ?? null,
           settings: {},
-          provider,
-          model: conn.model,
+          provider: builtInCached?.provider ?? provider,
+          model: builtInCached?.model ?? conn.model,
         });
       }
 
@@ -1488,9 +1825,14 @@ export async function generateRoutes(app: FastifyInstance) {
           );
           // Include enabled RPG attributes alongside persona fields
           if (persona?.personaStats) {
-            const pStats = typeof persona.personaStats === "string" ? JSON.parse(persona.personaStats) : persona.personaStats;
+            const pStats =
+              typeof persona.personaStats === "string" ? JSON.parse(persona.personaStats) : persona.personaStats;
             if (pStats?.rpgStats?.enabled) {
-              const rpg = pStats.rpgStats as { attributes: Array<{ name: string; value: number }>; hp: { value: number; max: number }; mp: { value: number; max: number } };
+              const rpg = pStats.rpgStats as {
+                attributes: Array<{ name: string; value: number }>;
+                hp: { value: number; max: number };
+                mp: { value: number; max: number };
+              };
               const rpgLines = [`Max HP: ${rpg.hp.max}`, `Max MP: ${rpg.mp.max}`];
               for (const attr of rpg.attributes) {
                 rpgLines.push(`${attr.name}: ${attr.value}`);
@@ -1647,6 +1989,8 @@ export async function generateRoutes(app: FastifyInstance) {
       const enableMemoryRecall =
         chatMeta.enableMemoryRecall !== undefined ? chatMeta.enableMemoryRecall === true : memoryRecallDefault;
       if (enableMemoryRecall) {
+        sendProgress("memory_recall");
+        const _tRecall = Date.now();
         try {
           // Use the last user message as the query
           const lastUserMsg = [...mappedMessages].reverse().find((m) => m.role === "user");
@@ -1675,6 +2019,7 @@ export async function generateRoutes(app: FastifyInstance) {
         } catch (err) {
           console.error("[memory-recall] Recall failed, skipping:", err);
         }
+        console.log(`[timing] Memory recall: ${Date.now() - _tRecall}ms`);
       }
 
       // ── Group chat processing ──
@@ -1931,9 +2276,25 @@ export async function generateRoutes(app: FastifyInstance) {
               index: d.index,
               capabilities: d.capabilities,
             }));
+            console.log(`[haptic] Injected ${hapticService.devices.length} device(s) into agent context`);
+          } else if (!hapticService.connected) {
+            console.warn("[haptic] Agent enabled but Intiface Central is not connected — skipping device injection");
+          } else {
+            console.warn("[haptic] Agent enabled and connected, but no devices found — did you scan for devices?");
           }
-        } catch {
-          /* non-critical */
+        } catch (err) {
+          console.error("[haptic] Failed to inject device info:", err);
+        }
+      }
+
+      // If the CYOA agent is enabled, inject previous choices for anti-repetition
+      if (resolvedAgents.some((a) => a.type === "cyoa")) {
+        const lastAssistantMsg = chatMessages.filter((m: any) => m.role === "assistant").at(-1);
+        if (lastAssistantMsg) {
+          const lastExtra = parseExtra((lastAssistantMsg as any).extra);
+          if (lastExtra.cyoaChoices) {
+            agentContext.memory._lastCyoaChoices = lastExtra.cyoaChoices;
+          }
         }
       }
 
@@ -1991,6 +2352,148 @@ export async function generateRoutes(app: FastifyInstance) {
 
       // Chat summary is manual-only — never injected into agent prompts
 
+      // ────────────────────────────────────────
+      // Tracker Data Injection
+      // ────────────────────────────────────────
+      // Always inject committed tracker data as a system message regardless of
+      // preset configuration. This replaces the old agent_data marker approach.
+      if (chatEnableAgents && chatActiveAgentIds.length > 0) {
+        const active = new Set(chatActiveAgentIds);
+        const hasWorldState = active.has("world-state");
+        const hasCharTracker = active.has("character-tracker");
+        const hasPersonaStats = active.has("persona-stats");
+        const hasQuest = active.has("quest");
+        const hasCustomTracker = active.has("custom-tracker");
+
+        if (hasWorldState || hasCharTracker || hasPersonaStats || hasQuest || hasCustomTracker) {
+          // Prefer committed snapshot; fall back to latest if none committed yet
+          let snap: typeof gameStateSnapshotsTable.$inferSelect | undefined;
+          const committedRows = await app.db
+            .select()
+            .from(gameStateSnapshotsTable)
+            .where(and(eq(gameStateSnapshotsTable.chatId, input.chatId), eq(gameStateSnapshotsTable.committed, 1)))
+            .orderBy(desc(gameStateSnapshotsTable.createdAt))
+            .limit(1);
+          snap = committedRows[0];
+          if (!snap) {
+            const anyRows = await app.db
+              .select()
+              .from(gameStateSnapshotsTable)
+              .where(eq(gameStateSnapshotsTable.chatId, input.chatId))
+              .orderBy(desc(gameStateSnapshotsTable.createdAt))
+              .limit(1);
+            snap = anyRows[0];
+          }
+
+          if (snap) {
+            const trackerParts: string[] = [];
+
+            // World state core fields
+            if (hasWorldState) {
+              const wsParts: string[] = [];
+              if (snap.date) wsParts.push(`Date: ${snap.date}`);
+              if (snap.time) wsParts.push(`Time: ${snap.time}`);
+              if (snap.location) wsParts.push(`Location: ${snap.location}`);
+              if (snap.weather) wsParts.push(`Weather: ${snap.weather}`);
+              if (snap.temperature) wsParts.push(`Temperature: ${snap.temperature}`);
+              if (wsParts.length > 0) trackerParts.push(wrapContent(wsParts.join("\n"), "World", wrapFormat));
+            }
+
+            // Present Characters
+            if (hasCharTracker) {
+              const presentChars = JSON.parse(snap.presentCharacters);
+              if (Array.isArray(presentChars) && presentChars.length > 0) {
+                const charLines = presentChars.map((c: any) => {
+                  if (typeof c === "string") return `- ${c}`;
+                  const details: string[] = [];
+                  if (c.mood) details.push(`mood: ${c.mood}`);
+                  if (c.appearance) details.push(`appearance: ${c.appearance}`);
+                  if (c.outfit) details.push(`outfit: ${c.outfit}`);
+                  if (c.thoughts) details.push(`thoughts: ${c.thoughts}`);
+                  if (Array.isArray(c.stats) && c.stats.length > 0) {
+                    const statStr = c.stats
+                      .map((s: any) => `${s.name}: ${s.value}${s.max ? `/${s.max}` : ""}`)
+                      .join(", ");
+                    details.push(`stats: ${statStr}`);
+                  }
+                  const detailStr = details.length > 0 ? ` (${details.join("; ")})` : "";
+                  return `- ${c.emoji ?? ""} ${c.name ?? c}${detailStr}`;
+                });
+                trackerParts.push(wrapContent(charLines.join("\n"), "Present Characters", wrapFormat));
+              }
+            }
+
+            // Persona Stats (needs/condition bars)
+            if (hasPersonaStats && snap.personaStats) {
+              const psBars = typeof snap.personaStats === "string" ? JSON.parse(snap.personaStats) : snap.personaStats;
+              if (Array.isArray(psBars) && psBars.length > 0) {
+                const barLines = psBars.map((b: any) => `- ${b.name}: ${b.value}/${b.max}`);
+                trackerParts.push(wrapContent(barLines.join("\n"), "Persona Stats", wrapFormat));
+              }
+            }
+
+            // Player stats: quests, inventory, stats, custom tracker
+            if (snap.playerStats) {
+              const stats = typeof snap.playerStats === "string" ? JSON.parse(snap.playerStats) : snap.playerStats;
+
+              if (hasPersonaStats && stats.status) {
+                trackerParts.push(wrapContent(`Status: ${stats.status}`, "Status", wrapFormat));
+              }
+
+              if (hasQuest && Array.isArray(stats.activeQuests) && stats.activeQuests.length > 0) {
+                const questLines = stats.activeQuests.map((q: any) => {
+                  const objectives = Array.isArray(q.objectives)
+                    ? q.objectives.map((o: any) => `  ${o.completed ? "[x]" : "[ ]"} ${o.text}`).join("\n")
+                    : "";
+                  return `- ${q.name}${q.completed ? " (completed)" : ""}${objectives ? "\n" + objectives : ""}`;
+                });
+                trackerParts.push(wrapContent(questLines.join("\n"), "Active Quests", wrapFormat));
+              }
+
+              if (hasPersonaStats && Array.isArray(stats.inventory) && stats.inventory.length > 0) {
+                const invLines = stats.inventory.map(
+                  (item: any) =>
+                    `- ${item.name}${item.quantity > 1 ? ` x${item.quantity}` : ""}${item.description ? ` — ${item.description}` : ""}`,
+                );
+                trackerParts.push(wrapContent(invLines.join("\n"), "Inventory", wrapFormat));
+              }
+
+              if (hasPersonaStats && Array.isArray(stats.stats) && stats.stats.length > 0) {
+                const statLines = stats.stats.map((s: any) => `- ${s.name}: ${s.value}${s.max ? `/${s.max}` : ""}`);
+                trackerParts.push(wrapContent(statLines.join("\n"), "Stats", wrapFormat));
+              }
+
+              if (
+                hasCustomTracker &&
+                Array.isArray(stats.customTrackerFields) &&
+                stats.customTrackerFields.length > 0
+              ) {
+                const customLines = stats.customTrackerFields.map((f: any) => `- ${f.name}: ${f.value}`);
+                trackerParts.push(wrapContent(customLines.join("\n"), "Custom Tracker", wrapFormat));
+              }
+            }
+
+            if (trackerParts.length > 0) {
+              const contextBlock =
+                wrapFormat === "none"
+                  ? trackerParts.join("\n\n")
+                  : wrapFormat === "xml"
+                    ? `<context>\n${trackerParts.map((p) => "    " + p.replace(/\n/g, "\n    ")).join("\n")}\n</context>`
+                    : `# Context\n${trackerParts.join("\n")}`;
+
+              // Insert as system message right after the last user message
+              // (i.e. before Output Format / Directions if present)
+              const lastUserIdx = findLastIndex(finalMessages, "user");
+              if (lastUserIdx >= 0) {
+                finalMessages.splice(lastUserIdx + 1, 0, { role: "system", content: contextBlock });
+              } else {
+                finalMessages.splice(finalMessages.length, 0, { role: "system", content: contextBlock });
+              }
+            }
+          }
+        }
+      }
+
       // SSE helper for sending agent events
       // Wrapped in try-catch: if the SSE stream is closed (e.g. client
       // navigated away), a write error must NOT crash the agent pipeline —
@@ -2033,11 +2536,18 @@ export async function generateRoutes(app: FastifyInstance) {
         pipelineAgents = pipelineAgents.filter((a) => a.type !== "echo-chamber");
       }
 
+      // Combat agent only needs to run when an encounter is active.
+      // If the last combat result stored encounterActive = false, skip it.
+      if (chatMeta.encounterActive === false) {
+        pipelineAgents = pipelineAgents.filter((a) => a.type !== "combat");
+      }
+
       const pipeline = createAgentPipeline(pipelineAgents, agentContext, sendAgentEvent);
 
       // ────────────────────────────────────────
       // Phase 1: Pre-generation agents
       // ────────────────────────────────────────
+      console.log(`[timing] Prompt assembly + context: ${Date.now() - _tAssemble}ms`);
       // Only run pre-gen agents on fresh generations (user sent a new message),
       // NOT on regenerations/swipes — EXCEPT for context-injection agents (like
       // prose-guardian) which improve writing quality and should run every time.
@@ -2051,151 +2561,161 @@ export async function generateRoutes(app: FastifyInstance) {
       const hasPreGenAgents = resolvedAgents.some(
         (a) => a.phase === "pre_generation" && !EXCLUDED_FROM_PIPELINE.has(a.type),
       );
-      if (hasPreGenAgents) {
-        if (!input.regenerateMessageId) {
-          // Fresh generation — run all pre-gen agents (excluding static-injection ones)
-          reply.raw.write(`data: ${JSON.stringify({ type: "agent_start", data: { phase: "pre_generation" } })}\n\n`);
 
-          // Emit debug info about which agents are included in this phase
-          if (input.debugMode) {
-            const preGenAgents = pipelineAgents.filter(
-              (a) => a.phase === "pre_generation" && !EXCLUDED_FROM_PIPELINE.has(a.type),
-            );
-            reply.raw.write(
-              `data: ${JSON.stringify({
-                type: "agent_debug",
-                data: {
-                  phase: "pre_generation",
-                  agents: preGenAgents.map((a) => ({
-                    type: a.type,
-                    name: a.name,
-                    model: a.model,
-                    maxTokens: (a.settings.maxTokens as number) ?? 4096,
-                  })),
-                },
-              })}\n\n`,
-            );
-          }
-          contextInjections = await pipeline.preGenerate((t) => !EXCLUDED_FROM_PIPELINE.has(t));
-        } else {
-          // Regeneration — try to reuse cached context injections from the original generation
-          const regenMsg = await chats.getMessage(input.regenerateMessageId);
-          const regenExtra = parseExtra(regenMsg?.extra);
-          const cached = regenExtra.contextInjections as string[] | undefined;
+      // ── Run pre-gen agents and knowledge retrieval in parallel when possible ──
+      const shouldRunKR = !!(
+        knowledgeRetrievalAgent &&
+        agentContext.memory._knowledgeRetrievalMaterial &&
+        !input.regenerateMessageId
+      );
+      const shouldRunPreGen = hasPreGenAgents && !input.regenerateMessageId;
 
-          if (cached && cached.length > 0) {
-            // Reuse cached injections — no LLM call needed
-            contextInjections = cached;
-            // Send a synthetic agent_result so the UI still shows it
-            for (const text of cached) {
-              reply.raw.write(
-                `data: ${JSON.stringify({
-                  type: "agent_result",
-                  data: {
-                    agentType: "prose-guardian",
-                    agentName: "Prose Guardian",
-                    resultType: "context_injection",
-                    data: { text },
-                    success: true,
-                    error: null,
-                    durationMs: 0,
-                    cached: true,
-                  },
-                })}\n\n`,
-              );
-            }
-          } else {
-            // No cache — run context-injection agents (prose-guardian, director)
-            const CONTEXT_INJECTION_AGENTS = new Set(["prose-guardian", "director"]);
-            const hasContextInjectionAgents = resolvedAgents.some(
-              (a) => a.phase === "pre_generation" && CONTEXT_INJECTION_AGENTS.has(a.type),
-            );
-            if (hasContextInjectionAgents) {
+      if (shouldRunPreGen || shouldRunKR) {
+        sendProgress("agents");
+
+        // Build the pre-gen promise
+        const preGenPromise = shouldRunPreGen
+          ? (async () => {
               reply.raw.write(
                 `data: ${JSON.stringify({ type: "agent_start", data: { phase: "pre_generation" } })}\n\n`,
               );
-              contextInjections = await pipeline.preGenerate((agentType) => CONTEXT_INJECTION_AGENTS.has(agentType));
-            }
-          }
-        }
+              if (input.debugMode) {
+                const preGenAgents = pipelineAgents.filter(
+                  (a) => a.phase === "pre_generation" && !EXCLUDED_FROM_PIPELINE.has(a.type),
+                );
+                reply.raw.write(
+                  `data: ${JSON.stringify({
+                    type: "agent_debug",
+                    data: {
+                      phase: "pre_generation",
+                      agents: preGenAgents.map((a) => ({
+                        type: a.type,
+                        name: a.name,
+                        model: a.model,
+                        maxTokens: (a.settings.maxTokens as number) ?? 4096,
+                      })),
+                    },
+                  })}\n\n`,
+                );
+              }
+              const _tAgents = Date.now();
+              const injections = await pipeline.preGenerate((t) => !EXCLUDED_FROM_PIPELINE.has(t));
+              console.log(`[timing] Pre-gen agents: ${Date.now() - _tAgents}ms`);
+              return injections;
+            })()
+          : Promise.resolve([] as string[]);
 
-        // Inject agent context into the last user message (wrapped in preset format)
+        // Build the knowledge retrieval promise
+        const krPromise = shouldRunKR
+          ? (async () => {
+              reply.raw.write(
+                `data: ${JSON.stringify({ type: "agent_start", data: { phase: "pre_generation", agentType: "knowledge-retrieval" } })}\n\n`,
+              );
+              const krConfig = {
+                id: knowledgeRetrievalAgent!.id,
+                type: knowledgeRetrievalAgent!.type,
+                name: knowledgeRetrievalAgent!.name,
+                phase: knowledgeRetrievalAgent!.phase,
+                promptTemplate: knowledgeRetrievalAgent!.promptTemplate,
+                connectionId: knowledgeRetrievalAgent!.connectionId,
+                settings: knowledgeRetrievalAgent!.settings,
+              };
+              const sourceMaterial = agentContext.memory._knowledgeRetrievalMaterial as string;
+              const _tKR = Date.now();
+              const krResult = await executeKnowledgeRetrieval(
+                krConfig,
+                agentContext,
+                knowledgeRetrievalAgent!.provider,
+                knowledgeRetrievalAgent!.model,
+                sourceMaterial,
+              );
+              sendAgentEvent(krResult);
+              console.log(`[timing] Knowledge retrieval: ${Date.now() - _tKR}ms`);
+              return krResult;
+            })()
+          : Promise.resolve(null);
+
+        // Run both in parallel
+        const [preGenResult, krResult] = await Promise.all([preGenPromise, krPromise]);
+        contextInjections = preGenResult;
+
+        // Inject pre-gen agent context at depth 0 (very bottom of prompt)
         if (contextInjections.length > 0) {
           const injectionBlock = contextInjections.join("\n\n");
           const wrapped =
             wrapFormat === "markdown"
-              ? `\n\n## Prose Guardian\n${injectionBlock}`
-              : `\n\n<prose_guardian>\n${injectionBlock}\n</prose_guardian>`;
+              ? `## Prose Guardian\n${injectionBlock}`
+              : wrapFormat === "xml"
+                ? `<prose_guardian>\n${injectionBlock}\n</prose_guardian>`
+                : injectionBlock;
+          finalMessages = injectAtDepth(finalMessages, [{ content: wrapped, role: "system", depth: 0 }]);
+        }
 
-          // Append to the last user message
-          const lastUserIdx = findLastIndex(finalMessages, "user");
-          if (lastUserIdx >= 0) {
-            const target = finalMessages[lastUserIdx]!;
-            finalMessages[lastUserIdx] = { ...target, content: target.content + wrapped };
-          } else {
-            // No user message — append to the very last message
-            const last = finalMessages[finalMessages.length - 1]!;
-            finalMessages[finalMessages.length - 1] = { ...last, content: last.content + wrapped };
+        // Inject KR output into the prompt
+        if (krResult?.success && krResult.data) {
+          const krText =
+            typeof krResult.data === "string" ? krResult.data : ((krResult.data as { text?: string })?.text ?? "");
+          if (krText) {
+            const krWrapped =
+              wrapFormat === "markdown"
+                ? `\n\n## Knowledge Retrieval\n${krText}`
+                : `\n\n<knowledge_retrieval>\n${krText}\n</knowledge_retrieval>`;
+            const lastUserIdx = findLastIndex(finalMessages, "user");
+            if (lastUserIdx >= 0) {
+              const target = finalMessages[lastUserIdx]!;
+              finalMessages[lastUserIdx] = { ...target, content: target.content + krWrapped };
+            } else {
+              const last = finalMessages[finalMessages.length - 1]!;
+              finalMessages[finalMessages.length - 1] = { ...last, content: last.content + krWrapped };
+            }
+            contextInjections.push(krText);
           }
         }
-      }
+      } else if (hasPreGenAgents && input.regenerateMessageId) {
+        // Regeneration — try to reuse cached context injections from the original generation
+        const regenMsg = await chats.getMessage(input.regenerateMessageId);
+        const regenExtra = parseExtra(regenMsg?.extra);
+        const cached = regenExtra.contextInjections as string[] | undefined;
 
-      // ── Early exit if client disconnected during pre-generation agents ──
-      if (abortController.signal.aborted) return;
-
-      // ────────────────────────────────────────
-      // Knowledge Retrieval agent (chunked RAG)
-      // ────────────────────────────────────────
-      // Runs separately from the pipeline because it may need multiple LLM
-      // passes to scan large lorebook content. On regenerations, reuses the
-      // cached contextInjections (which already include its result).
-      if (knowledgeRetrievalAgent && agentContext.memory._knowledgeRetrievalMaterial) {
-        if (!input.regenerateMessageId) {
-          reply.raw.write(
-            `data: ${JSON.stringify({ type: "agent_start", data: { phase: "pre_generation", agentType: "knowledge-retrieval" } })}\n\n`,
-          );
-          const krConfig = {
-            id: knowledgeRetrievalAgent.id,
-            type: knowledgeRetrievalAgent.type,
-            name: knowledgeRetrievalAgent.name,
-            phase: knowledgeRetrievalAgent.phase,
-            promptTemplate: knowledgeRetrievalAgent.promptTemplate,
-            connectionId: knowledgeRetrievalAgent.connectionId,
-            settings: knowledgeRetrievalAgent.settings,
-          };
-          const sourceMaterial = agentContext.memory._knowledgeRetrievalMaterial as string;
-          const krResult = await executeKnowledgeRetrieval(
-            krConfig,
-            agentContext,
-            knowledgeRetrievalAgent.provider,
-            knowledgeRetrievalAgent.model,
-            sourceMaterial,
-          );
-          sendAgentEvent(krResult);
-
-          if (krResult.success && krResult.data) {
-            const krText =
-              typeof krResult.data === "string" ? krResult.data : ((krResult.data as { text?: string })?.text ?? "");
-            if (krText) {
-              // Inject KR output into the prompt with its own tag
-              const krWrapped =
-                wrapFormat === "markdown"
-                  ? `\n\n## Knowledge Retrieval\n${krText}`
-                  : `\n\n<knowledge_retrieval>\n${krText}\n</knowledge_retrieval>`;
-              const lastUserIdx = findLastIndex(finalMessages, "user");
-              if (lastUserIdx >= 0) {
-                const target = finalMessages[lastUserIdx]!;
-                finalMessages[lastUserIdx] = { ...target, content: target.content + krWrapped };
-              } else {
-                const last = finalMessages[finalMessages.length - 1]!;
-                finalMessages[finalMessages.length - 1] = { ...last, content: last.content + krWrapped };
-              }
-              // Also add to contextInjections for caching (used on regen)
-              contextInjections.push(krText);
-            }
+        if (cached && cached.length > 0) {
+          contextInjections = cached;
+          for (const text of cached) {
+            reply.raw.write(
+              `data: ${JSON.stringify({
+                type: "agent_result",
+                data: {
+                  agentType: "prose-guardian",
+                  agentName: "Prose Guardian",
+                  resultType: "context_injection",
+                  data: { text },
+                  success: true,
+                  error: null,
+                  durationMs: 0,
+                  cached: true,
+                },
+              })}\n\n`,
+            );
           }
         } else {
-          // Regeneration — KR data is already in cached contextInjections if present
+          const CONTEXT_INJECTION_AGENTS = new Set(["prose-guardian", "director"]);
+          const hasContextInjectionAgents = resolvedAgents.some(
+            (a) => a.phase === "pre_generation" && CONTEXT_INJECTION_AGENTS.has(a.type),
+          );
+          if (hasContextInjectionAgents) {
+            reply.raw.write(`data: ${JSON.stringify({ type: "agent_start", data: { phase: "pre_generation" } })}\n\n`);
+            contextInjections = await pipeline.preGenerate((agentType) => CONTEXT_INJECTION_AGENTS.has(agentType));
+          }
+        }
+
+        if (contextInjections.length > 0) {
+          const injectionBlock = contextInjections.join("\n\n");
+          const wrapped =
+            wrapFormat === "markdown"
+              ? `## Prose Guardian\n${injectionBlock}`
+              : wrapFormat === "xml"
+                ? `<prose_guardian>\n${injectionBlock}\n</prose_guardian>`
+                : injectionBlock;
+          finalMessages = injectAtDepth(finalMessages, [{ content: wrapped, role: "system", depth: 0 }]);
         }
       }
 
@@ -2575,7 +3095,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 presencePenalty: presencePenalty || undefined,
                 tools: toolDefs,
                 enableCaching: conn.enableCaching === "true",
-                enableThinking: showThoughts,
+                enableThinking,
                 reasoningEffort: resolvedEffort ?? undefined,
                 verbosity: verbosity ?? undefined,
                 onThinking,
@@ -2696,7 +3216,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 frequencyPenalty: frequencyPenalty || undefined,
                 presencePenalty: presencePenalty || undefined,
                 enableCaching: conn.enableCaching === "true",
-                enableThinking: showThoughts,
+                enableThinking,
                 reasoningEffort: resolvedEffort ?? undefined,
                 verbosity: verbosity ?? undefined,
                 onThinking,
@@ -2729,9 +3249,10 @@ export async function generateRoutes(app: FastifyInstance) {
             presencePenalty: presencePenalty || undefined,
             stream: true,
             enableCaching: conn.enableCaching === "true",
-            enableThinking: showThoughts,
+            enableThinking,
             reasoningEffort: resolvedEffort ?? undefined,
             verbosity: verbosity ?? undefined,
+            openrouterProvider: conn.openrouterProvider ?? undefined,
             onThinking,
             onResponseParts: (parts) => {
               geminiResponseParts = parts;
@@ -2946,6 +3467,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
       if (useIndividualLoop) {
         // Individual group mode: generate one response per character
+        sendProgress("generating");
         let runningMessages = [...finalMessages];
 
         for (let ci = 0; ci < respondingCharIds.length; ci++) {
@@ -2978,6 +3500,7 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       } else {
         // Single/merged: one generation
+        sendProgress("generating");
         const targetCharId = characterIds[0] ?? null;
         const genResult = await generateForCharacter(targetCharId, finalMessages);
         if (genResult) {
@@ -3192,7 +3715,22 @@ export async function generateRoutes(app: FastifyInstance) {
               try {
                 await chats.updateMessageExtra(messageId, { spriteExpressions: exprMap });
                 await chats.updateSwipeExtra(messageId, targetSwipeIndex, { spriteExpressions: exprMap });
-              } catch { /* non-critical */ }
+              } catch {
+                /* non-critical */
+              }
+            }
+          }
+
+          // Persist CYOA choices onto message/swipe extra so they survive page refresh
+          if (result.success && result.type === "cyoa_choices" && result.data && typeof result.data === "object") {
+            const cyoaData = result.data as { choices?: Array<{ label: string; text: string }> };
+            if (cyoaData.choices && cyoaData.choices.length > 0) {
+              try {
+                await chats.updateMessageExtra(messageId, { cyoaChoices: cyoaData.choices });
+                await chats.updateSwipeExtra(messageId, targetSwipeIndex, { cyoaChoices: cyoaData.choices });
+              } catch {
+                /* non-critical */
+              }
             }
           }
 
@@ -3307,21 +3845,19 @@ export async function generateRoutes(app: FastifyInstance) {
               console.log(
                 `[generate] character-tracker: ${chars.length} characters to persist (msg=${messageId}, swipe=${targetSwipeIndex})`,
               );
-              if (chars.length > 0) {
-                const updated = await gameStateStore.updateByMessage(messageId, targetSwipeIndex, input.chatId, {
-                  presentCharacters: chars,
-                });
-                console.log(
-                  `[generate] character-tracker: updateByMessage returned ${updated ? "ok" : "null (no snapshot)"}`,
+              const updated = await gameStateStore.updateByMessage(messageId, targetSwipeIndex, input.chatId, {
+                presentCharacters: chars,
+              });
+              console.log(
+                `[generate] character-tracker: updateByMessage returned ${updated ? "ok" : "null (no snapshot)"}`,
+              );
+              // Merge into the game_state SSE event for the HUD
+              try {
+                reply.raw.write(
+                  `data: ${JSON.stringify({ type: "game_state_patch", data: { presentCharacters: chars } })}\n\n`,
                 );
-                // Merge into the game_state SSE event for the HUD
-                try {
-                  reply.raw.write(
-                    `data: ${JSON.stringify({ type: "game_state_patch", data: { presentCharacters: chars } })}\n\n`,
-                  );
-                } catch {
-                  /* stream closed */
-                }
+              } catch {
+                /* stream closed */
               }
             } catch (err) {
               console.error(`[generate] character-tracker persistence error:`, err);
@@ -3536,6 +4072,22 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
+          // Combat agent → persist encounterActive flag to chatMeta so we can
+          // skip the combat agent on subsequent generations when no encounter is running.
+          if (result.success && result.agentType === "combat" && result.data && typeof result.data === "object") {
+            try {
+              const combatData = result.data as Record<string, unknown>;
+              const isActive = combatData.encounterActive === true;
+              const freshChat = await chats.getById(input.chatId);
+              if (freshChat) {
+                const freshMeta = parseExtra(freshChat.metadata);
+                await chats.updateMetadata(input.chatId, { ...freshMeta, encounterActive: isActive });
+              }
+            } catch {
+              // Non-critical
+            }
+          }
+
           // Chat Summary agent → persist rolling summary to chat metadata
           if (result.success && result.type === "chat_summary" && result.data && typeof result.data === "object") {
             try {
@@ -3558,26 +4110,146 @@ export async function generateRoutes(app: FastifyInstance) {
           if (result.success && result.type === "haptic_command" && result.data && typeof result.data === "object") {
             try {
               const hData = result.data as Record<string, unknown>;
-              const cmds = hData.commands as Array<Record<string, unknown>> | undefined;
-              if (cmds && cmds.length > 0) {
-                const { hapticService } = await import("../services/haptic/buttplug-service.js");
-                if (hapticService.connected) {
-                  for (const cmd of cmds) {
-                    await hapticService.executeCommand({
-                      deviceIndex: (cmd.deviceIndex as number | "all") ?? "all",
-                      action: (cmd.action as string) ?? "vibrate",
-                      intensity: typeof cmd.intensity === "number" ? cmd.intensity : 0.5,
-                      duration: typeof cmd.duration === "number" ? cmd.duration : undefined,
-                    } as any);
+              if (hData.parseError) {
+                console.warn(
+                  `[haptic] Agent output could not be parsed as JSON:`,
+                  (hData.raw as string)?.slice(0, 200),
+                );
+              } else {
+                const cmds = hData.commands as Array<Record<string, unknown>> | undefined;
+                if (cmds && cmds.length > 0) {
+                  const { hapticService } = await import("../services/haptic/buttplug-service.js");
+                  if (hapticService.connected) {
+                    for (const cmd of cmds) {
+                      await hapticService.executeCommand({
+                        deviceIndex: (cmd.deviceIndex as number | "all") ?? "all",
+                        action: (cmd.action as string) ?? "vibrate",
+                        intensity: typeof cmd.intensity === "number" ? cmd.intensity : 0.5,
+                        duration: typeof cmd.duration === "number" ? cmd.duration : undefined,
+                      } as any);
+                    }
+                    reply.raw.write(
+                      `data: ${JSON.stringify({ type: "haptic_command", data: { commands: cmds, reasoning: hData.reasoning } })}\n\n`,
+                    );
+                    console.log(`[haptic] Agent executed ${cmds.length} command(s): ${hData.reasoning ?? ""}`);
+                  } else {
+                    console.warn(
+                      `[haptic] Agent produced ${cmds.length} command(s) but Intiface Central is disconnected — commands dropped`,
+                    );
                   }
-                  reply.raw.write(
-                    `data: ${JSON.stringify({ type: "haptic_command", data: { commands: cmds, reasoning: hData.reasoning } })}\n\n`,
+                } else {
+                  console.log(
+                    `[haptic] Agent returned no commands (reasoning: ${(hData.reasoning as string) ?? "none"})`,
                   );
-                  console.log(`[haptic] Agent executed ${cmds.length} command(s): ${hData.reasoning ?? ""}`);
                 }
               }
             } catch (hapErr) {
               console.error("[haptic] Agent command execution failed:", hapErr);
+            }
+          }
+
+          // ── ILLUSTRATOR HANDLER: generate image from agent prompt ──
+          if (result.success && result.type === "image_prompt" && result.data && typeof result.data === "object") {
+            const illData = result.data as Record<string, unknown>;
+            const shouldGenerate = illData.shouldGenerate === true;
+            const imagePrompt = ((illData.prompt as string) ?? "").trim();
+            const negativePrompt = ((illData.negativePrompt as string) ?? "").trim();
+            const style = ((illData.style as string) ?? "").trim();
+            const aspectRatio = ((illData.aspectRatio as string) ?? "portrait").trim();
+
+            if (shouldGenerate && imagePrompt) {
+              const imgConnId = chatMeta.imageGenConnectionId as string | undefined;
+              if (imgConnId) {
+                try {
+                  const imgConnFull = await connections.getWithKey(imgConnId);
+                  if (!imgConnFull) throw new Error("Cannot decrypt image generation connection");
+
+                  const { generateImage, saveImageToDisk } = await import("../services/image/image-generation.js");
+                  const { createGalleryStorage } = await import("../services/storage/gallery.storage.js");
+                  const galleryStore = createGalleryStorage(app.db);
+
+                  const imgModel = imgConnFull.model || "";
+                  const imgBaseUrl = imgConnFull.baseUrl || "https://image.pollinations.ai";
+                  const imgApiKey = imgConnFull.apiKey || "";
+
+                  // Determine dimensions from aspect ratio
+                  let imgWidth = 768;
+                  let imgHeight = 512;
+                  if (aspectRatio === "portrait") {
+                    imgWidth = 512;
+                    imgHeight = 768;
+                  } else if (aspectRatio === "square") {
+                    imgWidth = 512;
+                    imgHeight = 512;
+                  }
+
+                  // Prepend style to the prompt for better results
+                  const fullPrompt = style ? `${style}, ${imagePrompt}` : imagePrompt;
+
+                  const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, {
+                    prompt: fullPrompt,
+                    negativePrompt: negativePrompt || undefined,
+                    model: imgModel,
+                    width: imgWidth,
+                    height: imgHeight,
+                    comfyWorkflow: (imgConnFull as any).comfyuiWorkflow || undefined,
+                  });
+
+                  // Save to disk
+                  const filePath = saveImageToDisk(input.chatId, imageResult.base64, imageResult.ext);
+
+                  // Save to gallery
+                  const galleryEntry = await galleryStore.create({
+                    chatId: input.chatId,
+                    filePath,
+                    prompt: fullPrompt,
+                    provider: "image_generation",
+                    model: imgModel || "unknown",
+                    width: imgWidth,
+                    height: imgHeight,
+                  });
+
+                  // Attach to the assistant message
+                  const filename = filePath.split("/").pop()!;
+                  const imageUrl = `/api/gallery/file/${input.chatId}/${encodeURIComponent(filename)}`;
+                  if (messageId) {
+                    const msgRow = await chats.getMessage(messageId);
+                    const msgExtra = msgRow?.extra
+                      ? typeof msgRow.extra === "string"
+                        ? JSON.parse(msgRow.extra)
+                        : msgRow.extra
+                      : {};
+                    const existingAttachments = (msgExtra.attachments as any[]) ?? [];
+                    existingAttachments.push({
+                      type: "image",
+                      url: imageUrl,
+                      filename: `illustration.${imageResult.ext}`,
+                    });
+                    await chats.updateMessageExtra(messageId, { attachments: existingAttachments });
+                  }
+
+                  // Notify client
+                  reply.raw.write(
+                    `data: ${JSON.stringify({
+                      type: "illustration",
+                      data: {
+                        messageId,
+                        imageUrl,
+                        prompt: fullPrompt,
+                        reason: illData.reason,
+                        galleryId: (galleryEntry as any)?.id,
+                      },
+                    })}\n\n`,
+                  );
+                  console.log(
+                    `[illustrator] Generated illustration: ${(illData.reason as string)?.slice(0, 80) ?? imagePrompt.slice(0, 80)}...`,
+                  );
+                } catch (illErr) {
+                  console.error("[illustrator] Image generation failed:", illErr);
+                }
+              } else {
+                console.warn("[illustrator] Agent wants to generate but no imageGenConnectionId set on chat metadata");
+              }
             }
           }
         }
@@ -3844,11 +4516,16 @@ export async function generateRoutes(app: FastifyInstance) {
                     const imgBaseUrl = imgConnFull.baseUrl || "https://image.pollinations.ai";
                     const imgApiKey = imgConnFull.apiKey || "";
 
+                    // Parse selfie resolution from chat metadata (default 512×768 portrait)
+                    const selfieRes = (chatMeta.selfieResolution as string) ?? "512x768";
+                    const [selfieW, selfieH] = selfieRes.split("x").map(Number) as [number, number];
+
                     const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, {
                       prompt: imagePrompt,
                       model: imgModel,
-                      width: 512,
-                      height: 512,
+                      width: selfieW || 512,
+                      height: selfieH || 768,
+                      comfyWorkflow: (imgConnFull as any).comfyuiWorkflow || undefined,
                     });
 
                     // Save to disk and DB
@@ -3857,10 +4534,10 @@ export async function generateRoutes(app: FastifyInstance) {
                       chatId: input.chatId,
                       filePath,
                       prompt: imagePrompt,
-                      provider: "image_generation",
+                      provider: imgConnFull.provider ?? "image_generation",
                       model: imgModel || "unknown",
-                      width: 512,
-                      height: 512,
+                      width: selfieW || 512,
+                      height: selfieH || 768,
                     });
 
                     // Attach the image to the message
@@ -3998,6 +4675,10 @@ export async function generateRoutes(app: FastifyInstance) {
                   console.log(
                     `[commands] Haptic: ${hapCmd.action} intensity=${hapCmd.intensity ?? "default"} duration=${hapCmd.duration ?? "indefinite"}`,
                   );
+                } else if (!hapticService.connected) {
+                  console.warn(`[commands] Haptic command [${hapCmd.action}] skipped — Intiface Central not connected`);
+                } else {
+                  console.warn(`[commands] Haptic command [${hapCmd.action}] skipped — no devices found`);
                 }
               } catch (hapErr) {
                 console.error(`[commands] Haptic command failed:`, hapErr);
@@ -4140,6 +4821,66 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
+            if (command.type === "update_character") {
+              const ucCmd = command as UpdateCharacterCommand;
+              try {
+                const allCharsList = await chars.list();
+                const targetChar = allCharsList.find((c: any) => {
+                  const d = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
+                  return d.name?.toLowerCase() === ucCmd.name.toLowerCase();
+                });
+                if (targetChar) {
+                  const existingData =
+                    typeof targetChar.data === "string" ? JSON.parse(targetChar.data as string) : targetChar.data;
+                  const updates: Record<string, unknown> = {};
+                  if (ucCmd.description !== undefined) updates.description = ucCmd.description;
+                  if (ucCmd.personality !== undefined) updates.personality = ucCmd.personality;
+                  if (ucCmd.firstMessage !== undefined) updates.first_mes = ucCmd.firstMessage;
+                  if (ucCmd.scenario !== undefined) updates.scenario = ucCmd.scenario;
+                  await chars.update(targetChar.id, { ...existingData, ...updates });
+                  reply.raw.write(
+                    `data: ${JSON.stringify({
+                      type: "assistant_action",
+                      data: { action: "character_updated", id: targetChar.id, name: ucCmd.name },
+                    })}\n\n`,
+                  );
+                  console.log(`[commands] Assistant updated character: "${ucCmd.name}" (${targetChar.id})`);
+                } else {
+                  console.warn(`[commands] Update character: "${ucCmd.name}" not found`);
+                }
+              } catch (err) {
+                console.error(`[commands] Update character failed:`, err);
+              }
+            }
+
+            if (command.type === "update_persona") {
+              const upCmd = command as UpdatePersonaCommand;
+              try {
+                const allPersonas = await chars.listPersonas();
+                const targetPersona = allPersonas.find((p: any) => {
+                  return p.name?.toLowerCase() === upCmd.name.toLowerCase();
+                });
+                if (targetPersona) {
+                  const sets: Record<string, unknown> = {};
+                  if (upCmd.description !== undefined) sets.description = upCmd.description;
+                  if (upCmd.personality !== undefined) sets.personality = upCmd.personality;
+                  if (upCmd.appearance !== undefined) sets.appearance = upCmd.appearance;
+                  await chars.updatePersona(targetPersona.id, sets as any);
+                  reply.raw.write(
+                    `data: ${JSON.stringify({
+                      type: "assistant_action",
+                      data: { action: "persona_updated", id: targetPersona.id, name: upCmd.name },
+                    })}\n\n`,
+                  );
+                  console.log(`[commands] Assistant updated persona: "${upCmd.name}" (${targetPersona.id})`);
+                } else {
+                  console.warn(`[commands] Update persona: "${upCmd.name}" not found`);
+                }
+              } catch (err) {
+                console.error(`[commands] Update persona failed:`, err);
+              }
+            }
+
             if (command.type === "create_chat") {
               const ctCmd = command as CreateChatCommand;
               try {
@@ -4195,6 +4936,121 @@ export async function generateRoutes(app: FastifyInstance) {
                 })}\n\n`,
               );
               console.log(`[commands] Assistant navigate: panel=${navCmd.panel}, tab=${navCmd.tab ?? "none"}`);
+            }
+
+            // ── Fetch command (Professor Mari) ──
+            if (command.type === "fetch") {
+              const fetchCmd = command as FetchCommand;
+              try {
+                let fetchedContent = "";
+                const contextKey = `${fetchCmd.fetchType}:${fetchCmd.name}`;
+
+                if (fetchCmd.fetchType === "character") {
+                  const allCharsList = await chars.list();
+                  const found = allCharsList.find((c: any) => {
+                    const d = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
+                    return d.name?.toLowerCase() === fetchCmd.name.toLowerCase();
+                  });
+                  if (found) {
+                    const d = typeof found.data === "string" ? JSON.parse(found.data as string) : found.data;
+                    const parts = [`Name: ${d.name}`];
+                    if (d.description) parts.push(`Description: ${d.description}`);
+                    if (d.personality) parts.push(`Personality: ${d.personality}`);
+                    if (d.scenario) parts.push(`Scenario: ${d.scenario}`);
+                    if (d.mes_example) parts.push(`Example Messages: ${d.mes_example}`);
+                    if (d.system_prompt) parts.push(`System Prompt: ${d.system_prompt}`);
+                    if (d.first_mes) parts.push(`First Message: ${d.first_mes}`);
+                    if (d.creator_notes) parts.push(`Creator Notes: ${d.creator_notes}`);
+                    fetchedContent = parts.join("\n");
+                  }
+                } else if (fetchCmd.fetchType === "persona") {
+                  const allPersonasList = await chars.listPersonas();
+                  const found = allPersonasList.find((p: any) => p.name?.toLowerCase() === fetchCmd.name.toLowerCase());
+                  if (found) {
+                    const parts = [`Name: ${found.name}`];
+                    if (found.description) parts.push(`Description: ${found.description}`);
+                    if (found.personality) parts.push(`Personality: ${found.personality}`);
+                    if (found.appearance) parts.push(`Appearance: ${found.appearance}`);
+                    if (found.backstory) parts.push(`Backstory: ${found.backstory}`);
+                    fetchedContent = parts.join("\n");
+                  }
+                } else if (fetchCmd.fetchType === "lorebook") {
+                  const allLorebooks = await lorebooksStore.list();
+                  const found = (allLorebooks as any[]).find(
+                    (lb: any) => lb.name?.toLowerCase() === fetchCmd.name.toLowerCase(),
+                  );
+                  if (found) {
+                    const entries = await lorebooksStore.listEntries(found.id);
+                    const parts = [`Lorebook: ${found.name}`];
+                    if (found.description) parts.push(`Description: ${found.description}`);
+                    if (found.category) parts.push(`Category: ${found.category}`);
+                    parts.push(`Entries (${entries.length}):`);
+                    for (const entry of entries as any[]) {
+                      parts.push(
+                        `\n  Entry: ${entry.name}\n  Keys: ${(Array.isArray(entry.keys) ? entry.keys : []).join(", ")}\n  Content: ${entry.content}`,
+                      );
+                    }
+                    fetchedContent = parts.join("\n");
+                  }
+                } else if (fetchCmd.fetchType === "chat") {
+                  const allChats = await chats.list();
+                  const found = (allChats as any[]).find(
+                    (c: any) => c.name?.toLowerCase() === fetchCmd.name.toLowerCase(),
+                  );
+                  if (found) {
+                    const parts = [`Chat: ${found.name}`, `Mode: ${found.mode}`];
+                    const recentMsgs = await chats.listMessagesPaginated(found.id, 20);
+                    if (recentMsgs.length > 0) {
+                      parts.push(`Recent Messages (${recentMsgs.length}):`);
+                      for (const msg of recentMsgs) {
+                        const role = msg.role === "assistant" ? (msg.characterId ? "Character" : "Assistant") : "User";
+                        parts.push(`  [${role}]: ${(msg.content as string).slice(0, 300)}`);
+                      }
+                    }
+                    fetchedContent = parts.join("\n");
+                  }
+                } else if (fetchCmd.fetchType === "preset") {
+                  const allPresetsList = await presets.list();
+                  const found = (allPresetsList as any[]).find(
+                    (p: any) => p.name?.toLowerCase() === fetchCmd.name.toLowerCase(),
+                  );
+                  if (found) {
+                    const sections = await presets.listSections(found.id);
+                    const parts = [`Preset: ${found.name}`];
+                    if (found.description) parts.push(`Description: ${found.description}`);
+                    parts.push(`Sections (${sections.length}):`);
+                    for (const sec of sections) {
+                      parts.push(`  [${sec.role}] ${sec.name ?? "Untitled"}: ${(sec.content as string).slice(0, 200)}`);
+                    }
+                    fetchedContent = parts.join("\n");
+                  }
+                }
+
+                if (fetchedContent) {
+                  // Persist to chatMeta.mariContext so it's available in subsequent messages
+                  const currentMeta = parseExtra(chat.metadata) as Record<string, unknown>;
+                  const mariContext = (currentMeta.mariContext as Record<string, string>) ?? {};
+                  mariContext[contextKey] = fetchedContent;
+                  currentMeta.mariContext = mariContext;
+                  await chats.updateMetadata(input.chatId, currentMeta);
+
+                  reply.raw.write(
+                    `data: ${JSON.stringify({
+                      type: "assistant_action",
+                      data: {
+                        action: "data_fetched",
+                        fetchType: fetchCmd.fetchType,
+                        name: fetchCmd.name,
+                      },
+                    })}\n\n`,
+                  );
+                  console.log(`[commands] Assistant fetched ${fetchCmd.fetchType}: "${fetchCmd.name}"`);
+                } else {
+                  console.warn(`[commands] Fetch: ${fetchCmd.fetchType} "${fetchCmd.name}" not found`);
+                }
+              } catch (err) {
+                console.error(`[commands] Fetch failed:`, err);
+              }
             }
           } catch (cmdErr) {
             console.error(`[commands] Error processing ${command.type} command:`, cmdErr);
@@ -4365,7 +5221,8 @@ export async function generateRoutes(app: FastifyInstance) {
           }
           if (persona.personaStats) {
             try {
-              const pStats = typeof persona.personaStats === "string" ? JSON.parse(persona.personaStats) : persona.personaStats;
+              const pStats =
+                typeof persona.personaStats === "string" ? JSON.parse(persona.personaStats) : persona.personaStats;
               if (pStats?.enabled) retryPersonaStats = pStats;
               if (pStats?.rpgStats?.enabled) retryRpgStats = pStats.rpgStats;
             } catch {
@@ -4414,16 +5271,19 @@ export async function generateRoutes(app: FastifyInstance) {
         mainResponse,
         gameState: null,
         characters: charInfo,
-        persona: personaName !== "User" ? {
-          name: personaName,
-          description: personaDescription,
-          personality: retryPersonaFields.personality || undefined,
-          backstory: retryPersonaFields.backstory || undefined,
-          appearance: retryPersonaFields.appearance || undefined,
-          scenario: retryPersonaFields.scenario || undefined,
-          ...(retryPersonaStats ? { personaStats: retryPersonaStats } : {}),
-          ...(retryRpgStats ? { rpgStats: retryRpgStats } : {}),
-        } : null,
+        persona:
+          personaName !== "User"
+            ? {
+                name: personaName,
+                description: personaDescription,
+                personality: retryPersonaFields.personality || undefined,
+                backstory: retryPersonaFields.backstory || undefined,
+                appearance: retryPersonaFields.appearance || undefined,
+                scenario: retryPersonaFields.scenario || undefined,
+                ...(retryPersonaStats ? { personaStats: retryPersonaStats } : {}),
+                ...(retryRpgStats ? { rpgStats: retryRpgStats } : {}),
+              }
+            : null,
         activatedLorebookEntries: null,
         writableLorebookIds: null,
         chatSummary: ((chatMeta.summary as string) ?? "").trim() || null,
@@ -4505,11 +5365,14 @@ export async function generateRoutes(app: FastifyInstance) {
       }
 
       // Group agents by provider+model and batch them (same as main pipeline)
-      const providerModelGroups = new Map<string, {
-        agents: typeof resolvedAgents;
-        provider: any;
-        model: string;
-      }>();
+      const providerModelGroups = new Map<
+        string,
+        {
+          agents: typeof resolvedAgents;
+          provider: any;
+          model: string;
+        }
+      >();
       for (const entry of resolvedAgents) {
         const key = `${entry.agentProvider.constructor.name}::${entry.agentModel}`;
         if (!providerModelGroups.has(key)) {
@@ -4602,15 +5465,13 @@ export async function generateRoutes(app: FastifyInstance) {
           try {
             const ctData = result.data as Record<string, unknown>;
             const chars = (ctData.presentCharacters as any[]) ?? [];
-            if (chars.length > 0) {
-              // Persist to DB so data survives page refresh
-              await gameStateStore.updateByMessage(retryMessageId, retrySwipeIndex, chatId, {
-                presentCharacters: chars,
-              });
-              reply.raw.write(
-                `data: ${JSON.stringify({ type: "game_state_patch", data: { presentCharacters: chars } })}\n\n`,
-              );
-            }
+            // Persist to DB so data survives page refresh
+            await gameStateStore.updateByMessage(retryMessageId, retrySwipeIndex, chatId, {
+              presentCharacters: chars,
+            });
+            reply.raw.write(
+              `data: ${JSON.stringify({ type: "game_state_patch", data: { presentCharacters: chars } })}\n\n`,
+            );
           } catch {
             /* Non-critical */
           }

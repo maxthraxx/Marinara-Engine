@@ -342,3 +342,22 @@ export function getDirectMessageDelay(status: "online" | "idle" | "dnd" | "offli
       return 0;
   }
 }
+
+/**
+ * Reduced delay when the user @mentions a character.
+ * Acts as an urgent ping: idle characters respond almost immediately,
+ * DND characters respond faster (but not instantly — they're still busy).
+ * Offline characters still won't respond (handled elsewhere).
+ */
+export function getMentionDelay(status: "online" | "idle" | "dnd" | "offline"): number {
+  switch (status) {
+    case "online":
+      return 0;
+    case "idle":
+      return (5 + Math.random() * 10) * 1000; // 5-15 seconds
+    case "dnd":
+      return (30 + Math.random() * 60) * 1000; // 30-90 seconds
+    case "offline":
+      return 0;
+  }
+}

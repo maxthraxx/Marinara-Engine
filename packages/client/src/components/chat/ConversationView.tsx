@@ -136,6 +136,7 @@ export function ConversationView({
   const streamingCharacterId = useChatStore((s) => s.streamingCharacterId);
   const typingCharacterName = useChatStore((s) => s.typingCharacterName);
   const delayedCharacterInfo = useChatStore((s) => s.delayedCharacterInfo);
+  const generationPhase = useChatStore((s) => s.generationPhase);
 
   // ── Autonomous messaging ──
   const { data: chatData } = useChat(chatId);
@@ -780,7 +781,7 @@ export function ConversationView({
         )}
 
         {/* Typing indicator — shown when generation is actively running */}
-        {typingCharacterName && isStreaming && !streamBuffer && (
+        {isStreaming && !streamBuffer && (typingCharacterName || generationPhase) && (
           <div className="flex items-center gap-2 px-4 py-1.5 text-[0.8125rem] text-[var(--text-secondary)]">
             <span className="flex gap-0.5">
               <span
@@ -796,7 +797,10 @@ export function ConversationView({
                 style={{ animationDelay: "300ms" }}
               />
             </span>
-            <span className="italic">{typingCharacterName} is typing...</span>
+            <span className="italic">
+              {typingCharacterName ? `${typingCharacterName} is typing...` : null}
+              {generationPhase && <span className="ml-1 text-[var(--text-tertiary)]">{generationPhase}</span>}
+            </span>
           </div>
         )}
 
@@ -950,7 +954,10 @@ function SplitMessageGroup({
           />
           <div className="flex items-center gap-2 text-[0.6875rem] text-[var(--muted-foreground)]">
             backspace (empty) to{" "}
-            <button onClick={() => setEditing(false)} className="text-foreground/70 hover:underline hover:text-foreground">
+            <button
+              onClick={() => setEditing(false)}
+              className="text-foreground/70 hover:underline hover:text-foreground"
+            >
               cancel
             </button>{" "}
             · enter to{" "}

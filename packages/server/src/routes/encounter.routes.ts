@@ -69,7 +69,7 @@ function parseJSON(raw: string): unknown {
       escape = false;
       continue;
     }
-    if (ch === "\\\\") {
+    if (ch === "\\") {
       escape = true;
       continue;
     }
@@ -489,6 +489,20 @@ export async function encounterRoutes(app: FastifyInstance) {
       const cs = actionResult.combatStats as Record<string, unknown>;
       if (!Array.isArray(cs.party)) cs.party = combatStats.party;
       if (!Array.isArray(cs.enemies)) cs.enemies = combatStats.enemies;
+
+      // Sanitize playerActions — AI may return attacks/items as strings or omit them
+      if (actionResult.playerActions && typeof actionResult.playerActions === "object") {
+        const pa = actionResult.playerActions as Record<string, unknown>;
+        if (!Array.isArray(pa.attacks)) pa.attacks = playerActions?.attacks ?? [];
+        if (!Array.isArray(pa.items)) pa.items = playerActions?.items ?? [];
+      }
+
+      // Ensure enemyActions / partyActions are arrays
+      if (!Array.isArray(actionResult.enemyActions)) actionResult.enemyActions = [];
+      if (!Array.isArray(actionResult.partyActions)) actionResult.partyActions = [];
+
+      // Ensure narrative is a string
+      if (typeof actionResult.narrative !== "string") actionResult.narrative = "";
 
       return { result: actionResult };
     } catch (err) {

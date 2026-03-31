@@ -108,7 +108,10 @@ export function EchoChamberPanel() {
     prevLenRef.current = 0;
     loadedChatRef.current = activeChatId;
 
-    api.get<Array<{ characterName: string; reaction: string; timestamp: number }>>(`/agents/echo-messages/${activeChatId}`)
+    api
+      .get<Array<{ characterName: string; reaction: string; timestamp: number }>>(
+        `/agents/echo-messages/${activeChatId}`,
+      )
       .then((msgs) => {
         if (msgs.length > 0) {
           setEchoMessages(msgs);
@@ -117,7 +120,9 @@ export function EchoChamberPanel() {
           prevLenRef.current = msgs.length;
         }
       })
-      .catch(() => { /* silently ignore load failures */ });
+      .catch(() => {
+        /* silently ignore load failures */
+      });
   }, [activeChatId, echoEnabled, setEchoMessages, clearEchoMessages]);
 
   useEffect(() => {
