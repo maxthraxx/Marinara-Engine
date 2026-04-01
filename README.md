@@ -56,20 +56,29 @@
 
 **New Features:**
 
-- **Embedding Base URL** — Configurable base URL for embedding endpoints, allowing custom embedding servers per connection.
-- **Browser Refresh on Error** — The Bot Browser tab now shows a "Refresh" button when search fails, instead of a static error message.
+- **Bot Browser** — Browse, search, and one-click import characters from Chub.ai directly inside the app. Includes paginated grid view, sort by downloads/stars/trending, NSFW filter toggle, and full character detail preview (personality, description, first message, scenario, example dialogues, alternate greetings).
+- **Chat Folders** — Organize chats into named, color-coded folders with drag-and-drop reorder. Move chats between folders, collapse/expand, and filter by mode (conversation/roleplay/visual novel). Fully persisted server-side.
+- **Slash Commands** — SillyTavern-style command system with autocomplete: `/roll` (dice notation), `/sys`, `/narrator`, `/continue`, `/as <character>`, `/impersonate`, `/remind <time> <message>`, `/random`, `/scene` (AI-planned scene branching), and `/help`.
+- **AI Lorebook Maker** — Generate structured lorebook entries from a topic prompt using your LLM connection. Streams results via SSE with batch support for large requests and auto-attaches entries to existing lorebooks.
+- **Discord Webhook Integration** — Per-chat webhook URL setting that mirrors both user and AI messages to a Discord channel, with URL validation and proper author names.
+- **Connection Duplicate & Test** — Clone existing connections (including encrypted API keys) and test connectivity with provider-specific pings (ComfyUI, AUTOMATIC1111, NovelAI, and standard OpenAI-compatible endpoints).
+- **ComfyUI Custom Workflows** — Paste custom ComfyUI workflow JSON with `%prompt%`, `%negative_prompt%`, `%width%`, `%height%`, `%seed%`, and `%model%` placeholders. A default txt2img workflow is provided as fallback.
+- **OpenRouter Provider Preference** — Select a preferred upstream provider (e.g. Anthropic, Google) when routing through OpenRouter.
+- **Expanded Image Generation** — Added Pollinations (free, no API key), Stability AI (SD3), Together AI (FLUX), NovelAI (native v4 + proxy/LinkAPI fallback), ComfyUI, and AUTOMATIC1111/SD Web UI backends alongside OpenAI/DALL-E.
+- **Plain Text Chat Export** — Export chat history as readable plain text alongside the existing JSONL format.
+- **Embedding Base URL** — Configurable per-connection base URL for embedding endpoints, allowing separate embedding servers.
 
 **Improvements:**
 
 - **Performance — Streaming Re-render Optimization** — Extracted `StreamingIndicator` and `RegeneratingMessageContent` into self-contained components that subscribe to the stream buffer independently. The main `ChatArea` no longer re-renders on every token (~30–60×/sec), drastically reducing CPU usage during streaming.
-- **Performance — Zustand Selector Batching** — Combined 5 individual `useUIStore` selectors in `ChatMessage` into a single shallow-compared selector via `useShallow`, and memoized style objects (`textStrokeStyle`, `narrationTextStyle`, `chatTextStyle`, bubble colors) to avoid recreating them on every render.
-- **Performance — Debounced UI Persistence** — UI store `localStorage` writes are now debounced (1 s) via a custom `createJSONStorage` adapter, preventing synchronous I/O on every state change (e.g. dragging sliders).
-- **Performance — Action Selector Cleanup** — Converted 4 action-only selectors (`setActiveChat`, `setShouldOpenSettings`, `setShouldOpenWizard`, and callback-only `setActiveChatId`) to `getState()` calls, eliminating unnecessary re-render subscriptions.
-- **Chat Text Appearance** — Unified chat text color with a single "Chat Text Color" setting and a default text stroke width of 0.5 px.
-- **Settings Panel Polish** — Renamed reset buttons to "Reset to default", removed redundant labels ("Color", "From"/"To"), and consolidated reset actions (text color reset also resets opacity to 90 %).
-- **Roleplay Input Responsiveness** — Responsive padding/gap on the roleplay input bar, `min-w-0` on the textarea to prevent flex overflow on narrow screens, and `shrink-0` on the send button.
-- **Home Page Mobile Layout** — Reduced padding on mobile (`p-4 sm:p-8`), constrained content width (`max-w-md`), and made QuickStart cards flex-wrap with responsive sizing (`w-24 sm:w-28`).
-- **Folder UX** — New folders are created at the top of the list (server-side `sortOrder: 0` with existing folders shifted), folders render above unfiled chats, and the folder row now uses inline rename-on-click + a trash icon on hover instead of a three-dot menu.
+- **Performance — Zustand Selector Batching** — Combined individual `useUIStore` selectors in `ChatMessage` into a single shallow-compared selector via `useShallow`, and memoized style objects to avoid recreating them on every render.
+- **Performance — Debounced UI Persistence** — UI store `localStorage` writes are now debounced (1 s) with a `beforeunload`/`visibilitychange` flush to prevent data loss on tab close.
+- **Chat Text Appearance** — Unified chat text color with a single setting and a default text stroke width of 0.5 px.
+- **Folder UX** — New folders are created at the top of the list, folders render above unfiled chats, and folder rows use inline rename-on-click + a trash icon on hover.
+- **Roleplay Input Responsiveness** — Responsive padding/gap on the input bar, `min-w-0` on the textarea to prevent flex overflow, and `shrink-0` on the send button.
+- **Home Page Mobile Layout** — Reduced padding on mobile, constrained content width, and responsive QuickStart cards.
+- **Tracker Injection Order** — Tracker data now injects before the Output Format section for correct prompt ordering.
+- **Settings Panel Polish** — Renamed reset buttons to "Reset to default", removed redundant labels, and consolidated reset actions.
 
 **Bug Fixes:**
 
