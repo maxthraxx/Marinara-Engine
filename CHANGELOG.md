@@ -7,6 +7,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 ### Added
 
 - Added `pnpm check`, version-sync helpers, and PR CI checks for version drift.
+- Added tracked-installer and release-note scripts plus a GitHub release workflow driven by `CHANGELOG.md`.
 
 ### Changed
 
@@ -20,6 +21,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - `CORS_ORIGINS=*` now behaves as explicit allow-all without credentials, while explicit origin lists retain credentialed CORS support.
 - GIF search no longer falls back to a shared embedded API key when `GIPHY_API_KEY` is unset.
 - Sidebar tab text metrics were made explicit so descenders like the `y` in `Roleplay` no longer clip.
+- Restored local data-path compatibility so existing installs continue to resolve storage under `packages/server/data`.
+- Update checks now resolve the newest GitHub `v*` tag even when `releases/latest` is stale.
 
 ## [1.4.7]
 

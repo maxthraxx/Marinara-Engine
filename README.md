@@ -180,7 +180,7 @@ Git-based installs update automatically. If you launch Marinara Engine via `star
 
 This includes installs created by the Windows installer, because the installer clones the repository and keeps the `.git` directory.
 
-In-app update checks read the latest GitHub Release tag. If you use Docker, the app shows the pull command instead of updating automatically. Docker images are published from `v*` tags.
+In-app update checks use the newest GitHub `v*` tag and matching release metadata when available. If you use Docker, the app shows the pull command instead of updating automatically. Docker images are published from `v*` tags.
 
 #### In-App Update Check
 
