@@ -1,11 +1,12 @@
 // ──────────────────────────────────────────────
 // Quick Switcher Mobile — single chevron opens
 // a tabbed menu with Connections + Personas
+// (with persona group support)
 // ──────────────────────────────────────────────
-import { useState, useRef, useCallback, useEffect } from "react";
-import { ChevronUp, Link, CircleUser } from "lucide-react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { ChevronUp, ChevronDown, ChevronRight, Link, CircleUser, FolderOpen, Folder } from "lucide-react";
 import { useConnections } from "../../hooks/use-connections";
-import { usePersonas } from "../../hooks/use-characters";
+import { usePersonas, usePersonaGroups } from "../../hooks/use-characters";
 import { useUpdateChat, useChat } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
@@ -17,14 +18,30 @@ interface Persona {
   comment?: string | null;
 }
 
+interface PersonaGroupRow {
+  id: string;
+  name: string;
+  description: string;
+  personaIds: string;
+}
+
+interface ParsedGroup {
+  id: string;
+  name: string;
+  memberIds: string[];
+  members: Persona[];
+}
+
 export function QuickSwitcherMobile() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"connections" | "personas">("connections");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const activeChatId = useChatStore((s) => s.activeChatId);
   const { data: connections } = useConnections();
   const { data: rawPersonas } = usePersonas();
+  const { data: rawPersonaGroups } = usePersonaGroups();
   const { data: chat } = useChat(activeChatId);
   const updateChat = useUpdateChat();
 
@@ -38,6 +55,54 @@ export function QuickSwitcherMobile() {
   const sortedPersonas = ((rawPersonas ?? []) as Persona[])
     .slice()
     .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  const personaMap = useMemo(() => {
+    const map = new Map<string, Persona>();
+    for (const p of sortedPersonas) map.set(p.id, p);
+    return map;
+  }, [sortedPersonas]);
+
+  const { groups, ungrouped } = useMemo(() => {
+    const groupRows = (rawPersonaGroups ?? []) as PersonaGroupRow[];
+    const allGroupedIds = new Set<string>();
+    const parsedGroups: ParsedGroup[] = [];
+
+    for (const g of groupRows) {
+      let memberIds: string[] = [];
+      try {
+        memberIds = JSON.parse(g.personaIds);
+      } catch {
+        memberIds = [];
+      }
+      const members: Persona[] = [];
+      for (const pid of memberIds) {
+        const p = personaMap.get(pid);
+        if (p) {
+          members.push(p);
+          allGroupedIds.add(pid);
+        }
+      }
+      if (members.length > 0) {
+        parsedGroups.push({ id: g.id, name: g.name, memberIds, members });
+      }
+    }
+
+    parsedGroups.sort((a, b) => a.name.localeCompare(b.name));
+    const ungroupedList = sortedPersonas.filter((p) => !allGroupedIds.has(p.id));
+    return { groups: parsedGroups, ungrouped: ungroupedList };
+  }, [rawPersonaGroups, personaMap, sortedPersonas]);
+
+  const toggleGroup = useCallback((groupId: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }, []);
 
   const handleSwitchConnection = useCallback(
     (connId: string | null) => {
@@ -57,7 +122,6 @@ export function QuickSwitcherMobile() {
     [activeChatId, updateChat],
   );
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -74,16 +138,13 @@ export function QuickSwitcherMobile() {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  // Position menu above input box, aligned to its left edge
   const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null);
   useEffect(() => {
     if (!open || !btnRef.current) return;
     const update = () => {
-      // Find the input box container (the rounded border div)
       const inputBox = btnRef.current!.closest(".rounded-2xl") as HTMLElement | null;
       const menuEl = menuRef.current;
       const menuHeight = menuEl?.offsetHeight || 400;
-
       if (inputBox) {
         const boxRect = inputBox.getBoundingClientRect();
         setPos({
@@ -92,7 +153,6 @@ export function QuickSwitcherMobile() {
           width: boxRect.width,
         });
       } else {
-        // Fallback to button position
         const rect = btnRef.current!.getBoundingClientRect();
         setPos({
           left: 8,
@@ -104,10 +164,47 @@ export function QuickSwitcherMobile() {
     requestAnimationFrame(update);
     const timer = setTimeout(update, 50);
     return () => clearTimeout(timer);
-  }, [open, tab]);
+  }, [open, tab, expandedGroups]);
 
   if (!activeChatId) return null;
 
+  const renderPersonaRow = (persona: Persona, indented: boolean = false) => {
+    const isActive = persona.id === activePersonaId;
+    return (
+      <button
+        key={persona.id}
+        onClick={() => handleSwitchPersona(persona.id)}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--accent)]",
+          isActive && "text-foreground",
+          indented && "pl-6",
+        )}
+      >
+        {persona.avatarPath ? (
+          <img
+            src={persona.avatarPath}
+            alt={persona.name}
+            className="h-9 w-9 shrink-0 rounded-full border border-[var(--border)] object-cover"
+          />
+        ) : (
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--secondary)] text-xs font-semibold text-[var(--muted-foreground)]">
+            {(persona.name || "?")[0].toUpperCase()}
+          </div>
+        )}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className={cn("text-xs font-semibold", isActive && "text-foreground")}>
+            {persona.name || persona.id}
+          </span>
+          {persona.comment && (
+            <span className="truncate text-[0.625rem] leading-tight text-[var(--muted-foreground)]">
+              {persona.comment.length > 60 ? persona.comment.substring(0, 60) + "…" : persona.comment}
+            </span>
+          )}
+        </div>
+        {isActive && <span className="ml-auto shrink-0 text-[0.6875rem]">✓</span>}
+      </button>
+    );
+  };
   return (
     <>
       <button
@@ -128,7 +225,6 @@ export function QuickSwitcherMobile() {
           className="fixed z-[9999] flex max-h-[400px] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-2xl"
           style={pos ? { left: pos.left, top: pos.top, width: pos.width } : { visibility: "hidden" as const }}
         >
-          {/* Tab bar with icons */}
           <div className="flex border-b border-[var(--border)]">
             <button
               onClick={() => setTab("connections")}
@@ -156,7 +252,6 @@ export function QuickSwitcherMobile() {
             </button>
           </div>
 
-          {/* Content */}
           <div className="overflow-y-auto p-1">
             {tab === "connections" && (
               <>
@@ -170,9 +265,7 @@ export function QuickSwitcherMobile() {
                   <span>🎲 Random</span>
                   {activeConnectionId === "random" && <span className="ml-auto text-[0.6875rem]">✓</span>}
                 </button>
-
                 <div className="mx-2 my-1 h-px bg-[var(--border)]" />
-
                 {sortedConnections.map((conn) => (
                   <button
                     key={conn.id}
@@ -186,7 +279,6 @@ export function QuickSwitcherMobile() {
                     {activeConnectionId === conn.id && <span className="ml-auto text-[0.6875rem]">✓</span>}
                   </button>
                 ))}
-
                 {sortedConnections.length === 0 && (
                   <div className="px-3 py-4 text-center text-[0.6875rem] italic text-[var(--muted-foreground)]">
                     No connections found.
@@ -213,46 +305,57 @@ export function QuickSwitcherMobile() {
                   </div>
                   {!activePersonaId && <span className="ml-auto text-[0.6875rem]">✓</span>}
                 </button>
-
                 <div className="mx-2 my-1 h-px bg-[var(--border)]" />
-
-                {sortedPersonas.map((persona) => {
-                  const isActive = persona.id === activePersonaId;
+                {groups.map((group) => {
+                  const isExpanded = expandedGroups.has(group.id);
+                  const firstMember = group.members[0];
+                  const hasActiveInGroup = group.members.some((p) => p.id === activePersonaId);
                   return (
-                    <button
-                      key={persona.id}
-                      onClick={() => handleSwitchPersona(persona.id)}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--accent)]",
-                        isActive && "text-foreground",
-                      )}
-                    >
-                      {persona.avatarPath ? (
-                        <img
-                          src={persona.avatarPath}
-                          alt={persona.name}
-                          className="h-9 w-9 shrink-0 rounded-full border border-[var(--border)] object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--secondary)] text-xs font-semibold text-[var(--muted-foreground)]">
-                          {(persona.name || "?")[0].toUpperCase()}
+                    <div key={group.id}>
+                      <button
+                        onClick={() => toggleGroup(group.id)}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--accent)]",
+                          hasActiveInGroup && "text-foreground",
+                        )}
+                      >
+                        {firstMember?.avatarPath ? (
+                          <img
+                            src={firstMember.avatarPath}
+                            alt={group.name}
+                            className="h-9 w-9 shrink-0 rounded-full border border-[var(--border)] object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--secondary)] text-xs font-semibold text-[var(--muted-foreground)]">
+                            {group.name[0].toUpperCase()}
+                          </div>
+                        )}
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <span className="flex items-center gap-1 text-xs font-semibold">
+                            {isExpanded ? (
+                              <FolderOpen size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                            ) : (
+                              <Folder size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                            )}
+                            {group.name} ({group.members.length})
+                          </span>
+                          <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+                            {group.members.length} persona{group.members.length !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                        <span className="ml-auto shrink-0 text-[var(--muted-foreground)]">
+                          {isExpanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+                        </span>
+                      </button>
+                      {isExpanded && (
+                        <div className="ml-2 border-l border-[var(--border)]/50 pl-1">
+                          {group.members.map((persona) => renderPersonaRow(persona, true))}
                         </div>
                       )}
-                      <div className="flex min-w-0 flex-1 flex-col">
-                        <span className={cn("text-xs font-semibold", isActive && "text-foreground")}>
-                          {persona.name || persona.id}
-                        </span>
-                        {persona.comment && (
-                          <span className="truncate text-[0.625rem] leading-tight text-[var(--muted-foreground)]">
-                            {persona.comment.length > 60 ? persona.comment.substring(0, 60) + "…" : persona.comment}
-                          </span>
-                        )}
-                      </div>
-                      {isActive && <span className="ml-auto shrink-0 text-[0.6875rem]">✓</span>}
-                    </button>
+                    </div>
                   );
                 })}
-
+                {ungrouped.map((persona) => renderPersonaRow(persona, false))}
                 {sortedPersonas.length === 0 && (
                   <div className="px-3 py-4 text-center text-[0.6875rem] italic text-[var(--muted-foreground)]">
                     No personas found.
