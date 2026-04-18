@@ -403,11 +403,7 @@ export function CharactersPanel() {
     if (selectedCharacterIds.size === 0) return;
     setExportingSelected(true);
     try {
-      await api.downloadPost(
-        "/characters/export-bulk",
-        { ids: [...selectedCharacterIds] },
-        "marinara-characters.zip",
-      );
+      await api.downloadPost("/characters/export-bulk", { ids: [...selectedCharacterIds] }, "marinara-characters.zip");
       toast.success(`Exported ${selectedCharacterIds.size} character${selectedCharacterIds.size === 1 ? "" : "s"}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to export characters");
@@ -541,21 +537,23 @@ export function CharactersPanel() {
         <button
           onClick={() => openModal("create-character")}
           className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-pink-400 to-purple-500 px-3 py-2 text-xs font-medium text-white shadow-md shadow-pink-500/15 transition-all hover:shadow-lg hover:shadow-pink-500/25 active:scale-[0.98]"
+          title="New"
         >
-          <Plus size="0.75rem" /> New
+          <Plus size="0.75rem" /> <span className="md:hidden">New</span>
         </button>
         <button
           onClick={() => openModal("import-character")}
           className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2 text-xs font-medium text-[var(--secondary-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98]"
+          title="Import"
         >
-          <Download size="0.75rem" /> Import
+          <Download size="0.75rem" /> <span className="md:hidden">Import</span>
         </button>
         <button
           onClick={() => openModal("character-maker")}
-          className="flex w-9 items-center justify-center rounded-xl bg-gradient-to-r from-violet-400 to-fuchsia-500 py-2 text-xs font-medium text-white shadow-md shadow-violet-500/15 transition-all hover:shadow-lg hover:shadow-violet-500/25 active:scale-[0.98]"
-          title="AI Character Maker"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2 text-xs font-medium text-[var(--secondary-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98]"
+          title="AI Maker"
         >
-          <Sparkles size="0.75rem" />
+          <Sparkles size="0.75rem" /> <span className="md:hidden">Maker</span>
         </button>
         <button
           onClick={() => {
@@ -567,14 +565,15 @@ export function CharactersPanel() {
             }
           }}
           className={cn(
-            "flex items-center justify-center gap-1 rounded-xl px-3 py-2 text-xs font-medium transition-all",
+            "flex flex-1 items-center justify-center gap-1 rounded-xl px-3 py-2 text-xs font-medium transition-all",
             selectionMode
               ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
               : "bg-[var(--secondary)] text-[var(--secondary-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
           )}
+          title="Select"
         >
           <Check size="0.75rem" />
-          Select
+          <span className="md:hidden">Select</span>
         </button>
       </div>
 
@@ -855,7 +854,9 @@ export function CharactersPanel() {
       <div className="flex items-center gap-1.5 px-1 pt-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
         <User size="0.6875rem" />
         Characters ({filteredCharacters.length})
-        {selectionMode && <span className="text-[0.625rem] font-normal normal-case">· {selectedCharacterIds.size} selected</span>}
+        {selectionMode && (
+          <span className="text-[0.625rem] font-normal normal-case">· {selectedCharacterIds.size} selected</span>
+        )}
       </div>
 
       {/* Character list */}
@@ -1097,9 +1098,7 @@ export function CharactersPanel() {
               onSelect: () => quickStartFromCharacter(contextMenu.charId, contextMenu.charName, "conversation"),
             },
           ];
-          return (
-            <ContextMenu x={contextMenu.x} y={contextMenu.y} items={items} onClose={() => setContextMenu(null)} />
-          );
+          return <ContextMenu x={contextMenu.x} y={contextMenu.y} items={items} onClose={() => setContextMenu(null)} />;
         })()}
 
       {/* First message confirmation dialog */}

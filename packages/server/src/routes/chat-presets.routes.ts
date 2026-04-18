@@ -15,7 +15,10 @@ import {
 import { createChatPresetsStorage, sanitizePresetSettings } from "../services/storage/chat-presets.storage.js";
 
 function toSafeExportName(name: string, fallback: string) {
-  const sanitized = name.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim();
+  const sanitized = name
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return sanitized || fallback;
 }
 

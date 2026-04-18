@@ -72,7 +72,10 @@ export function sanitizePresetSettings(input: ChatPresetSettings | undefined | n
 export function createChatPresetsStorage(db: DB) {
   const storage = {
     async list() {
-      const rows = (await db.select().from(chatPresets).orderBy(asc(chatPresets.mode), asc(chatPresets.name))) as ChatPresetRow[];
+      const rows = (await db
+        .select()
+        .from(chatPresets)
+        .orderBy(asc(chatPresets.mode), asc(chatPresets.name))) as ChatPresetRow[];
       return rows.map(rowToPreset);
     },
 
@@ -175,10 +178,7 @@ export function createChatPresetsStorage(db: DB) {
         .update(chatPresets)
         .set({ isActive: "false", updatedAt: ts })
         .where(and(eq(chatPresets.mode, target.mode), ne(chatPresets.id, id)));
-      await db
-        .update(chatPresets)
-        .set({ isActive: "true", updatedAt: ts })
-        .where(eq(chatPresets.id, id));
+      await db.update(chatPresets).set({ isActive: "true", updatedAt: ts }).where(eq(chatPresets.id, id));
       return storage.getById(id);
     },
 

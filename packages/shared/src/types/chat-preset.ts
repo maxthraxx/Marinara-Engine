@@ -55,7 +55,4 @@ export const CHAT_PRESET_EXCLUDED_METADATA_KEYS: readonly string[] = [
 ] as const;
 
 /** Top-level chat keys that CAN be saved into a preset. */
-export const CHAT_PRESET_INCLUDED_CHAT_KEYS: readonly string[] = [
-  "connectionId",
-  "promptPresetId",
-] as const;
+export const CHAT_PRESET_INCLUDED_CHAT_KEYS: readonly string[] = ["connectionId", "promptPresetId"] as const;

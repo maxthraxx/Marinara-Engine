@@ -207,9 +207,7 @@ export function BotBrowserPanel() {
               onSelect: () => quickStartFromCharacter(contextMenu.charId, contextMenu.charName, "conversation"),
             },
           ];
-          return (
-            <ContextMenu x={contextMenu.x} y={contextMenu.y} items={items} onClose={() => setContextMenu(null)} />
-          );
+          return <ContextMenu x={contextMenu.x} y={contextMenu.y} items={items} onClose={() => setContextMenu(null)} />;
         })()}
     </div>
   );

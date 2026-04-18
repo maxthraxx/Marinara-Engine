@@ -11,6 +11,7 @@ export * from "./assets.js";
 export * from "./agents.js";
 export * from "./custom-tools.js";
 export * from "./game-state.js";
+export * from "./checkpoints.js";
 export * from "./regex-scripts.js";
 export * from "./gallery.js";
 export * from "./themes.js";

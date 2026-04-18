@@ -92,6 +92,11 @@ export function ChatSetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     return <ConversationQuickSetup chat={chat} onFinish={onFinish} />;
   }
 
+  // Game mode has its own wizard in GameSurface — skip the roleplay wizard
+  if (chatMode === "game") {
+    return null;
+  }
+
   return <RoleplaySetupWizard chat={chat} onFinish={onFinish} />;
 }
 
@@ -122,7 +127,10 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     }
   }, [chat.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const characters = (allCharacters ?? []) as Array<{ id: string; data: string; avatarPath: string | null }>;
+  const characters = useMemo(
+    () => (allCharacters ?? []) as Array<{ id: string; data: string; avatarPath: string | null }>,
+    [allCharacters],
+  );
   const personas = (allPersonas ?? []) as Array<{ id: string; name: string; avatarPath: string | null }>;
 
   const chatCharIds: string[] = useMemo(() => {
@@ -572,7 +580,9 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const { data: lorebooks } = useLorebooks();
 
   // Chat-settings presets for the shortcut view
-  const chatPresetMode = ((chat as unknown as { mode?: string }).mode === "visual_novel" ? "roleplay" : "roleplay") as ChatMode;
+  const chatPresetMode = (
+    (chat as unknown as { mode?: string }).mode === "visual_novel" ? "roleplay" : "roleplay"
+  ) as ChatMode;
   const { data: chatPresetsData } = useChatPresets(chatPresetMode);
   const chatPresetList = useMemo(() => (chatPresetsData ?? []) as ChatPreset[], [chatPresetsData]);
   const applyChatPreset = useApplyChatPreset();
@@ -630,9 +640,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const buildAutoName = useCallback(
     (charIds: string[]) => {
       if (charIds.length === 0) return "New Roleplay";
-      const names = charIds
-        .map((id) => charNameMap.get(id))
-        .filter((n): n is string => !!n);
+      const names = charIds.map((id) => charNameMap.get(id)).filter((n): n is string => !!n);
       return names.length > 0 ? names.join(", ") : "New Roleplay";
     },
     [charNameMap],
@@ -1175,8 +1183,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                       {characters
                         .filter(
                           (c) =>
-                            !chatCharIds.includes(c.id) &&
-                            charName(c).toLowerCase().includes(charSearch.toLowerCase()),
+                            !chatCharIds.includes(c.id) && charName(c).toLowerCase().includes(charSearch.toLowerCase()),
                         )
                         .map((c) => {
                           const name = charName(c);
@@ -1205,8 +1212,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                         })}
                       {characters.filter(
                         (c) =>
-                          !chatCharIds.includes(c.id) &&
-                          charName(c).toLowerCase().includes(charSearch.toLowerCase()),
+                          !chatCharIds.includes(c.id) && charName(c).toLowerCase().includes(charSearch.toLowerCase()),
                       ).length === 0 && (
                         <p className="px-3 py-3 text-center text-[0.6875rem] text-[var(--muted-foreground)]">
                           {characters.filter((c) => !chatCharIds.includes(c.id)).length === 0

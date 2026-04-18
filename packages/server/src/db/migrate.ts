@@ -277,6 +277,20 @@ const CREATE_TABLES: string[] = [
     committed INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS game_checkpoints (
+    id TEXT PRIMARY KEY NOT NULL,
+    chat_id TEXT NOT NULL,
+    snapshot_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    trigger_type TEXT NOT NULL,
+    location TEXT,
+    game_state TEXT,
+    weather TEXT,
+    time_of_day TEXT,
+    turn_number INTEGER,
+    created_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS regex_scripts (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
@@ -482,6 +496,11 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     column: "tags",
     definition: "TEXT NOT NULL DEFAULT '[]'",
   },
+  {
+    table: "api_connections",
+    column: "default_parameters",
+    definition: "TEXT",
+  },
 ];
 
 export async function runMigrations(db: DB) {
@@ -505,6 +524,9 @@ export async function runMigrations(db: DB) {
   );
   await db.run(
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_game_state_message ON game_state_snapshots(message_id, swipe_index)`),
+  );
+  await db.run(
+    sql.raw(`CREATE INDEX IF NOT EXISTS idx_game_checkpoints_chat ON game_checkpoints(chat_id, created_at DESC)`),
   );
   await db.run(
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_ooc_influences_target ON ooc_influences(target_chat_id, consumed)`),
