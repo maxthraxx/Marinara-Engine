@@ -5,6 +5,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 ## [1.5.1]
 
 ### Added
+
 - Display of the time of the day in the game mode.
 - Custom game widgets can be moved around.
 
