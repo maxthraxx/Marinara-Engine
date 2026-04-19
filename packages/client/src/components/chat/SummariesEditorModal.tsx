@@ -8,6 +8,18 @@ import type { Chat, ChatMetadata, DaySummaryEntry, WeekSummaryEntry } from "@mar
 import { useQueryClient } from "@tanstack/react-query";
 import { chatKeys, useUpdateChatSummaries } from "../../hooks/use-chats";
 
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function fmtTokens(n: number): string {
+  return n.toLocaleString();
+}
+
+function entryTokenText(entry: DaySummaryEntry | WeekSummaryEntry): string {
+  return [entry.summary, ...entry.keyDetails].join("\n");
+}
+
 interface AutoSizingTextareaProps {
   value: string;
   onChange: (value: string) => void;
@@ -170,6 +182,15 @@ export function SummariesEditorModal({ chat, open, onClose }: SummariesEditorMod
   const delta = useMemo(() => computeDelta(drafts, snapshotRef.current), [drafts]);
   const isDirty = !!(delta.daySummaries || delta.weekSummaries);
 
+  const totalTokens = useMemo(() => {
+    let text = "";
+    for (const entry of entries) {
+      const e = entry.kind === "week" ? drafts.weekSummaries[entry.key] : drafts.daySummaries[entry.key];
+      if (e) text += entryTokenText(e);
+    }
+    return estimateTokens(text);
+  }, [entries, drafts]);
+
   const allExpanded = entries.length > 0 && expanded.size === entries.length;
   const toggleEntry = (id: string) => {
     setExpanded((prev) => {
@@ -222,7 +243,8 @@ export function SummariesEditorModal({ chat, open, onClose }: SummariesEditorMod
             <CalendarClock size="1rem" className="text-[var(--muted-foreground)]" />
             <h3 className="text-sm font-bold">Automatic Summarization</h3>
             <span className="text-[0.625rem] text-[var(--muted-foreground)]">
-              {entries.length} {entries.length === 1 ? "entry" : "entries"}
+              {entries.length} {entries.length === 1 ? "entry" : "entries"} &middot; ~{fmtTokens(totalTokens)} token
+              {totalTokens !== 1 ? "s" : ""}
             </span>
           </div>
           <button
@@ -265,6 +287,7 @@ export function SummariesEditorModal({ chat, open, onClose }: SummariesEditorMod
               entry.kind === "week" ? drafts.weekSummaries[entry.key]! : drafts.daySummaries[entry.key]!;
             const id = `${entry.kind}:${entry.key}`;
             const isOpen = expanded.has(id);
+            const entryTokens = estimateTokens(entryTokenText(current));
 
             return (
               <div
@@ -294,11 +317,9 @@ export function SummariesEditorModal({ chat, open, onClose }: SummariesEditorMod
                   >
                     {entry.kind}
                   </span>
-                  {!isOpen && current.summary && (
-                    <span className="min-w-0 flex-1 truncate text-[0.6875rem] italic text-[var(--muted-foreground)]">
-                      {current.summary}
-                    </span>
-                  )}
+                  <span className="ml-auto shrink-0 text-[0.625rem] text-[var(--muted-foreground)]">
+                    ~{fmtTokens(entryTokens)} token{entryTokens !== 1 ? "s" : ""}
+                  </span>
                 </button>
 
                 {isOpen && (
