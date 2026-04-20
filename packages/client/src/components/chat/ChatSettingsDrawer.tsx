@@ -48,6 +48,7 @@ import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { ExpandedTextarea } from "../ui/ExpandedTextarea";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
+import { SummariesEditorModal } from "./SummariesEditorModal";
 import { useCharacters, useCharacterSprites, usePersonas, useCharacterGroups } from "../../hooks/use-characters";
 import { useLorebooks } from "../../hooks/use-lorebooks";
 import { usePresets } from "../../hooks/use-presets";
@@ -419,6 +420,7 @@ export function ChatSettingsDrawer({
   const [showToolPicker, setShowToolPicker] = useState(false);
   const [showPersonaPicker, setShowPersonaPicker] = useState(false);
   const [showConnectionPicker, setShowConnectionPicker] = useState(false);
+  const [showSummariesModal, setShowSummariesModal] = useState(false);
   const [connectionSearch, setConnectionSearch] = useState("");
   const [personaSearch, setPersonaSearch] = useState("");
   const [pendingToolIds, setPendingToolIds] = useState<string[]>([]);
@@ -2582,6 +2584,28 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
+          {/* Automatic Summarization — conversation mode only. Opens a modal to edit per-day and per-week summaries. */}
+          {isConversation && (
+            <Section
+              label="Automatic Summarization"
+              icon={<CalendarClock size="0.875rem" />}
+              help="To help keep the request context low, the conversation is automatically summarized. Each day is wrapped up into a day summary. Likewise, day summaries are combined into week summaries. Chat messages that have been summarized are not added to context. Only the week summaries, the day summaries of the current week and today's messages are added to the context. This feature currently can't be disabled."
+            >
+              <button
+                onClick={() => setShowSummariesModal(true)}
+                className="flex w-full items-center justify-between rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-left transition-all hover:bg-[var(--accent)]"
+              >
+                <div className="flex-1 min-w-0">
+                  <span className="text-[0.6875rem] font-medium">Edit Summaries</span>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                    Review and edit what characters remember from this chat.
+                  </p>
+                </div>
+                <Pencil size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
+              </button>
+            </Section>
+          )}
+
           {/* Discord Webhook — conversation mode only */}
           {isConversation && (
             <Section
@@ -3085,6 +3109,9 @@ export function ChatSettingsDrawer({
         chatId={chat.id}
         existingChoices={metadata.presetChoices ?? {}}
       />
+
+      {/* Automatic summarization editor */}
+      <SummariesEditorModal chat={chat} open={showSummariesModal} onClose={() => setShowSummariesModal(false)} />
 
       {/* First message confirmation dialog */}
       {firstMesConfirm && (

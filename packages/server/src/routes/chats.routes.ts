@@ -8,6 +8,7 @@ import {
   createMessageSchema,
   getDefaultAgentPrompt,
   nameToXmlTag,
+  summariesPatchSchema,
 } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
@@ -100,6 +101,26 @@ export async function chatsRoutes(app: FastifyInstance) {
       incoming.discordWebhookUrl = url;
     }
     const merged = { ...existing, ...incoming };
+    return storage.updateMetadata(req.params.id, merged);
+  });
+
+  // Update chat summaries (entry-level merge for day/week summaries).
+  // Dedicated from generic metadata PATCH so concurrent user edits don't overwrite
+  // the entire daySummaries/weekSummaries maps — we re-read fresh metadata here and
+  // merge per-entry so in-flight generation writes can't clobber user edits on other keys.
+  app.patch<{ Params: { id: string } }>("/:id/summaries", async (req, reply) => {
+    const parsed = summariesPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "Invalid summaries payload", issues: parsed.error.issues });
+    }
+    const fresh = await storage.getById(req.params.id);
+    if (!fresh) return reply.status(404).send({ error: "Chat not found" });
+    const existing = typeof fresh.metadata === "string" ? JSON.parse(fresh.metadata) : (fresh.metadata ?? {});
+    const merged = {
+      ...existing,
+      daySummaries: { ...(existing.daySummaries ?? {}), ...(parsed.data.daySummaries ?? {}) },
+      weekSummaries: { ...(existing.weekSummaries ?? {}), ...(parsed.data.weekSummaries ?? {}) },
+    };
     return storage.updateMetadata(req.params.id, merged);
   });
 

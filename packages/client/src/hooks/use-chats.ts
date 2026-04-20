@@ -9,7 +9,7 @@ import { useGameStateStore } from "../stores/game-state.store";
 import { useEncounterStore } from "../stores/encounter.store";
 import { useUIStore } from "../stores/ui.store";
 import { clearBrowserRuntimeCaches } from "../lib/cache-reset";
-import type { Chat, Message, MessageSwipe } from "@marinara-engine/shared";
+import type { Chat, Message, MessageSwipe, DaySummaryEntry, WeekSummaryEntry } from "@marinara-engine/shared";
 
 export const chatKeys = {
   all: ["chats"] as const,
@@ -175,6 +175,24 @@ export function useUpdateChatMetadata() {
   return useMutation({
     mutationFn: ({ id, ...metadata }: { id: string; [key: string]: unknown }) =>
       api.patch<Chat>(`/chats/${id}/metadata`, metadata),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: chatKeys.detail(vars.id) });
+    },
+  });
+}
+
+/** Patch day/week summaries via entry-level merge (concurrent-edit safe). */
+export function useUpdateChatSummaries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string;
+      daySummaries?: Record<string, DaySummaryEntry>;
+      weekSummaries?: Record<string, WeekSummaryEntry>;
+    }) => api.patch<Chat>(`/chats/${id}/summaries`, body),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: chatKeys.detail(vars.id) });
     },

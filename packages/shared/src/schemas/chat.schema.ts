@@ -46,6 +46,18 @@ export const generateRequestSchema = z.object({
     .default([]),
 });
 
+// Auto-summarization entries — shape-only validation (no length caps).
+export const summaryEntrySchema = z.object({
+  summary: z.string(),
+  keyDetails: z.array(z.string()),
+});
+
+export const summariesPatchSchema = z.object({
+  daySummaries: z.record(z.string(), summaryEntrySchema).optional(),
+  weekSummaries: z.record(z.string(), summaryEntrySchema).optional(),
+});
+
 export type CreateChatInput = z.infer<typeof createChatSchema>;
 export type CreateMessageInput = z.infer<typeof createMessageSchema>;
 export type GenerateRequestInput = z.infer<typeof generateRequestSchema>;
+export type SummariesPatchInput = z.infer<typeof summariesPatchSchema>;

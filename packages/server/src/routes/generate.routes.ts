@@ -903,6 +903,11 @@ export async function generateRoutes(app: FastifyInstance) {
             new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Summary timeout")), ms)),
           ]);
 
+        // Keys newly produced in this generation — persisted via key-level merge so
+        // concurrent user edits to other entries aren't clobbered when we write back.
+        const newlyGeneratedDays: Record<string, DaySummaryEntry> = {};
+        const newlyConsolidatedWeeks: Record<string, { summary: string; keyDetails: string[] }> = {};
+
         if (bucketsToSummarize.length > 0) {
           const summaryProvider = createLLMProvider(
             conn.provider,
@@ -966,16 +971,28 @@ export async function generateRoutes(app: FastifyInstance) {
           );
           for (const r of summaryResults) {
             if (r.status === "fulfilled" && r.value.summary) {
-              daySummaries[r.value.date] = {
+              const entry = {
                 summary: r.value.summary,
                 keyDetails: r.value.keyDetails,
               };
+              daySummaries[r.value.date] = entry;
+              newlyGeneratedDays[r.value.date] = entry;
               summariesChanged = true;
             }
           }
-          // Persist new summaries to chat metadata
+          // Persist new summaries via key-level merge against fresh metadata, so a
+          // concurrent user edit to a different day is not clobbered.
           if (summariesChanged) {
-            const updatedMeta = { ...chatMeta, daySummaries };
+            const freshChat = await chats.getById(input.chatId);
+            const freshMeta = freshChat
+              ? typeof freshChat.metadata === "string"
+                ? JSON.parse(freshChat.metadata)
+                : (freshChat.metadata ?? {})
+              : chatMeta;
+            const updatedMeta = {
+              ...freshMeta,
+              daySummaries: { ...(freshMeta.daySummaries ?? {}), ...newlyGeneratedDays },
+            };
             await chats.updateMetadata(input.chatId, updatedMeta);
           }
         }
@@ -1091,15 +1108,27 @@ export async function generateRoutes(app: FastifyInstance) {
           );
           for (const r of weekResults) {
             if (r.status === "fulfilled" && r.value.summary) {
-              weekSummaries[r.value.weekKey] = {
+              const entry = {
                 summary: r.value.summary,
                 keyDetails: r.value.keyDetails,
               };
+              weekSummaries[r.value.weekKey] = entry;
+              newlyConsolidatedWeeks[r.value.weekKey] = entry;
               weekSummariesChanged = true;
             }
           }
           if (weekSummariesChanged) {
-            const updatedMeta = { ...chatMeta, daySummaries, weekSummaries };
+            const freshChat = await chats.getById(input.chatId);
+            const freshMeta = freshChat
+              ? typeof freshChat.metadata === "string"
+                ? JSON.parse(freshChat.metadata)
+                : (freshChat.metadata ?? {})
+              : chatMeta;
+            const updatedMeta = {
+              ...freshMeta,
+              daySummaries: { ...(freshMeta.daySummaries ?? {}), ...newlyGeneratedDays },
+              weekSummaries: { ...(freshMeta.weekSummaries ?? {}), ...newlyConsolidatedWeeks },
+            };
             await chats.updateMetadata(input.chatId, updatedMeta);
           }
         }

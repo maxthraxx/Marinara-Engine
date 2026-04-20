@@ -59,6 +59,22 @@ export interface ChatFolder {
   updatedAt: string;
 }
 
+/** A single day's auto-generated conversation summary. */
+export interface DaySummaryEntry {
+  /** Narrative recap of the day. */
+  summary: string;
+  /** Short strings the characters must remember going forward. */
+  keyDetails: string[];
+}
+
+/** A single week's consolidated conversation summary (Monday → Sunday). */
+export interface WeekSummaryEntry {
+  /** Narrative recap of the week. */
+  summary: string;
+  /** Consolidated key details the characters must remember going forward. */
+  keyDetails: string[];
+}
+
 /** Extra metadata stored on a chat. */
 export interface ChatMetadata {
   /** Summary text for context injection */
@@ -135,6 +151,12 @@ export interface ChatMetadata {
   gameSetupConfig?: import("./game.js").GameSetupConfig | null;
   /** Tracked NPCs with reputation */
   gameNpcs?: import("./game.js").GameNpc[];
+
+  // ── Conversation-Mode Auto-Summarization ──
+  /** Per-day auto-generated conversation summaries (key: "DD.MM.YYYY"). */
+  daySummaries?: Record<string, DaySummaryEntry>;
+  /** Per-week consolidated conversation summaries (key: Monday "DD.MM.YYYY"). */
+  weekSummaries?: Record<string, WeekSummaryEntry>;
 
   /** Any extra key-value data */
   [key: string]: unknown;
