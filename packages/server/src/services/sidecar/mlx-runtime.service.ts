@@ -179,16 +179,17 @@ class MlxRuntimeService {
     await this.ensureUvInstalled(onProgress);
 
     try {
-      this.emitProgress(onProgress, "downloading", `Python ${PYTHON_VERSION} environment`);
+      this.emitProgress(onProgress, "downloading", `Python ${PYTHON_VERSION} runtime`);
       await this.runCommand(UV_BIN, ["venv", MLX_VENV_DIR, "--python", PYTHON_VERSION], {
         cwd: MLX_RUNTIME_DIR,
         env: this.getUvEnv(),
       });
-      this.emitProgress(onProgress, "downloading", "mlx-lm package");
+      this.emitProgress(onProgress, "downloading", "MLX runtime dependencies");
       await this.runCommand(UV_BIN, ["pip", "install", "--python", VENV_PYTHON, "mlx-lm"], {
         cwd: MLX_RUNTIME_DIR,
         env: this.getUvEnv(),
       });
+      this.emitProgress(onProgress, "downloading", "Verifying MLX runtime");
     } catch (error) {
       this.emitProgress(
         onProgress,
@@ -224,7 +225,7 @@ class MlxRuntimeService {
       return;
     }
 
-    this.emitProgress(onProgress, "downloading", "uv bootstrap");
+    this.emitProgress(onProgress, "downloading", "uv dependency manager");
 
     let script: string;
     try {
@@ -271,6 +272,7 @@ class MlxRuntimeService {
     }
 
     try {
+      this.emitProgress(onProgress, "downloading", "Installing uv dependency manager");
       await this.runCommand("/bin/sh", ["-s"], {
         cwd: MLX_RUNTIME_DIR,
         env: {

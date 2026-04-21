@@ -486,6 +486,14 @@ class SidecarRuntimeService {
         signal: abortController.signal,
         onProgress,
       });
+      onProgress?.({
+        phase: "runtime",
+        status: "downloading",
+        downloaded: 0,
+        total: 0,
+        speed: 0,
+        label: "Verifying runtime files",
+      });
 
       const executableName = isWindowsAsset(match.asset.name) ? "llama-server.exe" : "llama-server";
       const executablePath = findExecutableRecursive(extractDirectory, executableName);
@@ -573,6 +581,14 @@ class SidecarRuntimeService {
       );
 
       try {
+        options.onProgress?.({
+          phase: "runtime",
+          status: "downloading",
+          downloaded: 0,
+          total: 0,
+          speed: 0,
+          label: "Extracting runtime files",
+        });
         await this.extractArchive(options.archivePath, options.extractDirectory);
         return;
       } catch (error) {

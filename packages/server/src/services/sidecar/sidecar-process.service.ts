@@ -39,6 +39,10 @@ type SyncOptions = {
   forceStart?: boolean;
   allowRuntimeInstall?: boolean;
 };
+type EnsureReadyOptions = {
+  forceStart?: boolean;
+  allowRuntimeInstall?: boolean;
+};
 
 class SidecarServerExitError extends Error {
   readonly exitCode: number | null;
@@ -84,14 +88,16 @@ class SidecarProcessService {
     return this.failedRuntimeVariant;
   }
 
-  async ensureReady(forceStart = false): Promise<string> {
+  async ensureReady(options: EnsureReadyOptions = {}): Promise<string> {
+    const forceStart = options.forceStart ?? false;
+    const allowRuntimeInstall = options.allowRuntimeInstall ?? false;
     await this.syncForCurrentConfig({
       suppressKnownFailure: !forceStart,
       forceStart,
-      allowRuntimeInstall: forceStart,
+      allowRuntimeInstall,
     });
     if (!this.ready || !this.baseUrl) {
-      throw new Error(this.startupError ?? "The local sidecar server is not ready");
+      throw this.buildNotReadyError({ forceStart });
     }
     return this.baseUrl;
   }
@@ -108,7 +114,10 @@ class SidecarProcessService {
       this.clearStartupFailure();
       this.currentSignature = null;
       await this.stopUnlocked();
-      await this.syncUnlocked({ allowRuntimeInstall: true });
+      await this.syncUnlocked({ forceStart: true, allowRuntimeInstall: false });
+      if (!this.ready || !this.baseUrl) {
+        throw this.buildNotReadyError({ forceStart: true });
+      }
     });
   }
 
@@ -197,9 +206,26 @@ class SidecarProcessService {
 
   private normalizeSyncOptions(options?: boolean | SyncOptions): SyncOptions {
     if (typeof options === "boolean") {
-      return { forceStart: options, allowRuntimeInstall: options };
+      return { forceStart: options, allowRuntimeInstall: false };
     }
     return options ?? {};
+  }
+
+  private buildNotReadyError(options: { forceStart?: boolean } = {}): Error {
+    if (!sidecarModelService.getConfiguredModelRef()) {
+      return new Error("Download or select a local model before using the local sidecar.");
+    }
+
+    const backend = sidecarModelService.getResolvedBackend();
+    if (!this.isRuntimeInstalled(backend)) {
+      return new Error("Install the local runtime from Local AI Model before using the local sidecar.");
+    }
+
+    if (!options.forceStart && !sidecarModelService.isEnabled()) {
+      return new Error("Enable the local model for trackers or game scene analysis, or start it manually from Local AI Model.");
+    }
+
+    return new Error(this.startupError ?? "The local sidecar server is not ready");
   }
 
   private isRuntimeInstalled(backend: SidecarBackend): boolean {
