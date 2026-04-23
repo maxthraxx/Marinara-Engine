@@ -42,9 +42,26 @@ export interface InventoryTag {
   items: string[];
 }
 
+export interface SegmentInventoryUpdate {
+  segment: number;
+  update: InventoryTag;
+}
+
+export interface PartyRecruitTag {
+  characterName: string;
+}
+
 export interface ReadableTag {
   type: "note" | "book";
   content: string;
+}
+
+export interface CombatStatusTag {
+  target: string;
+  effect: string;
+  stat?: "attack" | "defense" | "speed" | "hp";
+  modifier?: number;
+  turns?: number;
 }
 
 export interface ParsedGmTags {
@@ -76,8 +93,12 @@ export interface ParsedGmTags {
   skillChecks: SkillCheckTag[];
   /** Elemental attack triggers */
   elementAttacks: ElementAttackTag[];
+  /** Combat-only status effect commands */
+  combatStatuses: CombatStatusTag[];
   /** Inventory add/remove commands */
   inventoryUpdates: InventoryTag[];
+  /** New characters joining the party */
+  partyRecruits: PartyRecruitTag[];
   /** Note or book content for reading display */
   readables: ReadableTag[];
 }
@@ -113,6 +134,90 @@ function stripBalancedTag(text: string, tagPrefix: string): string {
     result = result.slice(0, idx) + result.slice(end + 1);
   }
   return result;
+}
+
+function splitQuotedParams(text: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let activeQuote: '"' | "'" | null = null;
+  let escaped = false;
+
+  for (const char of text) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if ((char === '"' || char === "'") && (!activeQuote || activeQuote === char)) {
+      activeQuote = activeQuote === char ? null : char;
+      current += char;
+      continue;
+    }
+
+    if (char === "," && !activeQuote) {
+      if (current.trim()) parts.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+const VALID_COMBAT_STATUS_STATS = new Set<CombatStatusTag["stat"]>(["attack", "defense", "speed", "hp"]);
+
+function parseCombatStatusTagBody(body: string): CombatStatusTag | null {
+  const fields = new Map<string, string>();
+
+  for (const part of splitQuotedParams(body)) {
+    const separatorIndex = part.indexOf("=");
+    if (separatorIndex === -1) continue;
+
+    const key = part.slice(0, separatorIndex).trim().toLowerCase();
+    const value = part
+      .slice(separatorIndex + 1)
+      .trim()
+      .replace(/^(["'])|(["'])$/g, "");
+    if (!key || !value) continue;
+    fields.set(key, value);
+  }
+
+  const target = fields.get("target")?.trim();
+  const effect = (fields.get("effect") ?? fields.get("name"))?.trim();
+  if (!target || !effect) return null;
+
+  const rawStat = fields.get("stat")?.trim().toLowerCase();
+  const stat =
+    rawStat && VALID_COMBAT_STATUS_STATS.has(rawStat as CombatStatusTag["stat"])
+      ? (rawStat as CombatStatusTag["stat"])
+      : undefined;
+
+  const modifierValue = fields.get("modifier");
+  const parsedModifier = modifierValue != null ? Number(modifierValue) : undefined;
+  const modifier = parsedModifier != null && Number.isFinite(parsedModifier) ? Math.trunc(parsedModifier) : undefined;
+
+  const turnsValue = fields.get("turns") ?? fields.get("duration");
+  const parsedTurns = turnsValue != null ? Number(turnsValue) : undefined;
+  const turns =
+    parsedTurns != null && Number.isFinite(parsedTurns) && parsedTurns > 0 ? Math.trunc(parsedTurns) : undefined;
+
+  return {
+    target,
+    effect,
+    stat,
+    modifier,
+    turns,
+  };
 }
 
 /**
@@ -153,6 +258,190 @@ function extractBalancedTags(text: string, tagPrefix: string): { contents: strin
   return { contents, remaining };
 }
 
+function parseInventoryTagBody(body: string): InventoryTag | null {
+  // action: either action="add" / action=add, or a bare leading add/remove word
+  let action: "add" | "remove" = "add";
+  const actAttr = /action\s*=\s*"?(add|remove)"?/i.exec(body);
+  if (actAttr) {
+    action = actAttr[1]!.toLowerCase() as "add" | "remove";
+  } else {
+    const bareAct = /(^|\s)(add|remove)(\s|$)/i.exec(body);
+    if (bareAct) action = bareAct[2]!.toLowerCase() as "add" | "remove";
+  }
+
+  // items: prefer quoted capture, fall back to unquoted single token / rest
+  let itemStr = "";
+  const itemsQuoted = /items?\s*=\s*"([^"]+)"/i.exec(body);
+  if (itemsQuoted) {
+    itemStr = itemsQuoted[1]!;
+  } else {
+    const itemsUnquoted = /items?\s*=\s*([^,\]\s][^,\]]*)/i.exec(body);
+    if (itemsUnquoted) itemStr = itemsUnquoted[1]!;
+  }
+
+  const items = itemStr
+    .split(",")
+    .map((item) => item.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
+
+  return items.length > 0 ? { action, items } : null;
+}
+
+/**
+ * Best-effort mapping of inventory tags to narration segment indices so item
+ * gains/losses can land when the relevant beat is shown instead of at turn start.
+ * Segment numbering mirrors GameNarration's parsing model closely enough for timing.
+ */
+export function parseSegmentInventoryUpdates(content: string): SegmentInventoryUpdate[] {
+  let source = content
+    .replace(/\[combat_result\][\s\S]*?\[\/combat_result\]/gi, "")
+    .replace(/\[music:\s*[^\]]+\]/gi, "")
+    .replace(/\[sfx:\s*[^\]]+\]/gi, "")
+    .replace(/\[bg:\s*[^\]]+\]/gi, "")
+    .replace(/\[ambient:\s*[^\]]+\]/gi, "")
+    .replace(/\[qte:\s*[^\]]+\]/gi, "")
+    .replace(/\[state:\s*[^\]]+\]/gi, "")
+    .replace(/\[reputation:\s*[^\]]+\]/gi, "")
+    .replace(/\[combat:\s*[^\]]+\]/gi, "")
+    .replace(/\[direction:\s*[^\]]+\]/gi, "")
+    .replace(/\[widget:\s*[^\]]+\]/gi, "")
+    .replace(/\[dialogue:\s*npc="[^"]*"\]/gi, "")
+    .replace(/\[session_end:\s*[^\]]*\]/gi, "")
+    .replace(/\[skill_check:\s*[^\]]+\]/gi, "")
+    .replace(/\[element_attack:\s*[^\]]+\]/gi, "")
+    .replace(/\[party_add:\s*[^\]]+\]/gi, "")
+    .replace(/\[party-turn\]/gi, "")
+    .replace(/\[party-chat\]/gi, "")
+    .replace(/\[dice:\s*[^\]]+\]/gi, "");
+
+  source = stripBalancedTag(source, "[map_update:");
+  source = stripBalancedTag(source, "[choices:");
+
+  const readableContents: Array<{ type: "note" | "book"; content: string }> = [];
+  for (const tag of ["[Note:", "[Book:"] as const) {
+    const rType = tag === "[Note:" ? "note" : "book";
+    let searchFrom = 0;
+    while (true) {
+      const idx = source.toLowerCase().indexOf(tag.toLowerCase(), searchFrom);
+      if (idx === -1) break;
+      let depth = 0;
+      let end = -1;
+      for (let i = idx; i < source.length; i++) {
+        if (source[i] === "[") depth++;
+        else if (source[i] === "]") {
+          depth--;
+          if (depth === 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      if (end === -1) {
+        searchFrom = idx + 1;
+        continue;
+      }
+      const inner = source.slice(idx + tag.length, end).trim();
+      const placeholderIdx = readableContents.length;
+      readableContents.push({ type: rType, content: inner });
+      const placeholder = `__READABLE_${placeholderIdx}__`;
+      source = source.slice(0, idx) + placeholder + source.slice(end + 1);
+      searchFrom = idx + placeholder.length;
+    }
+  }
+
+  const readablePlaceholderRe = /^__READABLE_(\d+)__$/;
+  const narrationRegex = /^\s*Narration\s*:\s*(.+)$/i;
+  const legacyDialogueRegex = /^\s*Dialogue\s*\[([^\]]+)\]\s*(?:\[([^\]]+)\])?\s*:\s*(.+)$/i;
+  const compactDialogueRegex = /^\s*\[([^\]]+)\]\s*(?:\[([^\]]+)\])?\s*:\s*(.+)$/;
+  const partyLineRegex =
+    /^\s*\[([^\]]+)\]\s*\[(main|side|extra|action|thought|whisper(?::([^\]]+))?)\]\s*(?:\[([^\]]+)\])?\s*:\s*(.+)$/i;
+  const inventoryRegex = /\[inventory:\s*([^\]]+)\]/gi;
+
+  const updatesBySegment = new Map<number, InventoryTag[]>();
+  const pendingForNextSegment: InventoryTag[] = [];
+  let segmentCount = 0;
+  let fallbackActive = false;
+
+  const assignToSegment = (segment: number, update: InventoryTag) => {
+    const existing = updatesBySegment.get(segment) ?? [];
+    existing.push(update);
+    updatesBySegment.set(segment, existing);
+  };
+
+  const queueUpdates = (updates: InventoryTag[], preferredSegment: number | null) => {
+    if (updates.length === 0) return;
+    if (preferredSegment != null && preferredSegment >= 0) {
+      for (const update of updates) assignToSegment(preferredSegment, update);
+      return;
+    }
+    pendingForNextSegment.push(...updates);
+  };
+
+  const claimPendingForSegment = (segment: number) => {
+    if (pendingForNextSegment.length === 0) return;
+    for (const update of pendingForNextSegment.splice(0, pendingForNextSegment.length)) {
+      assignToSegment(segment, update);
+    }
+  };
+
+  const lines = source.split(/\r?\n/);
+  for (const rawLine of lines) {
+    let line = rawLine.trim();
+    if (!line) {
+      if (fallbackActive) {
+        segmentCount += 1;
+        fallbackActive = false;
+      }
+      continue;
+    }
+
+    const inventoryUpdates: InventoryTag[] = [];
+    line = line.replace(inventoryRegex, (_match, body: string) => {
+      const update = parseInventoryTagBody(body);
+      if (update) inventoryUpdates.push(update);
+      return "";
+    });
+    line = line.trim();
+
+    if (!line) {
+      const targetSegment = fallbackActive ? segmentCount : segmentCount > 0 ? segmentCount - 1 : null;
+      queueUpdates(inventoryUpdates, targetSegment);
+      continue;
+    }
+
+    const isStandaloneSegment =
+      readablePlaceholderRe.test(line) ||
+      partyLineRegex.test(line) ||
+      narrationRegex.test(line) ||
+      legacyDialogueRegex.test(line) ||
+      compactDialogueRegex.test(line);
+
+    if (isStandaloneSegment) {
+      if (fallbackActive) {
+        segmentCount += 1;
+        fallbackActive = false;
+      }
+      claimPendingForSegment(segmentCount);
+      for (const update of inventoryUpdates) assignToSegment(segmentCount, update);
+      segmentCount += 1;
+      continue;
+    }
+
+    claimPendingForSegment(segmentCount);
+    for (const update of inventoryUpdates) assignToSegment(segmentCount, update);
+    fallbackActive = true;
+  }
+
+  const trailingSegment = fallbackActive ? segmentCount : segmentCount > 0 ? segmentCount - 1 : 0;
+  if (pendingForNextSegment.length > 0) {
+    for (const update of pendingForNextSegment) assignToSegment(trailingSegment, update);
+  }
+
+  return Array.from(updatesBySegment.entries())
+    .sort((a, b) => a[0] - b[0])
+    .flatMap(([segment, updates]) => updates.map((update) => ({ segment, update })));
+}
+
 /** Extract all command tags from GM narration and return clean content. */
 export function parseGmTags(content: string): ParsedGmTags {
   let text = content;
@@ -171,7 +460,9 @@ export function parseGmTags(content: string): ParsedGmTags {
     widgetUpdates: [],
     skillChecks: [],
     elementAttacks: [],
+    combatStatuses: [],
     inventoryUpdates: [],
+    partyRecruits: [],
     readables: [],
   };
 
@@ -343,7 +634,7 @@ export function parseGmTags(content: string): ParsedGmTags {
     const widgetId = widgetMatch[1]!.trim();
     const changes: WidgetUpdate["changes"] = {};
     if (widgetMatch[2]) {
-      const pairs = widgetMatch[2].split(",").map((p) => p.trim());
+      const pairs = splitQuotedParams(widgetMatch[2]);
       for (const pair of pairs) {
         const colonIdx = pair.indexOf(":");
         if (colonIdx < 0) continue;
@@ -403,6 +694,15 @@ export function parseGmTags(content: string): ParsedGmTags {
   }
   text = text.replace(/\[element_attack:\s*[^\]]+\]/gi, "");
 
+  // [status: target="Goblin" effect="Poison" turns=3 stat="hp" modifier=-6]
+  const statusRegex = /\[status:\s*([^\]]+)\]/gi;
+  let statusMatch: RegExpExecArray | null;
+  while ((statusMatch = statusRegex.exec(text)) !== null) {
+    const parsed = parseCombatStatusTagBody(statusMatch[1] ?? "");
+    if (parsed) result.combatStatuses.push(parsed);
+  }
+  text = text.replace(/\[status:\s*[^\]]+\]/gi, "");
+
   // [inventory: ...] — lenient parser: accepts any attribute order, quoted or
   // unquoted values, `item` or `items`, and a bare `add|remove` keyword.
   // Examples that all parse:
@@ -414,34 +714,25 @@ export function parseGmTags(content: string): ParsedGmTags {
   const invBlockRegex = /\[inventory:\s*([^\]]+)\]/gi;
   let invBlock: RegExpExecArray | null;
   while ((invBlock = invBlockRegex.exec(text)) !== null) {
-    const body = invBlock[1] || "";
-    // action: either action="add" / action=add, or a bare leading add/remove word
-    let action: "add" | "remove" = "add";
-    const actAttr = /action\s*=\s*"?(add|remove)"?/i.exec(body);
-    if (actAttr) {
-      action = actAttr[1]!.toLowerCase() as "add" | "remove";
-    } else {
-      const bareAct = /(^|\s)(add|remove)(\s|$)/i.exec(body);
-      if (bareAct) action = bareAct[2]!.toLowerCase() as "add" | "remove";
-    }
-    // items: prefer quoted capture, fall back to unquoted single token / rest
-    let itemStr = "";
-    const itemsQuoted = /items?\s*=\s*"([^"]+)"/i.exec(body);
-    if (itemsQuoted) {
-      itemStr = itemsQuoted[1]!;
-    } else {
-      const itemsUnquoted = /items?\s*=\s*([^,\]\s][^,\]]*)/i.exec(body);
-      if (itemsUnquoted) itemStr = itemsUnquoted[1]!;
-    }
-    const items = itemStr
-      .split(",")
-      .map((i) => i.trim().replace(/^["']|["']$/g, ""))
-      .filter(Boolean);
-    if (items.length > 0) {
-      result.inventoryUpdates.push({ action, items });
-    }
+    const update = parseInventoryTagBody(invBlock[1] || "");
+    if (update) result.inventoryUpdates.push(update);
   }
   text = text.replace(/\[inventory:\s*[^\]]+\]/gi, "");
+
+  // [party_add: character="Name"] — can appear multiple times
+  const partyAddRegex = /\[party_add:\s*([^\]]+)\]/gi;
+  let partyAddMatch: RegExpExecArray | null;
+  while ((partyAddMatch = partyAddRegex.exec(text)) !== null) {
+    const body = partyAddMatch[1] ?? "";
+    const quoted = /(?:character|name)\s*=\s*"([^"]+)"/i.exec(body);
+    const unquoted = quoted ? null : /(?:character|name)\s*=\s*([^,\]]+)/i.exec(body);
+    const rawName = quoted?.[1] ?? unquoted?.[1] ?? body;
+    const characterName = rawName.trim().replace(/^["']|["']$/g, "");
+    if (characterName) {
+      result.partyRecruits.push({ characterName });
+    }
+  }
+  text = text.replace(/\[party_add:\s*[^\]]+\]/gi, "");
 
   // [Note: content] or [Book: content] — readable documents (balanced brackets)
   {
@@ -490,6 +781,7 @@ export function stripGmTags(content: string): string {
     .replace(/\[skill_check:\s*[^\]]+\]/gi, "")
     .replace(/\[element_attack:\s*[^\]]+\]/gi, "")
     .replace(/\[inventory:\s*[^\]]+\]/gi, "")
+    .replace(/\[party_add:\s*[^\]]+\]/gi, "")
     .replace(/\[party-turn\]/gi, "")
     .replace(/\[party-chat\]/gi, "")
     .replace(/\[dice:\s*[^\]]+\]/gi, "")
@@ -529,6 +821,7 @@ export function stripGmTagsKeepReadables(content: string): string {
     .replace(/\[skill_check:\s*[^\]]+\]/gi, "")
     .replace(/\[element_attack:\s*[^\]]+\]/gi, "")
     .replace(/\[inventory:\s*[^\]]+\]/gi, "")
+    .replace(/\[party_add:\s*[^\]]+\]/gi, "")
     .replace(/\[party-turn\]/gi, "")
     .replace(/\[party-chat\]/gi, "")
     .replace(/\[dice:\s*[^\]]+\]/gi, "")

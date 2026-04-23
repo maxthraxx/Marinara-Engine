@@ -34,6 +34,7 @@ import { useActiveLorebookEntries } from "../../hooks/use-lorebooks";
 import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { CyoaChoices } from "./CyoaChoices";
+import { ChatBranchSelector } from "./ChatBranchSelector";
 import { EndSceneBar } from "./SceneBanner";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
 import type {
@@ -771,6 +772,12 @@ export function ChatRoleplaySurface({
                   </div>
                 )}
                 <div className="pointer-events-auto ml-auto flex shrink-0 items-center gap-1.5">
+                  <ChatBranchSelector
+                    activeChatId={activeChatId}
+                    activeChatName={chat?.name}
+                    groupId={chat?.groupId ?? null}
+                    variant="roleplay"
+                  />
                   <ToolbarMenu>
                     <SummaryButton
                       chatId={chat?.id ?? null}
@@ -839,56 +846,70 @@ export function ChatRoleplaySurface({
                         mobileCompact
                       />
                     </Suspense>
-                    <ToolbarMenu>
-                      <SummaryButton
-                        chatId={chat?.id ?? null}
-                        summary={chatMeta.summary ?? null}
-                        summaryContextSize={summaryContextSize}
-                        onContextSizeChange={onSummaryContextSizeChange}
+                    <div className="flex items-center gap-1.5">
+                      <ChatBranchSelector
+                        activeChatId={activeChatId}
+                        activeChatName={chat?.name}
+                        groupId={chat?.groupId ?? null}
+                        variant="roleplay"
                       />
-                      <WorldInfoButton chatId={chat?.id ?? null} />
-                      <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
-                      <RpToolbarButton
-                        icon={<FolderOpen size="0.875rem" />}
-                        title="Manage Chat Files"
-                        onClick={onOpenFiles}
-                      />
-                      {expressionAgentEnabled && spriteCharacterIds.length > 0 && (
-                        <RpToolbarButton
-                          icon={<Move size="0.875rem" />}
-                          title={spriteArrangeMode ? "Finish arranging sprites" : "Arrange sprites"}
-                          onClick={onToggleSpriteArrange}
+                      <ToolbarMenu>
+                        <SummaryButton
+                          chatId={chat?.id ?? null}
+                          summary={chatMeta.summary ?? null}
+                          summaryContextSize={summaryContextSize}
+                          onContextSizeChange={onSummaryContextSizeChange}
                         />
-                      )}
-                      {expressionAgentEnabled && spriteCharacterIds.length > 0 && (
+                        <WorldInfoButton chatId={chat?.id ?? null} />
+                        <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
                         <RpToolbarButton
-                          icon={<FlipHorizontal2 size="0.875rem" />}
-                          title={
-                            hasCustomSpritePlacements
-                              ? `Mirror sprites to the ${spritePosition === "left" ? "right" : "left"}`
-                              : `Sprite default side: ${spritePosition}`
-                          }
-                          onClick={onToggleSpritePosition}
+                          icon={<FolderOpen size="0.875rem" />}
+                          title="Manage Chat Files"
+                          onClick={onOpenFiles}
                         />
-                      )}
-                      <RpToolbarButton icon={<Image size="0.875rem" />} title="Gallery" onClick={onOpenGallery} />
-                      {chat?.connectedChatId && (
+                        {expressionAgentEnabled && spriteCharacterIds.length > 0 && (
+                          <RpToolbarButton
+                            icon={<Move size="0.875rem" />}
+                            title={spriteArrangeMode ? "Finish arranging sprites" : "Arrange sprites"}
+                            onClick={onToggleSpriteArrange}
+                          />
+                        )}
+                        {expressionAgentEnabled && spriteCharacterIds.length > 0 && (
+                          <RpToolbarButton
+                            icon={<FlipHorizontal2 size="0.875rem" />}
+                            title={
+                              hasCustomSpritePlacements
+                                ? `Mirror sprites to the ${spritePosition === "left" ? "right" : "left"}`
+                                : `Sprite default side: ${spritePosition}`
+                            }
+                            onClick={onToggleSpritePosition}
+                          />
+                        )}
+                        <RpToolbarButton icon={<Image size="0.875rem" />} title="Gallery" onClick={onOpenGallery} />
+                        {chat?.connectedChatId && (
+                          <RpToolbarButton
+                            icon={<ArrowRightLeft size="0.875rem" />}
+                            title={linkedChatName ? `Switch to ${linkedChatName}` : "Connected chat"}
+                            onClick={() => useChatStore.getState().setActiveChatId(chat.connectedChatId!)}
+                          />
+                        )}
                         <RpToolbarButton
-                          icon={<ArrowRightLeft size="0.875rem" />}
-                          title={linkedChatName ? `Switch to ${linkedChatName}` : "Connected chat"}
-                          onClick={() => useChatStore.getState().setActiveChatId(chat.connectedChatId!)}
+                          icon={<Settings2 size="0.875rem" />}
+                          title="Chat Settings"
+                          onClick={onOpenSettings}
                         />
-                      )}
-                      <RpToolbarButton
-                        icon={<Settings2 size="0.875rem" />}
-                        title="Chat Settings"
-                        onClick={onOpenSettings}
-                      />
-                    </ToolbarMenu>
+                      </ToolbarMenu>
+                    </div>
                   </div>
                 )}
                 {chat && !chatMeta.enableAgents && (
                   <div className="flex w-full items-center justify-end gap-1.5 px-2 pb-1 pt-2">
+                    <ChatBranchSelector
+                      activeChatId={activeChatId}
+                      activeChatName={chat?.name}
+                      groupId={chat?.groupId ?? null}
+                      variant="roleplay"
+                    />
                     <ToolbarMenu>
                       <SummaryButton
                         chatId={chat?.id ?? null}

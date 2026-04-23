@@ -70,10 +70,22 @@ export function ConversationAutonomousEffects({
     });
   }, [autonomousEnabled, chatCharIds, chatId, ensureSchedules, qc]);
 
-  const prevMsgCountRef = useRef(messages?.length ?? 0);
+  const prevMsgCountRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    prevMsgCountRef.current = undefined;
+  }, [chatId]);
+
   useEffect(() => {
     if (!messages) return;
     const count = messages.length;
+
+    // The first hydrated history load is not new activity and must not reset timers.
+    if (prevMsgCountRef.current === undefined) {
+      prevMsgCountRef.current = count;
+      return;
+    }
+
     if (count > prevMsgCountRef.current) {
       const newest = messages[count - 1];
       if (newest?.role === "user") {

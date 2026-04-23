@@ -7,6 +7,7 @@ import { Loader2, ChevronUp, Settings2, FolderOpen, Image as ImageIcon, ArrowRig
 import { ConversationMessage } from "./ConversationMessage";
 import { ConversationInput } from "./ConversationInput";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
+import { ChatBranchSelector } from "./ChatBranchSelector";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { playNotificationPing } from "../../lib/notification-sound";
@@ -33,6 +34,8 @@ interface ConversationViewProps {
   characterNames: string[];
   personaInfo?: PersonaInfo;
   chatMeta: Record<string, any>;
+  chatName?: string;
+  chatGroupId?: string | null;
   chatCharIds: string[];
   onDelete: (messageId: string) => void;
   onRegenerate: (messageId: string) => void;
@@ -112,6 +115,8 @@ export function ConversationView({
   characterNames,
   personaInfo,
   chatMeta,
+  chatName,
+  chatGroupId,
   chatCharIds,
   onDelete,
   onRegenerate,
@@ -618,10 +623,11 @@ export function ConversationView({
           })()}
 
           <div className="flex items-center gap-1.5">
+            <ChatBranchSelector activeChatId={chatId} activeChatName={chatName} groupId={chatGroupId} />
             <button
               onClick={onOpenFiles}
               className="flex items-center justify-center rounded-lg bg-black/30 p-1.5 text-foreground/80 backdrop-blur-sm transition-colors hover:bg-black/50 hover:text-foreground"
-              title="Chat Files"
+              title="Manage Chat Files"
             >
               <FolderOpen size="0.875rem" />
             </button>

@@ -20,6 +20,17 @@ function getBuiltinAgentType(agentConfigId: string): string | null {
   return agentType.length > 0 ? agentType : null;
 }
 
+function keepLatestConfigPerType<T extends { type: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const latestRows: T[] = [];
+  for (const row of rows) {
+    if (seen.has(row.type)) continue;
+    seen.add(row.type);
+    latestRows.push(row);
+  }
+  return latestRows;
+}
+
 export function createAgentsStorage(db: DB) {
   async function getById(id: string) {
     const rows = await db.select().from(agentConfigs).where(eq(agentConfigs.id, id));
@@ -27,8 +38,18 @@ export function createAgentsStorage(db: DB) {
   }
 
   async function getByType(type: string) {
-    const rows = await db.select().from(agentConfigs).where(eq(agentConfigs.type, type));
+    const rows = await db
+      .select()
+      .from(agentConfigs)
+      .where(eq(agentConfigs.type, type))
+      .orderBy(desc(agentConfigs.updatedAt))
+      .limit(1);
     return rows[0] ?? null;
+  }
+
+  async function listLatest() {
+    const rows = await db.select().from(agentConfigs).orderBy(desc(agentConfigs.updatedAt));
+    return keepLatestConfigPerType(rows);
   }
 
   async function ensureBuiltinConfig(type: string) {
@@ -73,16 +94,12 @@ export function createAgentsStorage(db: DB) {
     // ── Config CRUD ──
 
     async list() {
-      return db.select().from(agentConfigs).orderBy(desc(agentConfigs.updatedAt));
+      return listLatest();
     },
 
     async listEnabled() {
-      const rows = await db
-        .select()
-        .from(agentConfigs)
-        .where(eq(agentConfigs.enabled, "true"))
-        .orderBy(desc(agentConfigs.updatedAt));
-      return rows;
+      const rows = await listLatest();
+      return rows.filter((row) => row.enabled === "true");
     },
 
     getById,
@@ -90,6 +107,11 @@ export function createAgentsStorage(db: DB) {
     getByType,
 
     async create(input: CreateAgentConfigInput) {
+      const existing = await getByType(input.type);
+      if (existing) {
+        return this.update(existing.id, input);
+      }
+
       const id = newId();
       const timestamp = now();
       await db.insert(agentConfigs).values({

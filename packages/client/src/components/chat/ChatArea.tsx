@@ -35,6 +35,7 @@ import { useCharacters, usePersonas } from "../../hooks/use-characters";
 import { useConnections } from "../../hooks/use-connections";
 import { usePageActivity } from "../../hooks/use-page-activity";
 import { api } from "../../lib/api-client";
+import { parseCharacterDisplayData } from "../../lib/character-display";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useGameStateStore } from "../../stores/game-state.store";
 import { BookOpen, HelpCircle, MessageSquare, Theater } from "lucide-react";
@@ -53,6 +54,7 @@ import { useTTSConfig } from "../../hooks/use-tts";
 import { mirrorSpritePlacements, normalizeSpritePlacements } from "./sprite-placement";
 import type { CharacterMap, MessageSelectionToggle, MessageWithSwipes, PeekPromptData } from "./chat-area.types";
 import { RecentChats } from "./RecentChats";
+import { HomeFaq } from "./HomeFaq";
 import { NewChatConnectionGate } from "./NewChatConnectionGate";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
 
@@ -189,6 +191,12 @@ export function ChatArea() {
         const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
         map.set(char.id, {
           name: parsed.name ?? "Unknown",
+          description: parsed.description ?? "",
+          personality: parsed.personality ?? "",
+          backstory: parsed.extensions?.backstory ?? "",
+          appearance: parsed.extensions?.appearance ?? "",
+          scenario: parsed.scenario ?? "",
+          example: parsed.mes_example ?? "",
           avatarUrl: char.avatarPath ?? null,
           nameColor: parsed.extensions?.nameColor || undefined,
           dialogueColor: parsed.extensions?.dialogueColor || undefined,
@@ -227,6 +235,12 @@ export function ChatArea() {
       id: string;
       isActive: string | boolean;
       name: string;
+      description?: string;
+      personality?: string;
+      scenario?: string;
+      backstory?: string;
+      appearance?: string;
+      altDescriptions?: string;
       avatarPath?: string | null;
       nameColor?: string;
       dialogueColor?: string;
@@ -240,8 +254,26 @@ export function ChatArea() {
       (chatPersonaId ? personas.find((p) => p.id === chatPersonaId) : null) ??
       (!isGame ? personas.find((p) => p.isActive === "true" || p.isActive === true) : null);
     if (!persona) return undefined;
+    let description = persona.description ?? "";
+    if (persona.altDescriptions) {
+      try {
+        const altDescriptions = JSON.parse(persona.altDescriptions) as Array<{ active?: boolean; content?: string }>;
+        for (const altDescription of altDescriptions) {
+          if (altDescription?.active && typeof altDescription.content === "string" && altDescription.content.trim()) {
+            description = [description, altDescription.content.trim()].filter(Boolean).join("\n");
+          }
+        }
+      } catch {
+        /* ignore malformed JSON */
+      }
+    }
     return {
       name: persona.name,
+      description,
+      personality: persona.personality || undefined,
+      scenario: persona.scenario || undefined,
+      backstory: persona.backstory || undefined,
+      appearance: persona.appearance || undefined,
       avatarUrl: persona.avatarPath || undefined,
       nameColor: persona.nameColor || undefined,
       dialogueColor: persona.dialogueColor || undefined,
@@ -943,6 +975,8 @@ export function ChatArea() {
             {/* Recent Chats */}
             <RecentChats />
 
+            <HomeFaq />
+
             <div
               className={cn(
                 "w-48",
@@ -1012,7 +1046,8 @@ export function ChatArea() {
 
               {/* Special thanks */}
               <p className="mt-1 max-w-xs text-center text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]/40">
-                Special thanks to MuniMuni, Guybrush01, Joshellis625, LukaTheHero, Coxde, JorgeLTE, Seele The Seal King,
+                Special thanks to Cha1latte, Javedz678, Teuku, Shadota, Romu, Mm14141, MagicGoddess, John, Pwildani,
+                Romu, Felor, MuniMuni, Guybrush01, Joshellis625, LukaTheHero, Coxde, JorgeLTE, Seele The Seal King,
                 Loungemeister, Kale, Tabris, GREGOR OVECH, Coins, Tacoman, Jorge, Promansis, Kitsumiro, Sheep, Pod042,
                 Prolix, PlutoMayhem, Mezzeh, Kuc0, Exalted, Yang Best Girl, MidnightSleeper, Geechan, TheLonelyDevil,
                 Artus, and you!
@@ -1086,23 +1121,27 @@ export function ChatArea() {
   // ═══════════════════════════════════════════════
   if (chatMode === "game") {
     const gameCharacters = allCharacters
-      ? (allCharacters as Array<{ id: string; data: string; avatarPath: string | null }>).map((c) => {
-          try {
-            const parsed = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-            return {
-              id: c.id,
-              name: parsed.name ?? "Unknown",
-              avatarUrl: c.avatarPath ?? undefined,
-              description: parsed.description ?? "",
-              personality: parsed.personality ?? "",
-              backstory: parsed.extensions?.backstory ?? "",
-              appearance: parsed.extensions?.appearance ?? "",
-              tags: parsed.tags ?? [],
-            };
-          } catch {
-            return { id: c.id, name: "Unknown" };
-          }
-        })
+      ? (allCharacters as Array<{ id: string; data: string; comment?: string | null; avatarPath: string | null }>).map(
+          (c) => {
+            try {
+              const parsed = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
+              const display = parseCharacterDisplayData(c);
+              return {
+                id: c.id,
+                name: display.name,
+                comment: display.comment,
+                avatarUrl: c.avatarPath ?? undefined,
+                description: parsed.description ?? "",
+                personality: parsed.personality ?? "",
+                backstory: parsed.extensions?.backstory ?? "",
+                appearance: parsed.extensions?.appearance ?? "",
+                tags: parsed.tags ?? [],
+              };
+            } catch {
+              return { id: c.id, name: "Unknown" };
+            }
+          },
+        )
       : [];
 
     return (

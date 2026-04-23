@@ -76,9 +76,7 @@ export async function executeAgent(
     const temperature = (config.settings.temperature as number) ?? 0.3;
     const rawMaxTokens = Math.max((config.settings.maxTokens as number) ?? 4096, 16384);
     const maxTokens =
-      provider.maxTokensOverrideValue !== null
-        ? Math.min(rawMaxTokens, provider.maxTokensOverrideValue)
-        : rawMaxTokens;
+      provider.maxTokensOverrideValue !== null ? Math.min(rawMaxTokens, provider.maxTokensOverrideValue) : rawMaxTokens;
     const streamResponses = context.streaming !== false;
 
     // If tools are available, use the tool call loop
@@ -696,7 +694,6 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&apos;");
-
   // Card Evolution Auditor needs the FULL character card (not just description)
   // so it can emit exact-match oldText edits. Gated on agent type because
   // forwarding every field would bloat context for agents that don't need it.

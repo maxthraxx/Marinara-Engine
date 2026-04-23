@@ -46,8 +46,15 @@ export function useCreateCharacter() {
 export function useUpdateCharacter() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...data }: { id: string; data?: Record<string, unknown>; avatarPath?: string }) =>
-      api.patch(`/characters/${id}`, data),
+    mutationFn: ({
+      id,
+      ...data
+    }: {
+      id: string;
+      data?: Record<string, unknown>;
+      avatarPath?: string;
+      comment?: string;
+    }) => api.patch(`/characters/${id}`, data),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: characterKeys.list() });
       qc.invalidateQueries({ queryKey: characterKeys.detail(variables.id) });

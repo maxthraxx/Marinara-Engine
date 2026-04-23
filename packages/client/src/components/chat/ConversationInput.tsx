@@ -10,12 +10,14 @@ import { useUIStore } from "../../stores/ui.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useCreateMessage, useChat, chatKeys } from "../../hooks/use-chats";
+import { characterKeys } from "../../hooks/use-characters";
 import {
   matchSlashCommand,
   getSlashCompletions,
   type SlashCommand,
   type SlashCommandContext,
 } from "../../lib/slash-commands";
+import { resolveInputMacrosForChat } from "../../lib/chat-macros";
 import { cn } from "../../lib/utils";
 import { QuickConnectionSwitcher } from "./QuickConnectionSwitcher";
 import { QuickPersonaSwitcher } from "./QuickPersonaSwitcher";
@@ -282,6 +284,9 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
           toast.error("Failed to translate message — sending original");
         }
       }
+      const cachedCharacters = qc.getQueryData<Array<{ id: string; data: unknown }>>(characterKeys.list());
+      const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(characterKeys.personas);
+      message = resolveInputMacrosForChat(message, activeChatData, cachedCharacters, cachedPersonas);
       if (textareaRef.current) {
         textareaRef.current.value = "";
         textareaRef.current.style.height = "auto";
@@ -338,6 +343,10 @@ export function ConversationInput({ characterNames = [] }: ConversationInputProp
         toast.error("Failed to translate message — sending original");
       }
     }
+
+    const cachedCharacters = qc.getQueryData<Array<{ id: string; data: unknown }>>(characterKeys.list());
+    const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(characterKeys.personas);
+    message = resolveInputMacrosForChat(message, activeChat, cachedCharacters, cachedPersonas);
 
     if (textareaRef.current) {
       textareaRef.current.value = "";

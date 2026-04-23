@@ -75,7 +75,7 @@ This applies to both manual clones and installs created by the Windows installer
 
 ### In-App Update Check
 
-Go to **Settings → Advanced → Updates** and click **Check for Updates**. If a new version is available, click **Apply Update** to pull, rebuild, and restart the server automatically.
+Go to **Settings → Advanced → Updates** and click **Check for Updates**. If a new version is available, click **Apply Update** to pull and rebuild from within the app. When it finishes, relaunch Marinara Engine from the shortcut or `start.bat` to start the updated build.
 
 ### Manual Update
 

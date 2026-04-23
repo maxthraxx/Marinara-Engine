@@ -179,13 +179,23 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     }
   }
 
-  // Build macro context (character names resolved from IDs)
-  const charNames = await resolveCharacterNames(input.db, input.characterIds);
+  // Build macro context (character names and primary card fields resolved from IDs)
+  const characterMacroData = await resolveCharacterMacroData(input.db, input.characterIds);
+  const charNames = characterMacroData.names;
   const macroCtx: MacroContext = {
     user: input.personaName || "User",
     char: charNames[0] || "Character",
     characters: charNames,
+    characterProfiles: characterMacroData.profiles,
     variables: variableValues,
+    characterFields: {
+      ...(characterMacroData.primaryFields ?? {}),
+      ...(input.groupScenarioOverrideText ? { scenario: input.groupScenarioOverrideText } : {}),
+    },
+    personaFields: {
+      description: input.personaDescription,
+      ...(input.personaFields ?? {}),
+    },
   };
 
   // Resolve macros inside variable values themselves (e.g. {{user}} in a choice value)
@@ -348,7 +358,12 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   }
 
   if (markerCtx.lorebookDepthEntries && markerCtx.lorebookDepthEntries.length > 0) {
-    allDepthEntries.push(markerCtx.lorebookDepthEntries);
+    allDepthEntries.push(
+      markerCtx.lorebookDepthEntries.map((entry) => ({
+        ...entry,
+        content: resolveMacros(entry.content, macroCtx),
+      })),
+    );
   }
 
   const combinedDepthEntries = allDepthEntries.flat();
@@ -434,7 +449,10 @@ async function resolveSection(
         id: section.id,
         groupId: section.groupId,
         role,
-        messages: expanded.messages,
+        messages: expanded.messages.map((message) => ({
+          ...message,
+          content: resolveMacros(message.content, ctx.macroCtx),
+        })),
         depth: section.injectionDepth,
         isChatHistory: true,
       };
@@ -532,22 +550,60 @@ function buildGroupMessages(
 //  Helpers
 // ═══════════════════════════════════════════════
 
-async function resolveCharacterNames(db: DB, characterIds: string[]): Promise<string[]> {
-  if (characterIds.length === 0) return [];
+async function resolveCharacterMacroData(
+  db: DB,
+  characterIds: string[],
+): Promise<{
+  names: string[];
+  profiles: NonNullable<MacroContext["characterProfiles"]>;
+  primaryFields?: NonNullable<MacroContext["characterFields"]>;
+}> {
+  if (characterIds.length === 0) return { names: [], profiles: [] };
 
   const { createCharactersStorage } = await import("../storage/characters.storage.js");
   const chars = createCharactersStorage(db);
   const names: string[] = [];
+  const profiles: NonNullable<MacroContext["characterProfiles"]> = [];
+  let primaryFields: NonNullable<MacroContext["characterFields"]> | undefined;
 
   for (const id of characterIds) {
     const row = await chars.getById(id);
     if (row) {
-      const data = JSON.parse(row.data) as { name: string };
-      names.push(data.name);
+      const data = JSON.parse(row.data) as {
+        name?: string;
+        description?: string;
+        personality?: string;
+        scenario?: string;
+        mes_example?: string;
+        extensions?: {
+          backstory?: string;
+          appearance?: string;
+        };
+      };
+      if (data.name) names.push(data.name);
+      profiles.push({
+        name: data.name ?? "Character",
+        description: data.description ?? "",
+        personality: data.personality ?? "",
+        backstory: data.extensions?.backstory ?? "",
+        appearance: data.extensions?.appearance ?? "",
+        scenario: data.scenario ?? "",
+        example: data.mes_example ?? "",
+      });
+      if (!primaryFields) {
+        primaryFields = {
+          description: data.description ?? "",
+          personality: data.personality ?? "",
+          backstory: data.extensions?.backstory ?? "",
+          appearance: data.extensions?.appearance ?? "",
+          scenario: data.scenario ?? "",
+          example: data.mes_example ?? "",
+        };
+      }
     }
   }
 
-  return names;
+  return { names, profiles, primaryFields };
 }
 
 /**

@@ -4,6 +4,12 @@ export type CharacterMap = Map<
   string,
   {
     name: string;
+    description?: string;
+    personality?: string;
+    backstory?: string;
+    appearance?: string;
+    scenario?: string;
+    example?: string;
     avatarUrl: string | null;
     nameColor?: string;
     dialogueColor?: string;
@@ -16,6 +22,11 @@ export type CharacterMap = Map<
 
 export type PersonaInfo = {
   name: string;
+  description?: string;
+  personality?: string;
+  backstory?: string;
+  appearance?: string;
+  scenario?: string;
   avatarUrl?: string;
   nameColor?: string;
   dialogueColor?: string;

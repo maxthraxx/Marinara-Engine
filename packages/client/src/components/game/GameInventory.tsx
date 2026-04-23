@@ -2,7 +2,7 @@
 // Game: Inventory Panel
 // ──────────────────────────────────────────────
 import { useState, useCallback, useEffect } from "react";
-import { X, Package, Wand2 } from "lucide-react";
+import { Check, Package, Plus, Trash2, Wand2, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 export interface InventoryItem {
@@ -15,14 +15,32 @@ interface GameInventoryProps {
   items: InventoryItem[];
   open: boolean;
   onClose: () => void;
+  /** Called when the user wants to add a new item */
+  onAddItem?: () => Promise<string | null> | string | null;
   /** Called when the user wants to use an item during input phase */
   onUseItem?: (itemName: string) => void;
+  /** Called when the user wants to rename an item */
+  onRenameItem?: (currentName: string, nextName: string) => Promise<string | null> | string | null;
+  /** Called when the user wants to manually remove one unit of an item */
+  onRemoveItem?: (itemName: string) => void;
   /** Whether the player can interact (input phase) */
   canInteract?: boolean;
 }
 
-export function GameInventory({ items, open, onClose, onUseItem, canInteract }: GameInventoryProps) {
+export function GameInventory({
+  items,
+  open,
+  onClose,
+  onAddItem,
+  onUseItem,
+  onRenameItem,
+  onRemoveItem,
+  canInteract,
+}: GameInventoryProps) {
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renamePending, setRenamePending] = useState(false);
+  const [addPending, setAddPending] = useState(false);
 
   const handleItemClick = useCallback(
     (item: InventoryItem) => {
@@ -51,9 +69,51 @@ export function GameInventory({ items, open, onClose, onUseItem, canInteract }: 
     }
   }, [items, selectedItem]);
 
-  if (!open) return null;
+  const selectedInventoryItem = selectedItem ? (items.find((item) => item.name === selectedItem) ?? null) : null;
+
+  useEffect(() => {
+    setRenameDraft(selectedInventoryItem?.name ?? "");
+  }, [selectedInventoryItem?.name]);
+
+  const handleRename = useCallback(
+    async (itemName: string) => {
+      if (!onRenameItem) return;
+
+      const nextName = renameDraft.trim().replace(/\s+/g, " ");
+      if (!nextName || nextName === itemName.trim()) return;
+
+      setRenamePending(true);
+      try {
+        const resolvedName = await onRenameItem(itemName, nextName);
+        if (resolvedName) {
+          setSelectedItem(resolvedName);
+        }
+      } finally {
+        setRenamePending(false);
+      }
+    },
+    [onRenameItem, renameDraft],
+  );
 
   const SLOT_COUNT = 20;
+  const inventoryFull = items.length >= SLOT_COUNT;
+
+  const handleAdd = useCallback(async () => {
+    if (!onAddItem || inventoryFull) return;
+
+    setAddPending(true);
+    try {
+      const addedItemName = await onAddItem();
+      if (addedItemName) {
+        setSelectedItem(addedItemName);
+      }
+    } finally {
+      setAddPending(false);
+    }
+  }, [inventoryFull, onAddItem]);
+
+  if (!open) return null;
+
   const slots: Array<InventoryItem | null> = [];
   for (let i = 0; i < SLOT_COUNT; i++) {
     slots.push(items[i] ?? null);
@@ -87,6 +147,8 @@ export function GameInventory({ items, open, onClose, onUseItem, canInteract }: 
                 key={`slot-${i}`}
                 onClick={() => item && handleItemClick(item)}
                 disabled={!item}
+                title={item ? (item.quantity > 1 ? `${item.name} ×${item.quantity}` : item.name) : undefined}
+                aria-label={item ? (item.quantity > 1 ? `${item.name} x${item.quantity}` : item.name) : undefined}
                 className={cn(
                   "group relative flex aspect-square flex-col items-center justify-center rounded border transition-all",
                   item
@@ -118,21 +180,58 @@ export function GameInventory({ items, open, onClose, onUseItem, canInteract }: 
           </div>
         </div>
 
-        {/* Action bar — when an item is selected */}
-        {selectedItem && (
+        {/* Action bar */}
+        {(selectedItem || onAddItem) && (
           <div className="border-t border-white/8 bg-white/[0.02] px-4 py-2.5">
-            <div className="mb-2 text-[0.7rem] font-medium text-white/60">
-              {items.find((i) => i.name === selectedItem)?.description || selectedItem}
-            </div>
+            {selectedItem ? (
+              <div className="mb-2 text-[0.7rem] font-medium text-white/60">
+                {selectedInventoryItem?.description || selectedItem}
+              </div>
+            ) : (
+              <div className="mb-2 text-[0.7rem] font-medium text-white/45">Add a new item, then rename it.</div>
+            )}
+            {onRenameItem && selectedInventoryItem && (
+              <div className="mb-2.5 flex gap-1.5">
+                <input
+                  value={renameDraft}
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setRenameDraft(selectedInventoryItem.name);
+                    }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleRename(selectedInventoryItem.name);
+                    }
+                  }}
+                  disabled={renamePending}
+                  className="min-w-0 flex-1 rounded border border-white/10 bg-black/40 px-2 py-1.5 text-[0.7rem] text-white/85 outline-none transition-colors focus:border-amber-400/40"
+                  placeholder="Item name"
+                />
+                <button
+                  onClick={() => void handleRename(selectedInventoryItem.name)}
+                  disabled={
+                    renamePending || !renameDraft.trim() || renameDraft.trim() === selectedInventoryItem.name.trim()
+                  }
+                  className="flex shrink-0 items-center justify-center gap-1 rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1.5 text-[0.7rem] font-semibold text-amber-300 transition-colors hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Check size={12} />
+                  Save
+                </button>
+              </div>
+            )}
             <div className="flex gap-1.5">
-              <button
-                onClick={() => setSelectedItem(null)}
-                className="flex flex-1 items-center justify-center gap-1 rounded border border-white/8 bg-white/[0.03] py-1.5 text-[0.7rem] text-white/60 transition-colors hover:bg-white/[0.06]"
-              >
-                <X size={12} />
-                Deselect
-              </button>
-              {canInteract && onUseItem && (
+              {onAddItem && (
+                <button
+                  onClick={() => void handleAdd()}
+                  disabled={addPending || inventoryFull}
+                  className="flex flex-1 items-center justify-center gap-1 rounded border border-white/8 bg-white/[0.03] py-1.5 text-[0.7rem] text-white/70 transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Plus size={12} />
+                  Add
+                </button>
+              )}
+              {selectedItem && canInteract && onUseItem && (
                 <button
                   onClick={() => handleUse(selectedItem)}
                   className="flex flex-1 items-center justify-center gap-1 rounded border border-amber-500/20 bg-amber-500/10 py-1.5 text-[0.7rem] font-semibold text-amber-400 transition-colors hover:bg-amber-500/15"
@@ -142,6 +241,15 @@ export function GameInventory({ items, open, onClose, onUseItem, canInteract }: 
                 </button>
               )}
             </div>
+            {onRemoveItem && selectedInventoryItem && (
+              <button
+                onClick={() => onRemoveItem(selectedInventoryItem.name)}
+                className="mt-1.5 flex w-full items-center justify-center gap-1 rounded border border-rose-500/20 bg-rose-500/10 py-1.5 text-[0.7rem] font-semibold text-rose-300 transition-colors hover:bg-rose-500/15"
+              >
+                <Trash2 size={12} />
+                {selectedInventoryItem.quantity > 1 ? "Remove 1" : "Delete"}
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -58,6 +58,8 @@ async function importCharacter(data: unknown, db: DB) {
   const storage = createCharactersStorage(db);
   const d = data as { data?: Record<string, unknown>; spec?: string; spec_version?: string; metadata?: unknown };
   const charData = d?.data ? { ...(d.data as Record<string, unknown>) } : undefined;
+  const metadata = d?.metadata && typeof d.metadata === "object" ? (d.metadata as Record<string, unknown>) : null;
+  const comment = typeof metadata?.comment === "string" ? metadata.comment : undefined;
   if (!charData || typeof charData !== "object") {
     return { success: false, type: "marinara_character" as const, error: "Invalid character data" };
   }
@@ -90,7 +92,7 @@ async function importCharacter(data: unknown, db: DB) {
     charData.extensions = extensions;
   }
 
-  const result = await storage.create(charData as any, undefined, readTimestampOverrides(d));
+  const result = await storage.create(charData as any, undefined, readTimestampOverrides(d), comment);
   return {
     success: true,
     type: "marinara_character" as const,

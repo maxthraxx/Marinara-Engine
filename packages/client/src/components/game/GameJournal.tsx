@@ -18,6 +18,9 @@ interface JournalEntry {
   type: "location" | "npc" | "combat" | "quest" | "item" | "event" | "note";
   title: string;
   content: string;
+  readableType?: "note" | "book";
+  sourceMessageId?: string;
+  sourceSegmentIndex?: number;
 }
 
 interface QuestEntry {
@@ -40,6 +43,7 @@ interface GameJournalProps {
   chatId: string;
   npcs?: GameNpc[];
   onClose: () => void;
+  onNpcPortraitClick?: (npcName: string) => void;
 }
 
 type TabId = "all" | "npcs" | "locations" | "inventory" | "library" | "notes";
@@ -63,7 +67,7 @@ const TYPE_ICONS: Record<string, typeof ScrollText> = {
   note: ScrollText,
 };
 
-export function GameJournal({ chatId, npcs, onClose }: GameJournalProps) {
+export function GameJournal({ chatId, npcs, onClose, onNpcPortraitClick }: GameJournalProps) {
   const [journal, setJournal] = useState<Journal | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("all");
   const [playerNotes, setPlayerNotes] = useState("");
@@ -161,7 +165,9 @@ export function GameJournal({ chatId, npcs, onClose }: GameJournalProps) {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
         {activeTab === "all" && <TimelineView entries={journal.entries} />}
-        {activeTab === "npcs" && <NpcsView npcLog={journal.npcLog} npcs={npcs} />}
+        {activeTab === "npcs" && (
+          <NpcsView npcLog={journal.npcLog} npcs={npcs} onNpcPortraitClick={onNpcPortraitClick} />
+        )}
         {activeTab === "locations" && <LocationsView locations={journal.locations} />}
         {activeTab === "inventory" && <InventoryView items={journal.inventoryLog} />}
         {activeTab === "library" && <LibraryView entries={journal.entries.filter((e) => e.type === "note")} />}
@@ -204,7 +210,15 @@ function reputationLabel(rep: number): { text: string; color: string } {
   return { text: "Enemy", color: "text-red-400" };
 }
 
-function NpcsView({ npcLog, npcs }: { npcLog: Array<{ npcName: string; interactions: string[] }>; npcs?: GameNpc[] }) {
+function NpcsView({
+  npcLog,
+  npcs,
+  onNpcPortraitClick,
+}: {
+  npcLog: Array<{ npcName: string; interactions: string[] }>;
+  npcs?: GameNpc[];
+  onNpcPortraitClick?: (npcName: string) => void;
+}) {
   const metNpcs = npcs?.filter((n) => n.met) ?? [];
   const hasContent = metNpcs.length > 0 || npcLog.length > 0;
 
@@ -232,12 +246,37 @@ function NpcsView({ npcLog, npcs }: { npcLog: Array<{ npcName: string; interacti
       {[...npcMap.values()].map((entry, i) => {
         const name = entry.npc?.name ?? entry.displayName;
         const rep = entry.npc ? reputationLabel(entry.npc.reputation) : null;
+        const canUploadPortrait = !!entry.npc && !!onNpcPortraitClick;
         return (
           <div key={i} className="rounded-lg border border-white/5 bg-white/3 px-3 py-2">
             <div className="flex items-center gap-2">
-              {entry.npc?.avatarUrl && (
-                <img src={entry.npc.avatarUrl} alt={name} className="h-6 w-6 shrink-0 rounded-full object-cover" />
-              )}
+              {entry.npc &&
+                (canUploadPortrait ? (
+                  <button
+                    type="button"
+                    onClick={() => onNpcPortraitClick?.(entry.npc!.name)}
+                    className="shrink-0 rounded-full transition-transform hover:scale-[1.05] focus:outline-none focus:ring-2 focus:ring-white/20"
+                    title="Upload or replace NPC portrait"
+                  >
+                    {entry.npc.avatarUrl ? (
+                      <img
+                        src={entry.npc.avatarUrl}
+                        alt={name}
+                        className="h-6 w-6 rounded-full object-cover ring-1 ring-white/10 transition-colors hover:ring-white/25"
+                      />
+                    ) : (
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-[0.6rem] font-semibold text-white/60 ring-1 ring-white/10 transition-colors hover:ring-white/25">
+                        {name[0]?.toUpperCase() ?? "?"}
+                      </div>
+                    )}
+                  </button>
+                ) : entry.npc.avatarUrl ? (
+                  <img src={entry.npc.avatarUrl} alt={name} className="h-6 w-6 shrink-0 rounded-full object-cover" />
+                ) : (
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-[0.6rem] font-semibold text-white/60">
+                    {name[0]?.toUpperCase() ?? "?"}
+                  </div>
+                ))}
               <span className="flex-1 text-xs font-medium text-white/80">
                 {entry.npc?.emoji ? `${entry.npc.emoji} ` : ""}
                 {name}
@@ -320,7 +359,7 @@ function LibraryView({ entries }: { entries: JournalEntry[] }) {
   return (
     <div className="flex flex-col gap-2">
       {[...entries].reverse().map((entry, i) => {
-        const isBook = entry.title.toLowerCase() === "book";
+        const isBook = entry.readableType === "book" || entry.title.toLowerCase() === "book";
         const text = entry.content;
         return (
           <div key={i} className="rounded-lg border border-white/5 bg-white/3 px-3 py-2">

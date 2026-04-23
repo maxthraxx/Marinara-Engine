@@ -76,6 +76,43 @@ function debouncedPersistWidgets(chatId: string, widgets: HudWidget[]) {
   }, 1000);
 }
 
+const MAX_LIST_WIDGET_ITEMS = 5;
+
+function normalizeListWidgetItem(value: string): string {
+  return value
+    .trim()
+    .replace(/^["']+|["']+$/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.!?;,:]+$/g, "")
+    .toLowerCase();
+}
+
+function appendListWidgetItem(items: string[], nextItem: string): string[] {
+  const cleaned = nextItem.trim();
+  if (!cleaned) return items;
+
+  const normalizedNewItem = normalizeListWidgetItem(cleaned);
+  const dedupedItems = items.filter((item) => normalizeListWidgetItem(item) !== normalizedNewItem);
+  return [...dedupedItems, cleaned].slice(-MAX_LIST_WIDGET_ITEMS);
+}
+
+function removeListWidgetItem(items: string[], target: string): string[] {
+  const normalizedTarget = normalizeListWidgetItem(target);
+  if (!normalizedTarget) return items;
+
+  const exactMatchIndex = items.findIndex((item) => normalizeListWidgetItem(item) === normalizedTarget);
+  if (exactMatchIndex >= 0) {
+    return items.filter((_, index) => index !== exactMatchIndex);
+  }
+
+  const partialMatches = items
+    .map((item, index) => ({ index, normalized: normalizeListWidgetItem(item) }))
+    .filter(({ normalized }) => normalized.includes(normalizedTarget) || normalizedTarget.includes(normalized));
+
+  if (partialMatches.length !== 1) return items;
+  return items.filter((_, index) => index !== partialMatches[0]!.index);
+}
+
 const INITIAL_STATE = {
   activeGameId: null,
   activeSessionChatId: null,
@@ -160,17 +197,20 @@ export const useGameModeStore = create<GameModeStore>((set) => ({
         }
 
         // Handle list/inventory add/remove
-        if (changes.add) {
-          if (w.type === "list") {
-            newConfig.items = [...(newConfig.items ?? []), changes.add];
-          } else if (w.type === "inventory_grid") {
+        if (w.type === "list") {
+          let nextItems = [...(newConfig.items ?? [])];
+          if (changes.remove) {
+            nextItems = removeListWidgetItem(nextItems, changes.remove);
+          }
+          if (changes.add) {
+            nextItems = appendListWidgetItem(nextItems, changes.add);
+          }
+          newConfig.items = nextItems;
+        } else {
+          if (changes.add && w.type === "inventory_grid") {
             newConfig.contents = [...(newConfig.contents ?? []), { name: changes.add, quantity: 1 }];
           }
-        }
-        if (changes.remove) {
-          if (w.type === "list") {
-            newConfig.items = (newConfig.items ?? []).filter((i) => i !== changes.remove);
-          } else if (w.type === "inventory_grid") {
+          if (changes.remove && w.type === "inventory_grid") {
             newConfig.contents = (newConfig.contents ?? []).filter((c) => c.name !== changes.remove);
           }
         }

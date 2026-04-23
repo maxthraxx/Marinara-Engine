@@ -81,24 +81,81 @@ const TEXT_INPUT_CLASS =
 const NUMBER_INPUT_CLASS =
   "w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)]/60 px-2.5 py-1.5 text-sm text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/40";
 
+function normalizeTextValue(value: unknown) {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function normalizeNumberValue(value: unknown, fallback: number) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : fallback;
+}
+
+function normalizeDraftListSource(value: unknown) {
+  const entries = Array.isArray(value) ? value.map((entry) => normalizeTextValue(entry).trim()).filter(Boolean) : [];
+  return entries.length > 0 ? entries : [""];
+}
+
+function normalizeDraftExtraEntries(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [{ key: "", value: "" }];
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, entryValue]) => ({
+      key: normalizeTextValue(key).trim(),
+      value: normalizeTextValue(entryValue).trim(),
+    }))
+    .filter((entry) => entry.key || entry.value);
+
+  return entries.length > 0 ? entries : [{ key: "", value: "" }];
+}
+
+function normalizeDraftAttributes(value: unknown) {
+  if (!Array.isArray(value)) {
+    return DEFAULT_ATTRIBUTES.map((attr) => ({ ...attr }));
+  }
+
+  const entries = value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const raw = entry as Record<string, unknown>;
+      const name = normalizeTextValue(raw.name).trim();
+      if (!name) return null;
+      return {
+        name,
+        value: normalizeNumberValue(raw.value, 0),
+      };
+    })
+    .filter((entry): entry is { name: string; value: number } => !!entry);
+
+  return entries.length > 0 ? entries : DEFAULT_ATTRIBUTES.map((attr) => ({ ...attr }));
+}
+
 function createDraft(gameCard?: GameCharacterSheetGameCard): GameCardDraft {
+  // Stored sheets can contain AI-generated or legacy values, so coerce them before binding to form inputs.
+  const rawGameCard = gameCard as (Record<string, unknown> & { rpgStats?: Record<string, unknown> }) | undefined;
+  const rawRpgStats =
+    rawGameCard?.rpgStats && typeof rawGameCard.rpgStats === "object" && !Array.isArray(rawGameCard.rpgStats)
+      ? rawGameCard.rpgStats
+      : undefined;
+  const rawHp =
+    rawRpgStats?.hp && typeof rawRpgStats.hp === "object" && !Array.isArray(rawRpgStats.hp)
+      ? (rawRpgStats.hp as Record<string, unknown>)
+      : undefined;
+
   return {
-    shortDescription: gameCard?.shortDescription ?? "",
-    class: gameCard?.class ?? "",
-    abilities: gameCard?.abilities?.length ? [...gameCard.abilities] : [""],
-    strengths: gameCard?.strengths?.length ? [...gameCard.strengths] : [""],
-    weaknesses: gameCard?.weaknesses?.length ? [...gameCard.weaknesses] : [""],
-    extraEntries:
-      gameCard && Object.keys(gameCard.extra ?? {}).length > 0
-        ? Object.entries(gameCard.extra).map(([key, value]) => ({ key, value }))
-        : [{ key: "", value: "" }],
-    rpgStatsEnabled: !!gameCard?.rpgStats,
-    attributes:
-      gameCard?.rpgStats?.attributes && gameCard.rpgStats.attributes.length > 0
-        ? gameCard.rpgStats.attributes.map((attr) => ({ name: attr.name, value: attr.value }))
-        : DEFAULT_ATTRIBUTES.map((attr) => ({ ...attr })),
-    hpValue: gameCard?.rpgStats?.hp.value ?? 100,
-    hpMax: gameCard?.rpgStats?.hp.max ?? 100,
+    shortDescription: normalizeTextValue(rawGameCard?.shortDescription).trim(),
+    class: normalizeTextValue(rawGameCard?.class).trim(),
+    abilities: normalizeDraftListSource(rawGameCard?.abilities),
+    strengths: normalizeDraftListSource(rawGameCard?.strengths),
+    weaknesses: normalizeDraftListSource(rawGameCard?.weaknesses),
+    extraEntries: normalizeDraftExtraEntries(rawGameCard?.extra),
+    rpgStatsEnabled: !!rawRpgStats,
+    attributes: normalizeDraftAttributes(rawRpgStats?.attributes),
+    hpValue: normalizeNumberValue(rawHp?.value, 100),
+    hpMax: Math.max(1, normalizeNumberValue(rawHp?.max, 100)),
   };
 }
 
@@ -201,8 +258,7 @@ export function GameCharacterSheet({ card, onClose, onSave }: GameCharacterSheet
     setDraft(createDraft(card.gameCard));
   }, [card]);
 
-  const gc = card.gameCard;
-  const previewGameCard = isEditing ? normalizeDraft(draft) : gc;
+  const previewGameCard = isEditing ? normalizeDraft(draft) : normalizeDraft(createDraft(card.gameCard));
   const hasRpgStats =
     previewGameCard?.rpgStats &&
     Array.isArray(previewGameCard.rpgStats.attributes) &&

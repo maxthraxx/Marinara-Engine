@@ -106,7 +106,12 @@ import {
   addNpcEntry,
   type Journal,
 } from "../services/game/journal.service.js";
-import { buildGmSystemPrompt, buildGmFormatReminder, type GmPromptContext } from "../services/game/gm-prompts.js";
+import {
+  buildGmSystemPrompt,
+  buildGmFormatReminder,
+  type GmPromptContext,
+  type GameReadablePromptEntry,
+} from "../services/game/gm-prompts.js";
 import { syncGameMapPartyPosition } from "../services/game/map-position.service.js";
 import { applyAllSegmentEdits, stripGmCommandTags } from "../services/game/segment-edits.js";
 import { listPartySprites } from "../services/game/sprite.service.js";
@@ -176,6 +181,72 @@ function minContextLimit(...limits: Array<number | undefined>): number | undefin
     resolved = resolved === undefined ? limit : Math.min(resolved, limit);
   }
   return resolved;
+}
+
+const DEFAULT_MEMORY_RECALL_BUDGET_TOKENS = 1024;
+const MIN_MEMORY_RECALL_BUDGET_TOKENS = 384;
+const MAX_MEMORY_RECALL_BUDGET_TOKENS = 1536;
+const MAX_RECALLED_MEMORY_TOKENS = 384;
+const MIN_RECALLED_MEMORY_TOKENS = 96;
+const MEMORY_RECALL_CONTEXT_SHARE = 0.15;
+const RECALL_TRUNCATION_MARKER = "\n...[recalled memory truncated]...\n";
+
+function estimateTextTokens(content: string): number {
+  const trimmed = content.trim();
+  if (!trimmed) return 0;
+  return Math.max(1, Math.ceil(trimmed.length / 4));
+}
+
+function truncateRecalledMemory(content: string, tokenBudget: number): string {
+  const maxChars = Math.max(32, tokenBudget * 4);
+  if (content.length <= maxChars) return content;
+
+  const availableChars = maxChars - RECALL_TRUNCATION_MARKER.length;
+  if (availableChars <= 0) {
+    return content.slice(0, maxChars);
+  }
+
+  const headChars = Math.max(16, Math.ceil(availableChars * 0.7));
+  const tailChars = Math.max(16, availableChars - headChars);
+  return `${content.slice(0, headChars).trimEnd()}${RECALL_TRUNCATION_MARKER}${content.slice(-tailChars).trimStart()}`;
+}
+
+function packRecalledMemories(
+  recalled: Array<{ content: string }>,
+  maxContext?: number,
+): { lines: string[]; estimatedTokens: number; budgetTokens: number; trimmed: boolean } {
+  const targetBudget = maxContext
+    ? Math.floor(maxContext * MEMORY_RECALL_CONTEXT_SHARE)
+    : DEFAULT_MEMORY_RECALL_BUDGET_TOKENS;
+  const budgetTokens = Math.max(
+    MIN_MEMORY_RECALL_BUDGET_TOKENS,
+    Math.min(MAX_MEMORY_RECALL_BUDGET_TOKENS, targetBudget),
+  );
+
+  const lines: string[] = [];
+  let estimatedTokens = 0;
+  let trimmed = false;
+
+  for (const memory of recalled) {
+    const remainingTokens = budgetTokens - estimatedTokens;
+    if (remainingTokens < MIN_RECALLED_MEMORY_TOKENS) {
+      trimmed = true;
+      break;
+    }
+
+    const packed = truncateRecalledMemory(memory.content, Math.min(MAX_RECALLED_MEMORY_TOKENS, remainingTokens));
+    const packedTokens = estimateTextTokens(packed);
+    if (packedTokens <= 0 || packedTokens > remainingTokens) {
+      trimmed = true;
+      break;
+    }
+
+    lines.push(packed);
+    estimatedTokens += packedTokens;
+    if (packed !== memory.content) trimmed = true;
+  }
+
+  return { lines, estimatedTokens, budgetTokens, trimmed };
 }
 
 /**
@@ -285,6 +356,11 @@ export async function generateRoutes(app: FastifyInstance) {
             personaSnapshot: {
               personaId: snapshotPersona.id,
               name: snapshotPersona.name,
+              description: snapshotPersona.description ?? "",
+              personality: snapshotPersona.personality ?? "",
+              scenario: snapshotPersona.scenario ?? "",
+              backstory: snapshotPersona.backstory ?? "",
+              appearance: snapshotPersona.appearance ?? "",
               avatarUrl: snapshotPersona.avatarPath || null,
               nameColor: snapshotPersona.nameColor || null,
               dialogueColor: snapshotPersona.dialogueColor || null,
@@ -720,7 +796,13 @@ export async function generateRoutes(app: FastifyInstance) {
         // If schedules exist in chat metadata, derive status dynamically.
         const schedules: Record<string, import("../services/conversation/schedule.service.js").WeekSchedule> =
           (chatMeta.characterSchedules as any) ?? {};
-        const convoCharInfo: { name: string; status: string; activity: string; todaySchedule: string }[] = [];
+        const convoCharInfo: {
+          charId: string;
+          name: string;
+          status: string;
+          activity: string;
+          todaySchedule: string;
+        }[] = [];
         for (const cid of characterIds) {
           const charRow = await chars.getById(cid);
           if (charRow) {
@@ -744,7 +826,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 await chars.update(cid, { extensions } as any).catch(() => {});
               }
             }
-            convoCharInfo.push({ name: d.name ?? "Unknown", status, activity, todaySchedule });
+            convoCharInfo.push({ charId: cid, name: d.name ?? "Unknown", status, activity, todaySchedule });
           }
         }
         const convoCharNames = convoCharInfo.map((c) => c.name);
@@ -772,10 +854,17 @@ export async function generateRoutes(app: FastifyInstance) {
             const rank = { online: 0, idle: 1, dnd: 2, offline: 3 } as Record<string, number>;
             return (rank[c.status] ?? 0) > (rank[worst] ?? 0) ? c.status : worst;
           }, "online");
-          // If user @mentioned a character, use reduced mention delay instead
+          // If user @mentioned a character, use reduced mention delay instead.
+          // Otherwise use the slowest configured delay among the responding characters.
           const delayMs = hasMentions
             ? schedSvc.getMentionDelay(worstStatus as "online" | "idle" | "dnd" | "offline")
-            : schedSvc.getDirectMessageDelay(worstStatus as "online" | "idle" | "dnd" | "offline");
+            : convoCharInfo.reduce((maxDelay, character) => {
+                const schedule = schedules[character.charId];
+                return Math.max(
+                  maxDelay,
+                  schedSvc.getDirectMessageDelay(character.status as "online" | "idle" | "dnd" | "offline", schedule),
+                );
+              }, 0);
           if (delayMs > 0) {
             // Send "delayed" event first — client shows "will respond in a moment" / "when they're back"
             reply.raw.write(
@@ -1709,6 +1798,7 @@ export async function generateRoutes(app: FastifyInstance) {
             const storedSummaries = Array.isArray(gameMeta.gamePreviousSessionSummaries)
               ? (gameMeta.gamePreviousSessionSummaries as Array<{
                   summary?: string;
+                  resumePoint?: string;
                   partyDynamics?: string;
                   keyDiscoveries?: string[];
                 }>)
@@ -1751,6 +1841,9 @@ export async function generateRoutes(app: FastifyInstance) {
             }
             if (latestSummary?.summary) {
               gameLines.push(`<latest_session_summary>${latestSummary.summary}</latest_session_summary>`);
+              if (latestSummary.resumePoint) {
+                gameLines.push(`<resume_point>${latestSummary.resumePoint}</resume_point>`);
+              }
               if (latestSummary.partyDynamics) {
                 gameLines.push(`<party_dynamics>${latestSummary.partyDynamics}</party_dynamics>`);
               }
@@ -1935,7 +2028,7 @@ export async function generateRoutes(app: FastifyInstance) {
       const isLocalGemma = (conn.model ?? "").toLowerCase().includes("gemma");
       if (chatMode === "game" && !isLocalGemma) {
         temperature = 1;
-        maxTokens = 8192;
+        maxTokens = 16384;
         topP = 1;
         topK = 0;
         frequencyPenalty = 0;
@@ -1945,7 +2038,7 @@ export async function generateRoutes(app: FastifyInstance) {
       } else if (chatMode === "game") {
         // Local Gemma: just ensure generous output
         if (typeof chatParams?.maxTokens !== "number") {
-          maxTokens = Math.max(maxTokens, 8192);
+          maxTokens = Math.max(maxTokens, 16384);
         }
       }
 
@@ -2008,7 +2101,14 @@ export async function generateRoutes(app: FastifyInstance) {
       }
 
       // Create provider
-      const provider = createLLMProvider(conn.provider, baseUrl, conn.apiKey, conn.maxContext, conn.openrouterProvider, conn.maxTokensOverride);
+      const provider = createLLMProvider(
+        conn.provider,
+        baseUrl,
+        conn.apiKey,
+        conn.maxContext,
+        conn.openrouterProvider,
+        conn.maxTokensOverride,
+      );
 
       // ────────────────────────────────────────
       // Agent Pipeline: resolve enabled agents
@@ -2387,6 +2487,15 @@ export async function generateRoutes(app: FastifyInstance) {
         const gameNpcs = (chatMeta.gameNpcs as import("@marinara-engine/shared").GameNpc[]) || [];
         const sessionSummaries =
           (chatMeta.gamePreviousSessionSummaries as import("@marinara-engine/shared").SessionSummary[]) || [];
+        const gameJournal = (chatMeta.gameJournal as Journal | null) ?? createJournal();
+        const knownReadables: GameReadablePromptEntry[] = gameJournal.entries
+          .filter((entry) => entry.type === "note")
+          .slice(-8)
+          .map((entry) => ({
+            title: typeof entry.title === "string" ? entry.title : "Note",
+            content: typeof entry.content === "string" ? entry.content : "",
+          }))
+          .filter((entry) => entry.content.trim().length > 0);
         const playerNotes = typeof chatMeta.gamePlayerNotes === "string" ? chatMeta.gamePlayerNotes.trim() : undefined;
 
         // Resolve GM character card if in "character" GM mode
@@ -2580,6 +2689,7 @@ export async function generateRoutes(app: FastifyInstance) {
           map: gameMap,
           npcs: gameNpcs,
           sessionSummaries,
+          readables: knownReadables.length > 0 ? knownReadables : undefined,
           sessionNumber,
           partyNames,
           partyCards,
@@ -2807,18 +2917,34 @@ export async function generateRoutes(app: FastifyInstance) {
             }
             const recalled = await recallMemories(app.db, lastUserMsg.content, recallChatIds);
             if (recalled.length > 0) {
-              const memoryLines = recalled.map((m) => m.content);
-              const memoriesBlock = [
-                `<memories>`,
-                `The following are recalled fragments from earlier in this conversation. Use them to maintain continuity, remember past events, and stay in character — but do not explicitly reference "remembering" unless it's natural.`,
-                ...memoryLines.map((line, i) => `--- Memory ${i + 1} ---\n${line}`),
-                `</memories>`,
-              ].join("\n");
+              const packedRecall = packRecalledMemories(recalled, effectiveMaxContext ?? connectionMaxContext);
+              if (packedRecall.lines.length === 0) {
+                console.log(
+                  "[memory-recall] Skipped recalled memories after budgeting (%d candidates)",
+                  recalled.length,
+                );
+              } else {
+                const memoriesBlock = [
+                  `<memories>`,
+                  `The following are recalled fragments from earlier in this conversation. Use them to maintain continuity, remember past events, and stay in character — but do not explicitly reference "remembering" unless it's natural.`,
+                  ...packedRecall.lines.map((line, i) => `--- Memory ${i + 1} ---\n${line}`),
+                  `</memories>`,
+                ].join("\n");
 
-              // Inject right before the first user/assistant message
-              const firstUserIdx = finalMessages.findIndex((m) => m.role === "user" || m.role === "assistant");
-              const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
-              finalMessages.splice(insertAt, 0, { role: "system" as const, content: memoriesBlock });
+                console.log(
+                  "[memory-recall] Injecting %d/%d recalled memories (~%d/%d tokens)%s",
+                  packedRecall.lines.length,
+                  recalled.length,
+                  packedRecall.estimatedTokens,
+                  packedRecall.budgetTokens,
+                  packedRecall.trimmed ? " after trimming" : "",
+                );
+
+                // Inject right before the first user/assistant message
+                const firstUserIdx = finalMessages.findIndex((m) => m.role === "user" || m.role === "assistant");
+                const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
+                finalMessages.splice(insertAt, 0, { role: "system" as const, content: memoriesBlock });
+              }
             }
           }
         } catch (err) {
@@ -4034,9 +4160,17 @@ export async function generateRoutes(app: FastifyInstance) {
 
       // ── Determine characters to generate for ──
       // Individual group mode: each character responds separately
-      // Merged/single: one generation for the first (or merged) character
+      // Merged/single: one generation for the first (or mentioned) character
       const useIndividualLoop = isGroupChat && groupChatMode === "individual" && !input.regenerateMessageId; // regeneration always targets one message
       const regenGroupChatIndividual = isGroupChat && groupChatMode === "individual" && input.regenerateMessageId;
+      const mentionedConversationCharacters =
+        chatMode === "conversation" && isGroupChat && !input.impersonate
+          ? charInfo.filter((character) =>
+              (input.mentionedCharacterNames ?? []).some(
+                (name: string) => name.toLowerCase() === character.name.toLowerCase(),
+              ),
+            )
+          : [];
 
       // Manual mode with forCharacterId: only generate for the specified character
       // Sequential/smart: all characters respond
@@ -4160,6 +4294,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 frequencyPenalty: frequencyPenalty || undefined,
                 presencePenalty: presencePenalty || undefined,
                 showThoughts,
+                enableThinking,
                 reasoningEffort: resolvedEffort ?? undefined,
                 enableCaching: conn.enableCaching === "true",
                 enableTools,
@@ -4179,7 +4314,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
             console.log("\n[Debug] Prompt sent to model (%d messages):", initialProviderMessages.length);
             console.log(
-              "  Model: %s (%s)  Temp: %s  MaxTokens: %s  MaxContext: %s  TopP: %s  TopK: %s  Thinking: %s  Effort: %s  Verbosity: %s  Stream: %s",
+              "  Model: %s (%s)  Temp: %s  MaxTokens: %s  MaxContext: %s  TopP: %s  TopK: %s  EnableThinking: %s  ShowThoughts: %s  Effort: %s  Verbosity: %s  Stream: %s",
               conn.model,
               conn.provider,
               effTemp,
@@ -4187,6 +4322,7 @@ export async function generateRoutes(app: FastifyInstance) {
               effectiveMaxContext ?? connectionMaxContext ?? "default",
               effTopP,
               topK || "default",
+              enableThinking,
               showThoughts,
               resolvedEffort ?? "none",
               verbosity ?? "default",
@@ -4826,16 +4962,36 @@ export async function generateRoutes(app: FastifyInstance) {
         let targetCharId = characterIds[0] ?? null;
         const sentMessages = [...finalMessages];
 
+        if (mentionedConversationCharacters.length > 0 && !regenGroupChatIndividual) {
+          const mentionedNames = mentionedConversationCharacters.map((character) => character.name);
+
+          if (mentionedConversationCharacters.length === 1) {
+            const mentionedCharacter = mentionedConversationCharacters[0]!;
+            targetCharId = mentionedCharacter.id;
+            sentMessages.push({
+              role: "system",
+              content: `Respond ONLY as ${mentionedCharacter.name}. The user's latest message explicitly @mentions ${mentionedCharacter.name}, so no other character should reply to this turn.`,
+            });
+          } else {
+            sentMessages.push({
+              role: "system",
+              content: `The user's latest message explicitly @mentions ${mentionedNames.join(", ")}. Only those mentioned characters may reply to this turn. Do not include any response lines from any other character.`,
+            });
+          }
+        }
+
         if (regenGroupChatIndividual) {
-          if (regenMsg?.chatId !== input.chatId) return reply.code(400).send({ error: "Regenerated message does not belong to this chat" });
-          if (!regenMsg?.characterId) return reply.code(400).send({ error: "Regenerated message is missing character" })
+          if (regenMsg?.chatId !== input.chatId)
+            return reply.code(400).send({ error: "Regenerated message does not belong to this chat" });
+          if (!regenMsg?.characterId)
+            return reply.code(400).send({ error: "Regenerated message is missing character" });
 
           // Get character of regenerated message and append "Respond ONLY as [name]" instruction
           targetCharId = regenMsg?.characterId ?? null;
           const targetCharName = charInfo.find((c) => c.id === targetCharId)?.name ?? "Character";
           const charInstruction = `Respond ONLY as ${targetCharName}.`;
           sentMessages.push({ role: "system", content: charInstruction });
-       }
+        }
 
         const genResult = await generateForCharacter(targetCharId, sentMessages);
         if (genResult) {
@@ -5776,7 +5932,6 @@ export async function generateRoutes(app: FastifyInstance) {
 
                     // Collect avatar reference images when the setting is enabled
                     const useAvatarRefs = illustratorAgent?.settings?.useAvatarReferences === true;
-                    let illustratorRefImage: string | undefined;
                     let illustratorRefImages: string[] | undefined;
                     if (useAvatarRefs) {
                       // Match character names from the Illustrator's output to character IDs.
@@ -5836,13 +5991,6 @@ export async function generateRoutes(app: FastifyInstance) {
                         }
                         fullPrompt = fullPrompt + "\n\n" + parts.join("\n");
                       }
-                    } else {
-                      // Legacy: only the first character's avatar
-                      const firstCharId = characterIds[0];
-                      if (firstCharId) {
-                        const refCharRow = await chars.getById(firstCharId);
-                        illustratorRefImage = readAvatarBase64(refCharRow?.avatarPath as string | null);
-                      }
                     }
 
                     const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
@@ -5852,7 +6000,6 @@ export async function generateRoutes(app: FastifyInstance) {
                       width: imgWidth,
                       height: imgHeight,
                       comfyWorkflow: imgConnFull.comfyuiWorkflow || undefined,
-                      referenceImage: illustratorRefImage,
                       referenceImages: illustratorRefImages,
                     });
 
@@ -6247,7 +6394,6 @@ export async function generateRoutes(app: FastifyInstance) {
                       width: selfieW || 512,
                       height: selfieH || 768,
                       comfyWorkflow: imgConnFull.comfyuiWorkflow || undefined,
-                      referenceImage: readAvatarBase64(charRow?.avatarPath as string | null),
                     });
 
                     // Save to disk and DB
@@ -6512,19 +6658,25 @@ export async function generateRoutes(app: FastifyInstance) {
                   personality: ccCmd.personality ?? "",
                   first_mes: ccCmd.firstMessage ?? "",
                   scenario: ccCmd.scenario ?? "",
-                  mes_example: "",
-                  creator_notes: "",
-                  system_prompt: "",
-                  post_history_instructions: "",
-                  tags: [] as string[],
-                  creator: "",
-                  character_version: "",
-                  alternate_greetings: [] as string[],
+                  mes_example: ccCmd.mesExample ?? "",
+                  creator_notes: ccCmd.creatorNotes ?? "",
+                  system_prompt: ccCmd.systemPrompt ?? "",
+                  post_history_instructions: ccCmd.postHistoryInstructions ?? "",
+                  tags: ccCmd.tags ?? ([] as string[]),
+                  creator: ccCmd.creator ?? "",
+                  character_version: ccCmd.characterVersion ?? "",
+                  alternate_greetings: ccCmd.alternateGreetings ?? ([] as string[]),
                   extensions: {
-                    talkativeness: 0.5,
-                    fav: false,
-                    world: "",
-                    depth_prompt: { prompt: "", depth: 4, role: "system" },
+                    talkativeness: ccCmd.talkativeness ?? 0.5,
+                    fav: ccCmd.fav ?? false,
+                    world: ccCmd.world ?? "",
+                    depth_prompt: {
+                      prompt: ccCmd.depthPrompt ?? "",
+                      depth: ccCmd.depthPromptDepth ?? 4,
+                      role: ccCmd.depthPromptRole ?? "system",
+                    },
+                    backstory: ccCmd.backstory ?? "",
+                    appearance: ccCmd.appearance ?? "",
                   },
                   character_book: null,
                 };
@@ -6573,8 +6725,30 @@ export async function generateRoutes(app: FastifyInstance) {
                   if (ucCmd.postHistoryInstructions !== undefined) {
                     updates.post_history_instructions = ucCmd.postHistoryInstructions;
                   }
+                  if (ucCmd.creator !== undefined) updates.creator = ucCmd.creator;
+                  if (ucCmd.characterVersion !== undefined) updates.character_version = ucCmd.characterVersion;
+                  if (ucCmd.tags !== undefined) updates.tags = ucCmd.tags;
+                  if (ucCmd.alternateGreetings !== undefined) {
+                    updates.alternate_greetings = ucCmd.alternateGreetings;
+                  }
                   if (ucCmd.backstory !== undefined) extensionUpdates.backstory = ucCmd.backstory;
                   if (ucCmd.appearance !== undefined) extensionUpdates.appearance = ucCmd.appearance;
+                  if (ucCmd.talkativeness !== undefined) extensionUpdates.talkativeness = ucCmd.talkativeness;
+                  if (ucCmd.fav !== undefined) extensionUpdates.fav = ucCmd.fav;
+                  if (ucCmd.world !== undefined) extensionUpdates.world = ucCmd.world;
+                  if (
+                    ucCmd.depthPrompt !== undefined ||
+                    ucCmd.depthPromptDepth !== undefined ||
+                    ucCmd.depthPromptRole !== undefined
+                  ) {
+                    const existingDepthPrompt = existingData.extensions?.depth_prompt ?? {};
+                    extensionUpdates.depth_prompt = {
+                      ...existingDepthPrompt,
+                      ...(ucCmd.depthPrompt !== undefined ? { prompt: ucCmd.depthPrompt } : {}),
+                      ...(ucCmd.depthPromptDepth !== undefined ? { depth: ucCmd.depthPromptDepth } : {}),
+                      ...(ucCmd.depthPromptRole !== undefined ? { role: ucCmd.depthPromptRole } : {}),
+                    };
+                  }
                   if (Object.keys(extensionUpdates).length > 0) {
                     updates.extensions = { ...(existingData.extensions ?? {}), ...extensionUpdates };
                   }

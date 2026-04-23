@@ -687,16 +687,16 @@ function PersonaSpritesTab({
 
       {/* Upload new expression */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <h4 className="text-xs font-semibold flex items-center gap-1.5">
             <Upload size="0.8125rem" className="text-[var(--primary)]" />
             Add Sprite
           </h4>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 md:justify-end">
             <button
               onClick={() => setSpriteGenOpen(true)}
               disabled={spriteGenerationUnavailable}
-              className="flex items-center gap-1.5 rounded-lg bg-purple-500/10 px-3 py-1.5 text-[0.6875rem] font-medium text-purple-400 ring-1 ring-purple-500/20 transition-all hover:bg-purple-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-purple-500/10 px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-purple-400 ring-1 ring-purple-500/20 transition-all hover:bg-purple-500/20 disabled:cursor-not-allowed disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
               title={
                 spriteGenerationUnavailable ? spriteGenerationReason : "Generate sprites using AI image generation"
               }
@@ -707,7 +707,7 @@ function PersonaSpritesTab({
             <button
               onClick={() => folderInputRef.current?.click()}
               disabled={!!folderProgress}
-              className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
+              className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
               title="Select a folder of PNGs"
             >
               <FolderOpen size="0.8125rem" />
@@ -716,7 +716,7 @@ function PersonaSpritesTab({
             <button
               onClick={() => handleExportSprites(visibleSprites)}
               disabled={exporting || visibleSprites.length === 0}
-              className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
+              className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
               title="Download currently visible sprites for external editing"
             >
               <ImageDown size="0.8125rem" />
@@ -725,7 +725,7 @@ function PersonaSpritesTab({
             <button
               onClick={() => handleExportSprites(allSprites)}
               disabled={exporting || allSprites.length === 0}
-              className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
+              className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
               title="Download all sprites across both categories"
             >
               <ImageDown size="0.8125rem" />
@@ -934,9 +934,13 @@ function PersonaColorsTab({
                   ? formData.nameColor.startsWith("linear-gradient")
                     ? {
                         background: formData.nameColor,
+                        backgroundRepeat: "no-repeat",
+                        backgroundSize: "100% 100%",
                         WebkitBackgroundClip: "text",
                         WebkitTextFillColor: "transparent",
                         backgroundClip: "text",
+                        color: "transparent",
+                        display: "inline-block",
                       }
                     : { color: formData.nameColor }
                   : { color: "rgb(212, 212, 212)" }

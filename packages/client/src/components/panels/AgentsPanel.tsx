@@ -502,13 +502,12 @@ function renderAgentCard({
   custom: boolean;
   openAgentDetail: (id: string) => void;
 }) {
+  void enabled;
+
   return (
     <div
       key={id}
-      className={cn(
-        "flex items-start gap-2.5 rounded-lg p-2 transition-colors hover:bg-[var(--sidebar-accent)]",
-        !enabled && "opacity-55",
-      )}
+      className="flex items-start gap-2.5 rounded-lg p-2 transition-colors hover:bg-[var(--sidebar-accent)]"
     >
       <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
       <button className="min-w-0 flex-1 text-left" onClick={() => openAgentDetail(custom ? id : type)}>

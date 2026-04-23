@@ -58,7 +58,7 @@ Simply run `./start-termux.sh` to get the latest version each time.
 
 ### In-App Update Check
 
-You can also go to **Settings → Advanced → Updates** and click **Check for Updates**, then **Apply Update** to trigger a pull and rebuild from within the app.
+You can also go to **Settings → Advanced → Updates** and click **Check for Updates**, then **Apply Update** to trigger a pull and rebuild from within the app. When it finishes, run `./start-termux.sh` again to relaunch the updated build.
 
 ---
 

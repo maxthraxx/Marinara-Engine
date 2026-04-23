@@ -263,6 +263,7 @@ export async function backupRoutes(app: FastifyInstance) {
             charData,
             c.avatarPath ?? undefined,
             normalizeTimestampOverrides({ createdAt: c.createdAt, updatedAt: c.updatedAt }),
+            typeof c.comment === "string" ? c.comment : undefined,
           );
           // Restore avatar from base64 if provided
           if (c.avatarBase64 && result?.avatarPath) {

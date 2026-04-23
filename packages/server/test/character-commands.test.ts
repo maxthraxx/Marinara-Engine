@@ -2,6 +2,37 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseCharacterCommands } from "../src/services/conversation/character-commands.js";
 
+test("parses create_character with expanded card fields", () => {
+  const { commands, cleanContent } = parseCharacterCommands(
+    `[create_character: name="Luna", description="A fortune teller", appearance="Silver hair", backstory="Raised by wolves", mes_example="<START> Welcome", creator_notes="Keep it eerie", system_prompt="Stay cryptic", post_history_instructions="Mention the moon", creator="Mari", character_version="2.1", tags="mystic, seer", alternate_greetings="Hello there || Another seeker?", talkativeness=0.75, fav=true, world="Velvet Bazaar", depth_prompt="Remember the prophecy", depth_prompt_depth=6, depth_prompt_role="assistant"]`,
+  );
+
+  assert.equal(cleanContent, "");
+  assert.deepEqual(commands, [
+    {
+      type: "create_character",
+      name: "Luna",
+      description: "A fortune teller",
+      appearance: "Silver hair",
+      backstory: "Raised by wolves",
+      mesExample: "<START> Welcome",
+      creatorNotes: "Keep it eerie",
+      systemPrompt: "Stay cryptic",
+      postHistoryInstructions: "Mention the moon",
+      creator: "Mari",
+      characterVersion: "2.1",
+      tags: ["mystic", "seer"],
+      alternateGreetings: ["Hello there", "Another seeker?"],
+      talkativeness: 0.75,
+      fav: true,
+      world: "Velvet Bazaar",
+      depthPrompt: "Remember the prophecy",
+      depthPromptDepth: 6,
+      depthPromptRole: "assistant",
+    },
+  ]);
+});
+
 test("parses update_character with the expanded safe text fields", () => {
   const { commands, cleanContent } = parseCharacterCommands(
     `[update_character: name="Luna", backstory="Raised by wolves", appearance="Silver hair", mes_example="<START> hi", creator_notes="Use with roleplay", system_prompt="Stay eerie", post_history_instructions="Keep replies short"]`,
@@ -68,7 +99,7 @@ test("strips update commands while preserving visible assistant text", () => {
 
 test("parses empty-string updates so assistant commands can clear fields", () => {
   const { commands } = parseCharacterCommands(
-    `[update_character: name="Luna", backstory="", appearance="", mes_example="", creator_notes="", system_prompt="", post_history_instructions=""][update_persona: name="Alex Storm", scenario="", backstory=""]`,
+    `[update_character: name="Luna", backstory="", appearance="", mes_example="", creator_notes="", system_prompt="", post_history_instructions="", tags="", alternate_greetings="", world="", depth_prompt=""][update_persona: name="Alex Storm", scenario="", backstory=""]`,
   );
 
   assert.deepEqual(commands, [
@@ -81,6 +112,10 @@ test("parses empty-string updates so assistant commands can clear fields", () =>
       creatorNotes: "",
       systemPrompt: "",
       postHistoryInstructions: "",
+      tags: [],
+      alternateGreetings: [],
+      world: "",
+      depthPrompt: "",
     },
     {
       type: "update_persona",

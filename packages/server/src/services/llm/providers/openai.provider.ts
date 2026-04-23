@@ -134,6 +134,43 @@ export class OpenAIProvider extends BaseLLMProvider {
     return !!reasoningEffort && reasoningEffort !== "none";
   }
 
+  private shouldSendReasoningEffort(model: string, reasoningEffort?: string | null): boolean {
+    return this.isReasoningModel(model) && this.hasActiveReasoningEffort(reasoningEffort);
+  }
+
+  private applyChatCompletionsReasoning(body: Record<string, unknown>, options: ChatOptions): void {
+    if (this.isGLMModel(options.model)) {
+      body.enable_thinking = this.hasActiveReasoningEffort(options.reasoningEffort);
+      return;
+    }
+
+    if (this.shouldSendReasoningEffort(options.model, options.reasoningEffort)) {
+      body.reasoning_effort = options.reasoningEffort;
+    }
+  }
+
+  private applyResponsesReasoning(body: Record<string, unknown>, options: ChatOptions): void {
+    if (this.isGLMModel(options.model)) {
+      body.enable_thinking = this.hasActiveReasoningEffort(options.reasoningEffort);
+      return;
+    }
+
+    if (!this.isReasoningModel(options.model)) {
+      return;
+    }
+
+    const reasoning: Record<string, unknown> = {};
+    if (this.hasActiveReasoningEffort(options.reasoningEffort)) {
+      reasoning.effort = options.reasoningEffort;
+    }
+    if (options.enableThinking) {
+      reasoning.summary = "auto";
+    }
+    if (Object.keys(reasoning).length > 0) {
+      body.reasoning = reasoning;
+    }
+  }
+
   /** Check if a model requires the Responses API instead of Chat Completions */
   private useResponsesAPI(model: string): boolean {
     const m = model.toLowerCase();
@@ -260,20 +297,19 @@ export class OpenAIProvider extends BaseLLMProvider {
       body.temperature = options.temperature ?? 1;
       const topP = OpenAIProvider.normalizeTopP(options.topP);
       if (topP != null) body.top_p = topP;
-      if (this.shouldSendTopK() && typeof options.topK === "number" && Number.isFinite(options.topK) && options.topK > 0) {
+      if (
+        this.shouldSendTopK() &&
+        typeof options.topK === "number" &&
+        Number.isFinite(options.topK) &&
+        options.topK > 0
+      ) {
         body.top_k = Math.round(options.topK);
       }
       if (options.frequencyPenalty) body.frequency_penalty = options.frequencyPenalty;
       if (options.presencePenalty) body.presence_penalty = options.presencePenalty;
     }
 
-    // GLM models use a boolean `enable_thinking` toggle instead of effort-based reasoning config.
-    if (this.isGLMModel(options.model)) {
-      body.enable_thinking = this.hasActiveReasoningEffort(options.reasoningEffort);
-    } else if (options.reasoningEffort) {
-      // Send reasoning_effort if set (outside reasoning check so custom/OAI-compatible providers also get it)
-      body.reasoning_effort = options.reasoningEffort;
-    }
+    this.applyChatCompletionsReasoning(body, options);
 
     // OpenRouter provider routing preference
     const openrouterProvider = this.resolveOpenrouterProvider(options.openrouterProvider);
@@ -441,20 +477,19 @@ export class OpenAIProvider extends BaseLLMProvider {
       body.temperature = options.temperature ?? 1;
       const topP = OpenAIProvider.normalizeTopP(options.topP);
       if (topP != null) body.top_p = topP;
-      if (this.shouldSendTopK() && typeof options.topK === "number" && Number.isFinite(options.topK) && options.topK > 0) {
+      if (
+        this.shouldSendTopK() &&
+        typeof options.topK === "number" &&
+        Number.isFinite(options.topK) &&
+        options.topK > 0
+      ) {
         body.top_k = Math.round(options.topK);
       }
       if (options.frequencyPenalty) body.frequency_penalty = options.frequencyPenalty;
       if (options.presencePenalty) body.presence_penalty = options.presencePenalty;
     }
 
-    // GLM models use a boolean `enable_thinking` toggle instead of effort-based reasoning config.
-    if (this.isGLMModel(options.model)) {
-      body.enable_thinking = this.hasActiveReasoningEffort(options.reasoningEffort);
-    } else if (options.reasoningEffort) {
-      // Send reasoning_effort if set (outside reasoning check so custom/OAI-compatible providers also get it)
-      body.reasoning_effort = options.reasoningEffort;
-    }
+    this.applyChatCompletionsReasoning(body, options);
 
     // OpenRouter provider routing preference
     const openrouterProvider = this.resolveOpenrouterProvider(options.openrouterProvider);
@@ -802,15 +837,7 @@ export class OpenAIProvider extends BaseLLMProvider {
       if (options.presencePenalty) body.presence_penalty = options.presencePenalty;
     }
 
-    if (this.isGLMModel(options.model)) {
-      body.enable_thinking = this.hasActiveReasoningEffort(options.reasoningEffort);
-    } else {
-      // Build the reasoning config: effort + opt-in to reasoning summaries
-      const reasoning: Record<string, unknown> = {};
-      if (options.reasoningEffort) reasoning.effort = options.reasoningEffort;
-      if (options.enableThinking) reasoning.summary = "auto";
-      if (Object.keys(reasoning).length > 0) body.reasoning = reasoning;
-    }
+    this.applyResponsesReasoning(body, options);
 
     // GPT-5+ text verbosity control
     if (options.verbosity && options.model.toLowerCase().startsWith("gpt-5")) {

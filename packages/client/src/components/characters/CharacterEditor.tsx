@@ -94,6 +94,7 @@ type TabId = (typeof TABS)[number]["id"];
 interface ParsedCharacter {
   id: string;
   data: string;
+  comment: string;
   avatarPath: string | null;
   spriteFolderPath: string | null;
 }
@@ -111,6 +112,7 @@ export function CharacterEditor() {
 
   const [activeTab, setActiveTab] = useState<TabId>("metadata");
   const [formData, setFormData] = useState<CharacterData | null>(null);
+  const [characterComment, setCharacterComment] = useState("");
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const setEditorDirty = useUIStore((s) => s.setEditorDirty);
@@ -129,9 +131,11 @@ export function CharacterEditor() {
     try {
       const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
       setFormData(parsed as CharacterData);
+      setCharacterComment(char.comment ?? "");
       setAvatarPreview(char.avatarPath);
     } catch {
       setFormData(null);
+      setCharacterComment("");
     }
   }, [rawCharacter]);
 
@@ -152,7 +156,11 @@ export function CharacterEditor() {
     if (!characterId || !formData) return;
     setSaving(true);
     try {
-      await updateCharacter.mutateAsync({ id: characterId, data: formData as unknown as Record<string, unknown> });
+      await updateCharacter.mutateAsync({
+        id: characterId,
+        data: formData as unknown as Record<string, unknown>,
+        comment: characterComment,
+      });
       setDirty(false);
     } catch (err: any) {
       console.error("[CharacterEditor] Save failed:", err);
@@ -328,129 +336,144 @@ export function CharacterEditor() {
     );
   }
 
+  const headerActionButtonClass =
+    "rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] max-md:rounded-lg max-md:p-1.5";
+
+  const headerActions = (
+    <>
+      <button
+        onClick={() => updateExtension("fav", !formData.extensions.fav)}
+        className={cn(
+          "rounded-xl p-2 transition-all max-md:rounded-lg max-md:p-1.5",
+          formData.extensions.fav ? "text-yellow-400" : "text-[var(--muted-foreground)] hover:text-yellow-400",
+        )}
+        title={formData.extensions.fav ? "Remove from favorites" : "Add to favorites"}
+      >
+        {formData.extensions.fav ? <Star size="1rem" fill="currentColor" /> : <StarOff size="1rem" />}
+      </button>
+
+      <button
+        onClick={() => api.download(`/characters/${characterId}/export`)}
+        className={headerActionButtonClass}
+        title="Export character"
+      >
+        <svg width="1rem" height="1rem" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path
+            d="M10 13V3m0 0l-4 4m4-4l4 4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <rect x="3" y="15" width="14" height="2" rx="1" fill="currentColor" />
+        </svg>
+      </button>
+
+      <button
+        onClick={handleImportAsPersona}
+        disabled={createPersona.isPending || uploadPersonaAvatar.isPending}
+        className="rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-emerald-500/10 hover:text-emerald-400 disabled:cursor-not-allowed disabled:opacity-50 max-md:rounded-lg max-md:p-1.5"
+        title="Import character as persona"
+      >
+        {createPersona.isPending || uploadPersonaAvatar.isPending ? (
+          <Loader2 size="1rem" className="animate-spin" />
+        ) : (
+          <UserPlus size="1rem" />
+        )}
+      </button>
+
+      <button
+        onClick={() => api.download(`/characters/${characterId}/export-png`, "character.png")}
+        className={headerActionButtonClass}
+        title="Export as PNG card"
+      >
+        <ImageDown size="1rem" />
+      </button>
+
+      <button
+        onClick={() => {
+          if (!characterId) return;
+          duplicateCharacter.mutate(characterId, {
+            onSuccess: () => {
+              toast.success("Character duplicated");
+            },
+          });
+        }}
+        className="rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-sky-400/10 hover:text-sky-400 max-md:rounded-lg max-md:p-1.5"
+        title="Duplicate character"
+      >
+        <Copy size="1rem" />
+      </button>
+
+      <button
+        onClick={handleDelete}
+        className="rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)] max-md:rounded-lg max-md:p-1.5"
+        title="Delete character"
+      >
+        <Trash2 size="1rem" />
+      </button>
+    </>
+  );
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-[var(--background)]">
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3 max-md:gap-2 max-md:px-3">
-        <button
-          onClick={handleClose}
-          className="rounded-xl p-2 transition-all hover:bg-[var(--accent)] active:scale-95"
-          title="Back"
-        >
-          <ArrowLeft size="1.125rem" />
-        </button>
+      <div className="flex flex-wrap items-start gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3 max-md:gap-2 max-md:px-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3 max-md:min-w-full">
+          <button
+            onClick={handleClose}
+            className="rounded-xl p-2 transition-all hover:bg-[var(--accent)] active:scale-95 max-md:rounded-lg max-md:p-1.5"
+            title="Back"
+          >
+            <ArrowLeft size="1.125rem" />
+          </button>
 
-        {/* Avatar */}
-        <div
-          className="group relative flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-pink-400 to-rose-500 shadow-md shadow-pink-500/20 max-md:h-10 max-md:w-10"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          {avatarPreview ? (
-            <img
-              src={avatarPreview}
-              alt={formData.name}
-              className="h-full w-full object-cover"
-              style={getAvatarCropStyle(
-                formData.extensions.avatarCrop as { zoom: number; offsetX: number; offsetY: number } | undefined,
-              )}
-            />
-          ) : (
-            <User size="1.375rem" className="text-white" />
-          )}
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-            <Camera size="1rem" className="text-white" />
+          {/* Avatar */}
+          <div
+            className="group relative flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-pink-400 to-rose-500 shadow-md shadow-pink-500/20 max-md:h-10 max-md:w-10"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {avatarPreview ? (
+              <img
+                src={avatarPreview}
+                alt={formData.name}
+                className="h-full w-full object-cover"
+                style={getAvatarCropStyle(
+                  formData.extensions.avatarCrop as { zoom: number; offsetX: number; offsetY: number } | undefined,
+                )}
+              />
+            ) : (
+              <User size="1.375rem" className="text-white" />
+            )}
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+              <Camera size="1rem" className="text-white" />
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
           </div>
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
-        </div>
 
-        <div className="min-w-0 flex-1">
-          <input
-            value={formData.name}
-            onChange={(e) => updateField("name", e.target.value)}
-            className="w-full bg-transparent text-lg font-bold outline-none"
-            placeholder="Character name"
-          />
-          <p className="truncate text-xs text-[var(--muted-foreground)]">
-            {formData.creator ? `by ${formData.creator}` : "No creator"} · v{formData.character_version || "1.0"}
-          </p>
-        </div>
-
-        {/* Favorite toggle */}
-        <button
-          onClick={() => updateExtension("fav", !formData.extensions.fav)}
-          className={cn(
-            "rounded-xl p-2 transition-all",
-            formData.extensions.fav ? "text-yellow-400" : "text-[var(--muted-foreground)] hover:text-yellow-400",
-          )}
-          title={formData.extensions.fav ? "Remove from favorites" : "Add to favorites"}
-        >
-          {formData.extensions.fav ? <Star size="1.125rem" fill="currentColor" /> : <StarOff size="1.125rem" />}
-        </button>
-
-        {/* Export */}
-        <button
-          onClick={() => api.download(`/characters/${characterId}/export`)}
-          className="rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-          title="Export character"
-        >
-          <svg width="1.125rem" height="1.125rem" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path
-              d="M10 13V3m0 0l-4 4m4-4l4 4"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+          <div className="min-w-0 flex-1">
+            <input
+              value={formData.name}
+              onChange={(e) => updateField("name", e.target.value)}
+              className="w-full bg-transparent text-lg font-bold outline-none"
+              placeholder="Character name"
             />
-            <rect x="3" y="15" width="14" height="2" rx="1" fill="currentColor" />
-          </svg>
-        </button>
+            <input
+              value={characterComment}
+              onChange={(e) => {
+                setCharacterComment(e.target.value);
+                setDirty(true);
+              }}
+              className="w-full bg-transparent text-xs text-[var(--muted-foreground)] outline-none"
+              placeholder="Title / comment (e.g. 'Modern AU version')"
+            />
+            <p className="truncate text-[0.625rem] text-[var(--muted-foreground)]">
+              {formData.creator ? `by ${formData.creator}` : "No creator"} · v{formData.character_version || "1.0"}
+            </p>
+          </div>
+        </div>
 
-        {/* Import as persona */}
-        <button
-          onClick={handleImportAsPersona}
-          disabled={createPersona.isPending || uploadPersonaAvatar.isPending}
-          className="rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-emerald-500/10 hover:text-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-          title="Import character as persona"
-        >
-          {createPersona.isPending || uploadPersonaAvatar.isPending ? (
-            <Loader2 size="1.125rem" className="animate-spin" />
-          ) : (
-            <UserPlus size="1.125rem" />
-          )}
-        </button>
-
-        {/* Export as PNG */}
-        <button
-          onClick={() => api.download(`/characters/${characterId}/export-png`, "character.png")}
-          className="rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-          title="Export as PNG card"
-        >
-          <ImageDown size="1.125rem" />
-        </button>
-        {/* Duplicate */}
-        <button
-          onClick={() => {
-            if (!characterId) return;
-            duplicateCharacter.mutate(characterId, {
-              onSuccess: () => {
-                toast.success("Character duplicated");
-              },
-            });
-          }}
-          className="rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-sky-400/10 hover:text-sky-400"
-          title="Duplicate character"
-        >
-          <Copy size="1.125rem" />
-        </button>
-
-        {/* Delete */}
-        <button
-          onClick={handleDelete}
-          className="rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-          title="Delete character"
-        >
-          <Trash2 size="1.125rem" />
-        </button>
+        <div className="hidden items-center gap-1 md:flex">{headerActions}</div>
 
         {/* Save */}
         <button
@@ -466,6 +489,8 @@ export function CharacterEditor() {
           <Save size="0.8125rem" />
           <span className="max-md:hidden">{saving ? "Saving…" : "Save"}</span>
         </button>
+
+        <div className="flex w-full items-center justify-end gap-1 md:hidden">{headerActions}</div>
       </div>
 
       {/* ── Unsaved changes warning ── */}
@@ -1647,16 +1672,16 @@ function SpritesTab({
 
       {/* Upload new expression */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <h4 className="text-xs font-semibold flex items-center gap-1.5">
             <Upload size="0.8125rem" className="text-[var(--primary)]" />
             Add Sprite
           </h4>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 md:justify-end">
             <button
               onClick={() => setSpriteGenOpen(true)}
               disabled={spriteGenerationUnavailable}
-              className="flex items-center gap-1.5 rounded-lg bg-purple-500/10 px-3 py-1.5 text-[0.6875rem] font-medium text-purple-400 ring-1 ring-purple-500/20 transition-all hover:bg-purple-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-purple-500/10 px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-purple-400 ring-1 ring-purple-500/20 transition-all hover:bg-purple-500/20 disabled:cursor-not-allowed disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
               title={
                 spriteGenerationUnavailable ? spriteGenerationReason : "Generate sprites using AI image generation"
               }
@@ -1667,7 +1692,7 @@ function SpritesTab({
             <button
               onClick={() => folderInputRef.current?.click()}
               disabled={!!folderProgress}
-              className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
+              className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
               title="Select a folder of PNGs — each filename becomes the expression name"
             >
               <FolderOpen size="0.8125rem" />
@@ -1676,7 +1701,7 @@ function SpritesTab({
             <button
               onClick={() => handleExportSprites(visibleSprites, "visible")}
               disabled={exporting || visibleSprites.length === 0}
-              className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
+              className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
               title="Download currently visible sprites for external editing"
             >
               <ImageDown size="0.8125rem" />
@@ -1685,7 +1710,7 @@ function SpritesTab({
             <button
               onClick={() => handleExportSprites(allSprites, "all")}
               disabled={exporting || allSprites.length === 0}
-              className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
+              className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
               title="Download all sprites across both categories"
             >
               <ImageDown size="0.8125rem" />
@@ -2070,9 +2095,13 @@ function ColorsTab({
                   ? nameColor.startsWith("linear-gradient")
                     ? {
                         background: nameColor,
+                        backgroundRepeat: "no-repeat",
+                        backgroundSize: "100% 100%",
                         WebkitBackgroundClip: "text",
                         WebkitTextFillColor: "transparent",
                         backgroundClip: "text",
+                        color: "transparent",
+                        display: "inline-block",
                       }
                     : { color: nameColor }
                   : { color: "rgb(192, 132, 252)" }

@@ -30,12 +30,18 @@ export function createCharactersStorage(db: DB) {
       return rows[0] ?? null;
     },
 
-    async create(data: CharacterData, avatarPath?: string, timestampOverrides?: TimestampOverrides | null) {
+    async create(
+      data: CharacterData,
+      avatarPath?: string,
+      timestampOverrides?: TimestampOverrides | null,
+      comment?: string | null,
+    ) {
       const id = newId();
       const timestamp = resolveTimestamps(timestampOverrides);
       await db.insert(characters).values({
         id,
         data: JSON.stringify(data),
+        comment: comment ?? "",
         avatarPath: avatarPath ?? null,
         spriteFolderPath: null,
         createdAt: timestamp.createdAt,
@@ -48,7 +54,7 @@ export function createCharactersStorage(db: DB) {
       id: string,
       data: Partial<CharacterData>,
       avatarPath?: string,
-      options?: { updatedAt?: string | null },
+      options?: { updatedAt?: string | null; comment?: string | null },
     ) {
       const existing = await this.getById(id);
       if (!existing) return null;
@@ -62,6 +68,7 @@ export function createCharactersStorage(db: DB) {
         .update(characters)
         .set({
           data: JSON.stringify(merged),
+          ...(options?.comment !== undefined && { comment: options.comment ?? "" }),
           ...(avatarPath !== undefined && { avatarPath }),
           updatedAt: updatedAt ?? now(),
         })
@@ -88,6 +95,7 @@ export function createCharactersStorage(db: DB) {
       await db.insert(characters).values({
         id: newCharId,
         data: JSON.stringify(sourceData),
+        comment: source.comment ?? "",
         avatarPath: source.avatarPath,
         spriteFolderPath: source.spriteFolderPath,
         createdAt: timestamp,

@@ -8,7 +8,6 @@ import { useAgentStore } from "../../stores/agent.store";
 import { cn } from "../../lib/utils";
 
 const RIGHT_PANEL_BUTTONS = [
-  { panel: "characters" as const, icon: Users, label: "Characters", color: "from-pink-400 to-rose-500" },
   { panel: "lorebooks" as const, icon: BookOpen, label: "Lorebooks", color: "from-amber-400 to-orange-500" },
   { panel: "presets" as const, icon: FileText, label: "Presets", color: "from-purple-400 to-violet-500" },
   { panel: "connections" as const, icon: Link, label: "Connections", color: "from-sky-400 to-blue-500" },
@@ -26,6 +25,7 @@ export function TopBar() {
   const failedAgentCount = useAgentStore((s) => s.failedAgentTypes.length);
 
   const isBotBrowserActive = rightPanelOpen && rightPanel === "bot-browser";
+  const isCharactersPanelActive = rightPanelOpen && rightPanel === "characters";
 
   return (
     <header
@@ -78,6 +78,22 @@ export function TopBar() {
           <Bot size="0.9375rem" />
           {isBotBrowserActive && (
             <span className="absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500" />
+          )}
+        </button>
+
+        <button
+          onClick={() => toggleRightPanel("characters")}
+          className={cn(
+            "relative rounded-lg p-2 transition-all duration-200 max-sm:p-1.5",
+            isCharactersPanelActive
+              ? "bg-[var(--accent)] text-[var(--primary)] shadow-sm"
+              : "text-[var(--muted-foreground)] hover:text-[var(--primary)]",
+          )}
+          title="Characters"
+        >
+          <Users size="0.9375rem" />
+          {isCharactersPanelActive && (
+            <span className="absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full bg-gradient-to-r from-pink-400 to-rose-500" />
           )}
         </button>
 

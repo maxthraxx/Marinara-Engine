@@ -19,7 +19,6 @@ function showError(msg: string) {
 }
 
 const editableCharacterCardFieldSet = new Set<string>(EDITABLE_CHARACTER_CARD_FIELDS);
-
 /**
  * Validate one entry in the Card Evolution Auditor's `updates` array and coerce
  * it to a typed CharacterCardFieldUpdate. LLM output can be messy, so we drop
@@ -52,7 +51,6 @@ function parseCharacterRowData(raw: unknown): Record<string, unknown> | null {
       return null;
     }
   }
-
   if (raw && typeof raw === "object") return raw as Record<string, unknown>;
   return null;
 }
@@ -396,6 +394,11 @@ export function useGenerate() {
             id: string;
             isActive: string | boolean;
             name: string;
+            description?: string;
+            personality?: string;
+            scenario?: string;
+            backstory?: string;
+            appearance?: string;
             avatarPath?: string | null;
             nameColor?: string;
             dialogueColor?: string;
@@ -414,6 +417,11 @@ export function useGenerate() {
           ? {
               personaId: snapshotPersona.id,
               name: snapshotPersona.name,
+              description: snapshotPersona.description || "",
+              personality: snapshotPersona.personality || "",
+              scenario: snapshotPersona.scenario || "",
+              backstory: snapshotPersona.backstory || "",
+              appearance: snapshotPersona.appearance || "",
               avatarUrl: snapshotPersona.avatarPath || null,
               nameColor: snapshotPersona.nameColor || null,
               dialogueColor: snapshotPersona.dialogueColor || null,

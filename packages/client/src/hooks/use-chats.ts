@@ -175,8 +175,19 @@ export function useUpdateChatMetadata() {
   return useMutation({
     mutationFn: ({ id, ...metadata }: { id: string; [key: string]: unknown }) =>
       api.patch<Chat>(`/chats/${id}/metadata`, metadata),
-    onSuccess: (_data, vars) => {
+    onSuccess: (updatedChat, vars) => {
+      qc.setQueryData(chatKeys.detail(vars.id), updatedChat);
+      qc.setQueryData<Chat[]>(chatKeys.list(), (existing) =>
+        existing?.map((chat) => (chat.id === vars.id ? updatedChat : chat)),
+      );
+
+      const chatStore = useChatStore.getState();
+      if (chatStore.activeChatId === vars.id) {
+        chatStore.setActiveChat(updatedChat);
+      }
+
       qc.invalidateQueries({ queryKey: chatKeys.detail(vars.id) });
+      qc.invalidateQueries({ queryKey: chatKeys.list() });
     },
   });
 }

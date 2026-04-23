@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Reusable help tooltip — hover ? icon to see explanation
 // ──────────────────────────────────────────────
-import { useState, useRef, useLayoutEffect } from "react";
+import { useState, useRef, useLayoutEffect, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { HelpCircle } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -56,17 +56,48 @@ export function HelpTooltip({ text, size = "0.75rem", side = "top", className }:
     setPos({ top, left, ready: true });
   }, [show, side]);
 
+  useEffect(() => {
+    if (!show) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) {
+        setShow(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShow(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [show]);
+
   return (
-    <span
-      ref={wrapRef}
-      className={cn("relative inline-flex cursor-help", className)}
-      onMouseEnter={() => setShow(true)}
-      onMouseLeave={() => setShow(false)}
-    >
-      <HelpCircle
-        size={size}
-        className="text-[var(--muted-foreground)] opacity-50 transition-opacity hover:opacity-100"
-      />
+    <span ref={wrapRef} className={cn("relative inline-flex", className)} onMouseLeave={() => setShow(false)}>
+      <button
+        type="button"
+        aria-label="Show help"
+        className="inline-flex cursor-help items-center rounded-full text-[var(--muted-foreground)] opacity-50 transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)]/40"
+        onMouseEnter={() => setShow(true)}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setShow((current) => !current);
+        }}
+      >
+        <HelpCircle size={size} />
+      </button>
       {show &&
         createPortal(
           <div

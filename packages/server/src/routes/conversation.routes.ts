@@ -70,9 +70,33 @@ export async function conversationRoutes(app: FastifyInstance) {
           ? JSON.parse(chat.characterIds)
           : chat.characterIds;
 
-    const provider = createLLMProvider(conn.provider, baseUrl, conn.apiKey, conn.maxContext, conn.openrouterProvider, conn.maxTokensOverride);
+    const provider = createLLMProvider(
+      conn.provider,
+      baseUrl,
+      conn.apiKey,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+    );
     const model = conn.model ?? "";
     const mondayStr = getMonday().toISOString();
+
+    const preserveTimingSettings = (schedule: WeekSchedule, existing?: WeekSchedule): WeekSchedule => {
+      if (!existing) {
+        return schedule;
+      }
+      const merged: WeekSchedule = {
+        ...schedule,
+        inactivityThresholdMinutes: existing.inactivityThresholdMinutes,
+      };
+      if (typeof existing.idleResponseDelayMinutes === "number") {
+        merged.idleResponseDelayMinutes = existing.idleResponseDelayMinutes;
+      }
+      if (typeof existing.dndResponseDelayMinutes === "number") {
+        merged.dndResponseDelayMinutes = existing.dndResponseDelayMinutes;
+      }
+      return merged;
+    };
 
     const newSchedules: CharacterSchedules = { ...existingSchedules };
     const results: Record<string, { status: string; schedule?: WeekSchedule }> = {};
@@ -109,16 +133,17 @@ export async function conversationRoutes(app: FastifyInstance) {
       if (!forceRefresh) {
         const shared = (await getOtherChatSchedules()).get(charId);
         if (shared) {
-          newSchedules[charId] = shared;
+          const mergedShared = preserveTimingSettings(shared, existing);
+          newSchedules[charId] = mergedShared;
           // Update character's conversationStatus to match
           const charRow = await chars.getById(charId);
           if (charRow) {
             const charData = JSON.parse(charRow.data as string) as CharacterData;
-            const { status } = getCurrentStatus(shared);
+            const { status } = getCurrentStatus(mergedShared);
             const extensions = { ...(charData.extensions ?? {}), conversationStatus: status };
             await chars.update(charId, { extensions } as Partial<CharacterData>);
           }
-          results[charId] = { status: "shared", schedule: shared };
+          results[charId] = { status: "shared", schedule: mergedShared };
           continue;
         }
       }
@@ -148,10 +173,13 @@ export async function conversationRoutes(app: FastifyInstance) {
         );
         console.log(`[schedule] Generated schedule for ${charData.name}, days:`, Object.keys(schedule.days ?? {}));
 
-        const fullSchedule: WeekSchedule = {
-          ...schedule,
-          weekStart: mondayStr,
-        };
+        const fullSchedule = preserveTimingSettings(
+          {
+            ...schedule,
+            weekStart: mondayStr,
+          },
+          existing,
+        );
         newSchedules[charId] = fullSchedule;
 
         // Update character's conversationStatus to match current schedule
@@ -196,7 +224,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           const cSchedules: CharacterSchedules = cMeta.characterSchedules ?? {};
           let changed = false;
           for (const cid of overlap) {
-            cSchedules[cid] = newSchedules[cid]!;
+            cSchedules[cid] = preserveTimingSettings(newSchedules[cid]!, cSchedules[cid]);
             changed = true;
           }
           if (changed) {
@@ -404,7 +432,7 @@ export async function conversationRoutes(app: FastifyInstance) {
     }
 
     const { status, activity } = getCurrentStatus(schedule);
-    const delayMs = getBusyDelay(status);
+    const delayMs = getBusyDelay(status, schedule);
 
     return reply.send({ delayMs, status, activity });
   });

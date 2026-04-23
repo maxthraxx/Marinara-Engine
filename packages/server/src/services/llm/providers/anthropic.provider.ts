@@ -83,12 +83,13 @@ export class AnthropicProvider extends BaseLLMProvider {
     };
 
     // Opus 4.7+: sampling parameters are forbidden (400 error).
-    // Strip temperature, top_k regardless of thinking mode.
+    // Strip temperature, top_k, top_p regardless of thinking mode.
     const modelLower = options.model.toLowerCase();
     const isAdaptiveOnly = /claude-opus-4-(?:[7-9]|\d{2,})/.test(modelLower);
     if (isAdaptiveOnly) {
       delete body.temperature;
       delete body.top_k;
+      delete body.top_p;
     }
 
     // Enable extended thinking for reasoning models

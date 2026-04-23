@@ -72,6 +72,10 @@ export interface PartyArc {
   arc: string;
   /** Their personal goal that drives this arc */
   goal: string;
+  /** Whether the arc has been completed */
+  completed?: boolean;
+  /** Optional short note describing how it resolved or what changed */
+  resolution?: string;
 }
 
 // ── Character Cards (tabletop-style) ──
@@ -118,6 +122,8 @@ export interface SessionSummary {
   sessionNumber: number;
   /** Narrative recap of what happened */
   summary: string;
+  /** Exact in-world situation where the next session should resume */
+  resumePoint: string;
   /** How party member relationships evolved */
   partyDynamics: string;
   /** Current state of the party after the session */
@@ -269,6 +275,8 @@ export interface CombatAttackResult {
   isMiss: boolean;
   remainingHp: number;
   isKo: boolean;
+  /** True when the action restored HP instead of dealing damage. */
+  isHeal?: boolean;
   /** Skill used, if any */
   skillName?: string;
   /** Element used in the attack */

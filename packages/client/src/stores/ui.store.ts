@@ -19,7 +19,7 @@ export type VisualTheme = "default" | "sillytavern";
 export type HudPosition = "top" | "left" | "right";
 export type EchoChamberSide = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 export type UserStatus = "active" | "idle" | "dnd";
-export type RoleplayAvatarStyle = "circles" | "panel";
+export type RoleplayAvatarStyle = "circles" | "rectangles" | "panel";
 export const APP_LANGUAGE_OPTIONS = [{ id: "en", label: "English" }] as const;
 export type AppLanguage = (typeof APP_LANGUAGE_OPTIONS)[number]["id"];
 
@@ -80,6 +80,8 @@ interface UIState {
   regexDetailId: string | null;
   /** When true, the main area shows the browser */
   botBrowserOpen: boolean;
+  /** When true, the main area shows the full-page character library */
+  characterLibraryOpen: boolean;
   /** True when any open detail editor has unsaved changes */
   editorDirty: boolean;
 
@@ -212,6 +214,8 @@ interface UIState {
   closePersonaDetail: () => void;
   openRegexDetail: (id: string) => void;
   closeRegexDetail: () => void;
+  openCharacterLibrary: () => void;
+  closeCharacterLibrary: () => void;
   openBotBrowser: () => void;
   closeBotBrowser: () => void;
 
@@ -357,6 +361,7 @@ export const useUIStore = create<UIState>()(
       personaDetailId: null,
       regexDetailId: null,
       botBrowserOpen: false,
+      characterLibraryOpen: false,
       editorDirty: false,
 
       // Settings defaults
@@ -445,6 +450,7 @@ export const useUIStore = create<UIState>()(
       openLorebookDetail: (id) =>
         set({
           lorebookDetailId: id,
+          characterLibraryOpen: false,
           characterDetailId: null,
           presetDetailId: null,
           connectionDetailId: null,
@@ -457,6 +463,7 @@ export const useUIStore = create<UIState>()(
       openPresetDetail: (id) =>
         set({
           presetDetailId: id,
+          characterLibraryOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           connectionDetailId: null,
@@ -469,6 +476,7 @@ export const useUIStore = create<UIState>()(
       openConnectionDetail: (id) =>
         set({
           connectionDetailId: id,
+          characterLibraryOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           presetDetailId: null,
@@ -481,6 +489,7 @@ export const useUIStore = create<UIState>()(
       openAgentDetail: (agentType) =>
         set({
           agentDetailId: agentType,
+          characterLibraryOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           presetDetailId: null,
@@ -495,6 +504,7 @@ export const useUIStore = create<UIState>()(
         set({
           toolDetailId: id,
           agentDetailId: null,
+          characterLibraryOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           presetDetailId: null,
@@ -507,6 +517,7 @@ export const useUIStore = create<UIState>()(
       openPersonaDetail: (id) =>
         set({
           personaDetailId: id,
+          characterLibraryOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           presetDetailId: null,
@@ -521,6 +532,7 @@ export const useUIStore = create<UIState>()(
         set({
           regexDetailId: id,
           personaDetailId: null,
+          characterLibraryOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           presetDetailId: null,
@@ -530,9 +542,26 @@ export const useUIStore = create<UIState>()(
           ...(window.innerWidth < 768 && { rightPanelOpen: false }),
         }),
       closeRegexDetail: () => set({ regexDetailId: null, editorDirty: false }),
+      openCharacterLibrary: () =>
+        set({
+          characterLibraryOpen: true,
+          characterDetailId: null,
+          lorebookDetailId: null,
+          presetDetailId: null,
+          connectionDetailId: null,
+          agentDetailId: null,
+          toolDetailId: null,
+          personaDetailId: null,
+          regexDetailId: null,
+          botBrowserOpen: false,
+          editorDirty: false,
+          rightPanelOpen: false,
+        }),
+      closeCharacterLibrary: () => set({ characterLibraryOpen: false }),
       openBotBrowser: () =>
         set({
           botBrowserOpen: true,
+          characterLibraryOpen: false,
           regexDetailId: null,
           personaDetailId: null,
           characterDetailId: null,
@@ -556,6 +585,7 @@ export const useUIStore = create<UIState>()(
           s.toolDetailId ||
           s.personaDetailId ||
           s.regexDetailId ||
+          s.characterLibraryOpen ||
           s.botBrowserOpen
         );
       },
@@ -569,6 +599,7 @@ export const useUIStore = create<UIState>()(
           toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          characterLibraryOpen: false,
           botBrowserOpen: false,
           editorDirty: false,
         }),

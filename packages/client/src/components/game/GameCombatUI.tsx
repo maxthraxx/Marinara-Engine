@@ -36,7 +36,6 @@ import {
   ChevronRight,
   Trophy,
   SkullIcon,
-  Flame,
 } from "lucide-react";
 
 // ── Types ──
@@ -44,6 +43,7 @@ import {
 type CombatPhase =
   | "intro"
   | "player-turn"
+  | "skill-select"
   | "target-select"
   | "resolving"
   | "animating"
@@ -122,6 +122,37 @@ const ELEMENT_AURA_COLORS: Record<string, string> = {
   imaginary: "#ffd700",
 };
 
+const STATUS_EFFECT_EMOJI_RULES: Array<{ pattern: RegExp; emoji: string }> = [
+  { pattern: /bleed|hemorrhage/i, emoji: "🩸" },
+  { pattern: /poison|venom|toxin/i, emoji: "☠️" },
+  { pattern: /burn|ignite|scorch/i, emoji: "🔥" },
+  { pattern: /bless|holy|radiant/i, emoji: "✨" },
+  { pattern: /regen|recover|mend|heal/i, emoji: "💚" },
+  { pattern: /shield|barrier|ward|guard|fortify/i, emoji: "🛡️" },
+  { pattern: /haste|swift|quick/i, emoji: "💨" },
+  { pattern: /slow|chill|freeze/i, emoji: "🧊" },
+  { pattern: /stun|shock|paraly/i, emoji: "⚡" },
+  { pattern: /curse|weaken|blind|fear/i, emoji: "💀" },
+];
+
+function getStatusEffectEmoji(effect: NonNullable<Combatant["statusEffects"]>[number]): string {
+  for (const rule of STATUS_EFFECT_EMOJI_RULES) {
+    if (rule.pattern.test(effect.name)) return rule.emoji;
+  }
+
+  if (effect.modifier > 0) {
+    if (effect.stat === "attack") return "⚔️";
+    if (effect.stat === "defense") return "🛡️";
+    if (effect.stat === "speed") return "💨";
+    return "💚";
+  }
+
+  if (effect.stat === "attack") return "⚔️";
+  if (effect.stat === "defense") return "🪨";
+  if (effect.stat === "speed") return "⚡";
+  return "💥";
+}
+
 // ── Component ──
 
 export function GameCombatUI({
@@ -138,6 +169,7 @@ export function GameCombatUI({
   const [enemies, setEnemies] = useState<Combatant[]>(initialEnemies);
   const [activePlayerIndex, setActivePlayerIndex] = useState(0);
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
+  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [turnOrder, setTurnOrder] = useState<Array<{ id: string; name: string }>>([]);
   const [damagePopups, setDamagePopups] = useState<DamagePopup[]>([]);
   const [roundResult, setRoundResult] = useState<CombatRoundResult | null>(null);
@@ -197,6 +229,8 @@ export function GameCombatUI({
 
   // ── Active player ──
   const activePlayer = party[activePlayerIndex] ?? null;
+  const selectedSkill = activePlayer?.skills?.find((skill) => skill.id === selectedSkillId) ?? null;
+  const selectingAllyTarget = selectedAction === "skill" && selectedSkill?.type === "heal";
 
   // ── Play SFX helper ──
   const playSfx = useCallback(
@@ -208,9 +242,16 @@ export function GameCombatUI({
 
   // ── Spawn damage popup ──
   const spawnDamage = useCallback(
-    (targetId: string, amount: number, isCritical: boolean, isMiss: boolean, reactionLabel?: string) => {
+    (
+      targetId: string,
+      amount: number,
+      isCritical: boolean,
+      isMiss: boolean,
+      reactionLabel?: string,
+      isHeal = false,
+    ) => {
       const id = `dmg-${++popupCounter.current}`;
-      const popup: DamagePopup = { id, targetId, amount, isCritical, isMiss, reactionLabel };
+      const popup: DamagePopup = { id, targetId, amount, isCritical, isMiss, reactionLabel, isHeal };
       setDamagePopups((prev) => [...prev, popup]);
       setTimeout(() => {
         setDamagePopups((prev) => prev.filter((p) => p.id !== id));
@@ -231,13 +272,29 @@ export function GameCombatUI({
       const updatedParty = party.map((p) => {
         const u = updatedCombatants.find((c) => c.id === p.id);
         return u
-          ? { ...p, hp: u.hp, statusEffects: u.statusEffects, elementAura: u.elementAura, element: u.element }
+          ? {
+              ...p,
+              hp: u.hp,
+              mp: u.mp ?? p.mp,
+              maxMp: u.maxMp ?? p.maxMp,
+              statusEffects: u.statusEffects,
+              elementAura: u.elementAura,
+              element: u.element,
+            }
           : p;
       });
       const updatedEnemies = enemies.map((e) => {
         const u = updatedCombatants.find((c) => c.id === e.id);
         return u
-          ? { ...e, hp: u.hp, statusEffects: u.statusEffects, elementAura: u.elementAura, element: u.element }
+          ? {
+              ...e,
+              hp: u.hp,
+              mp: u.mp ?? e.mp,
+              maxMp: u.maxMp ?? e.maxMp,
+              statusEffects: u.statusEffects,
+              elementAura: u.elementAura,
+              element: u.element,
+            }
           : e;
       });
 
@@ -263,6 +320,7 @@ export function GameCombatUI({
       setRound((r) => r + 1);
       setPhase("player-turn");
       setSelectedAction(null);
+      setSelectedSkillId(null);
       setActivePlayerIndex(0);
     },
     [party, enemies, chatId, playSfx, combatLoot],
@@ -295,9 +353,17 @@ export function GameCombatUI({
             action.isCritical,
             action.isMiss,
             action.reaction.reaction,
+            action.isHeal ?? false,
           );
         } else {
-          spawnDamage(action.defenderId, action.finalDamage, action.isCritical, action.isMiss);
+          spawnDamage(
+            action.defenderId,
+            action.finalDamage,
+            action.isCritical,
+            action.isMiss,
+            undefined,
+            action.isHeal ?? false,
+          );
         }
 
         if (!action.isMiss) updateCombatantHp(action.defenderId, action.remainingHp);
@@ -326,11 +392,14 @@ export function GameCombatUI({
               name: c.name,
               hp: c.hp,
               maxHp: c.maxHp,
+              mp: c.mp,
+              maxMp: c.maxMp,
               attack: c.attack,
               defense: c.defense,
               speed: c.speed,
               level: c.level,
               side: c.side,
+              skills: c.skills,
               statusEffects: c.statusEffects,
               element: c.element,
               elementAura: c.elementAura,
@@ -369,16 +438,19 @@ export function GameCombatUI({
       }
       if (actionId === "attack") {
         setSelectedAction("attack");
+        setSelectedSkillId(null);
         setPhase("target-select");
         return;
       }
       if (actionId === "skill") {
         setSelectedAction("skill");
-        setPhase("target-select");
+        setSelectedSkillId(null);
+        setPhase("skill-select");
         return;
       }
       if (actionId === "item") {
         /* No items yet — defend instead */ setSelectedAction("defend");
+        setSelectedSkillId(null);
         resolveRound({ type: "defend" });
         return;
       }
@@ -389,12 +461,14 @@ export function GameCombatUI({
   // ── Handle target selection ──
   const handleTargetSelect = useCallback(
     (targetId: string) => {
-      playSfx(COMBAT_SFX.attack);
+      playSfx(selectedAction === "skill" ? COMBAT_SFX.magic : COMBAT_SFX.attack);
       const action: CombatPlayerAction =
-        selectedAction === "skill" ? { type: "skill", skillId: "basic-skill", targetId } : { type: "attack", targetId };
+        selectedAction === "skill" && selectedSkillId
+          ? { type: "skill", skillId: selectedSkillId, targetId }
+          : { type: "attack", targetId };
       resolveRound(action);
     },
-    [selectedAction, playSfx, resolveRound],
+    [selectedAction, selectedSkillId, playSfx, resolveRound],
   );
 
   // ── Keyboard navigation for action menu ──
@@ -480,7 +554,7 @@ export function GameCombatUI({
               key={enemy.id}
               combatant={enemy}
               side="enemy"
-              isTargetable={phase === "target-select"}
+              isTargetable={phase === "target-select" && !selectingAllyTarget}
               isActive={turnOrder[0]?.id === enemy.id && phase === "animating"}
               onSelect={() => handleTargetSelect(enemy.id)}
               damagePopups={damagePopups.filter((p) => p.targetId === enemy.id)}
@@ -495,10 +569,13 @@ export function GameCombatUI({
               key={member.id}
               combatant={member}
               side="player"
-              isTargetable={false}
+              isTargetable={phase === "target-select" && selectingAllyTarget}
               isActive={
                 (phase === "player-turn" && i === activePlayerIndex) ||
                 (turnOrder[0]?.id === member.id && phase === "animating")
+              }
+              onSelect={
+                phase === "target-select" && selectingAllyTarget ? () => handleTargetSelect(member.id) : undefined
               }
               damagePopups={damagePopups.filter((p) => p.targetId === member.id)}
             />
@@ -565,15 +642,82 @@ export function GameCombatUI({
           </div>
         )}
 
+        {phase === "skill-select" && activePlayer && (
+          <div className="flex flex-col gap-3 p-3">
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-blue-400" />
+              <div>
+                <div className="text-xs font-semibold text-white">{activePlayer.name}'s Skills</div>
+                <div className="text-[0.65rem] text-white/45">Choose a combat ability, then pick a target.</div>
+              </div>
+            </div>
+
+            {activePlayer.skills && activePlayer.skills.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {activePlayer.skills.map((skill) => {
+                  const insufficientMp = (activePlayer.mp ?? 0) < skill.mpCost;
+                  return (
+                    <button
+                      key={skill.id}
+                      type="button"
+                      disabled={insufficientMp}
+                      onClick={() => {
+                        setSelectedSkillId(skill.id);
+                        setPhase("target-select");
+                      }}
+                      className={cn(
+                        "rounded-lg border px-3 py-2 text-left text-xs transition-all",
+                        insufficientMp
+                          ? "cursor-not-allowed border-white/10 bg-white/5 text-white/30"
+                          : "border-blue-400/20 bg-blue-500/10 text-white/80 hover:border-blue-400/40 hover:bg-blue-500/15",
+                      )}
+                    >
+                      <div className="font-semibold text-white/90">{skill.name}</div>
+                      <div className="mt-0.5 text-[0.65rem] text-white/45">
+                        {skill.type === "heal" ? "Restores HP" : "Special attack"} • {skill.mpCost} MP
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-xs text-white/45">No combat skills are available for this combatant.</div>
+            )}
+
+            <div>
+              <button
+                onClick={() => {
+                  setPhase("player-turn");
+                  setSelectedAction(null);
+                  setSelectedSkillId(null);
+                }}
+                className="rounded border border-white/15 px-2 py-1 text-xs text-white/60 hover:bg-white/10 hover:text-white"
+              >
+                Back
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Target selection hint */}
         {phase === "target-select" && (
           <div className="flex items-center gap-2 px-4 py-3">
             <Zap size={14} className="text-amber-400" />
-            <AnimatedText html="Select a target..." className="text-sm text-amber-200" />
+            <AnimatedText
+              html={
+                selectedAction === "skill" && selectedSkill
+                  ? `Select a ${selectingAllyTarget ? "party member" : "target"} for ${selectedSkill.name}...`
+                  : "Select a target..."
+              }
+              className="text-sm text-amber-200"
+            />
             <button
               onClick={() => {
-                setPhase("player-turn");
-                setSelectedAction(null);
+                setPhase(selectedAction === "skill" ? "skill-select" : "player-turn");
+                if (selectedAction !== "skill") {
+                  setSelectedAction(null);
+                  setSelectedSkillId(null);
+                }
               }}
               className="ml-auto rounded border border-white/15 px-2 py-0.5 text-xs text-white/60 hover:bg-white/10 hover:text-white"
             >
@@ -659,6 +803,26 @@ function CombatantCard({
 
   return (
     <div className="relative flex flex-col items-center">
+      {combatant.statusEffects && combatant.statusEffects.length > 0 && (
+        <div className="pointer-events-none absolute -top-3 left-1/2 z-10 flex -translate-x-1/2 gap-1">
+          {combatant.statusEffects.map((effect, i) => (
+            <div
+              key={`${effect.name}-${effect.turnsLeft}-${i}`}
+              title={`${effect.name} (${effect.turnsLeft} turns)`}
+              className={cn(
+                "relative flex h-6 min-w-6 items-center justify-center rounded-full border px-1 text-[0.72rem] shadow-[0_4px_12px_rgba(0,0,0,0.35)] backdrop-blur-sm",
+                effect.modifier > 0 ? "border-emerald-300/35 bg-emerald-500/20" : "border-rose-300/35 bg-rose-500/20",
+              )}
+            >
+              <span aria-hidden="true">{getStatusEffectEmoji(effect)}</span>
+              <span className="absolute -bottom-1 -right-1 rounded-full bg-black/80 px-1 text-[0.45rem] font-bold leading-none text-white/80">
+                {effect.turnsLeft}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Damage popups */}
       {damagePopups.map((popup) => (
         <DamageNumber key={popup.id} popup={popup} />
@@ -750,32 +914,6 @@ function CombatantCard({
         )}
       </div>
 
-      {/* Status effects */}
-      {combatant.statusEffects && combatant.statusEffects.length > 0 && (
-        <div className="mt-1 flex gap-0.5">
-          {combatant.statusEffects.map((effect, i) => (
-            <div
-              key={`${effect.name}-${effect.turnsLeft}-${i}`}
-              title={`${effect.name} (${effect.turnsLeft} turns)`}
-              className={cn(
-                "flex h-4 w-4 items-center justify-center rounded-full text-[0.5rem]",
-                effect.modifier > 0 ? "bg-emerald-500/20 text-emerald-300" : "bg-red-500/20 text-red-300",
-              )}
-            >
-              {effect.stat === "attack" ? (
-                <Sword size={8} />
-              ) : effect.stat === "defense" ? (
-                <Shield size={8} />
-              ) : effect.stat === "hp" ? (
-                <Flame size={8} />
-              ) : (
-                <Zap size={8} />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Element aura indicator */}
       {combatant.elementAura && (
         <div
@@ -833,11 +971,23 @@ function ActionNarration({ action, allCombatants }: { action: CombatAttackResult
 
   let text: string;
   if (action.isMiss) {
-    text = `${attackerName} attacks ${defenderName} — but misses!`;
+    text = action.skillName
+      ? `${attackerName} uses ${action.skillName} on ${defenderName} — but it misses!`
+      : `${attackerName} attacks ${defenderName} — but misses!`;
+  } else if (action.isHeal) {
+    text = action.skillName
+      ? `${attackerName} uses ${action.skillName} on ${defenderName}, restoring ${action.finalDamage} HP.`
+      : `${attackerName} restores ${action.finalDamage} HP to ${defenderName}.`;
   } else if (action.reaction) {
-    text = `${attackerName} triggers <strong>${action.reaction.reaction}</strong> on ${defenderName} for ${action.finalDamage} damage (${action.reaction.damageMultiplier}x)!`;
+    text = action.skillName
+      ? `${attackerName} uses ${action.skillName} and triggers <strong>${action.reaction.reaction}</strong> on ${defenderName} for ${action.finalDamage} damage (${action.reaction.damageMultiplier}x)!`
+      : `${attackerName} triggers <strong>${action.reaction.reaction}</strong> on ${defenderName} for ${action.finalDamage} damage (${action.reaction.damageMultiplier}x)!`;
   } else if (action.isCritical) {
-    text = `${attackerName} lands a CRITICAL HIT on ${defenderName} for ${action.finalDamage} damage!`;
+    text = action.skillName
+      ? `${attackerName} lands a CRITICAL ${action.skillName} on ${defenderName} for ${action.finalDamage} damage!`
+      : `${attackerName} lands a CRITICAL HIT on ${defenderName} for ${action.finalDamage} damage!`;
+  } else if (action.skillName) {
+    text = `${attackerName} uses ${action.skillName} on ${defenderName} for ${action.finalDamage} damage.`;
   } else {
     text = `${attackerName} strikes ${defenderName} for ${action.finalDamage} damage.`;
   }

@@ -27,6 +27,7 @@ import { newId } from "../utils/id-generator.js";
 
 const CHARACTER_GALLERY_ROOT = join(DATA_DIR, "gallery", "characters");
 const ALLOWED_GALLERY_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
+const CHARACTER_CARD_PNG_KEYWORDS = new Set(["chara", "ccv3"]);
 
 async function ensureCharacterGalleryDir(characterId: string) {
   const dir = join(CHARACTER_GALLERY_ROOT, characterId);
@@ -62,6 +63,7 @@ export async function charactersRoutes(app: FastifyInstance) {
     const input = createCharacterSchema.parse(req.body);
     const body = req.body as Record<string, unknown>;
     const avatarPath = typeof body.avatarPath === "string" ? body.avatarPath : undefined;
+    const comment = typeof body.comment === "string" ? body.comment : undefined;
     return storage.create(
       input.data,
       avatarPath,
@@ -69,6 +71,7 @@ export async function charactersRoutes(app: FastifyInstance) {
         createdAt: body.createdAt,
         updatedAt: body.updatedAt,
       }),
+      comment,
     );
   });
 
@@ -76,7 +79,8 @@ export async function charactersRoutes(app: FastifyInstance) {
     const body = req.body as Record<string, unknown>;
     const update = updateCharacterSchema.parse(req.body);
     const avatarPath = typeof body.avatarPath === "string" ? body.avatarPath : undefined;
-    return storage.update(req.params.id, update.data ?? {}, avatarPath);
+    const comment = typeof body.comment === "string" ? body.comment : undefined;
+    return storage.update(req.params.id, update.data ?? {}, avatarPath, { comment });
   });
 
   app.delete<{ Params: { id: string } }>("/:id", async (req, reply) => {
@@ -202,6 +206,7 @@ export async function charactersRoutes(app: FastifyInstance) {
         metadata: {
           createdAt: char.createdAt,
           updatedAt: char.updatedAt,
+          comment: char.comment ?? "",
         },
       },
     };
@@ -236,6 +241,7 @@ export async function charactersRoutes(app: FastifyInstance) {
           metadata: {
             createdAt: char.createdAt,
             updatedAt: char.updatedAt,
+            comment: char.comment ?? "",
           },
         },
       };
@@ -600,7 +606,7 @@ export async function charactersRoutes(app: FastifyInstance) {
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 /** Create a minimal 1×1 transparent PNG (for characters without avatars). */
-function createMinimalPng(): Buffer {
+export function createMinimalPng(): Buffer {
   // IHDR chunk data: 1×1, 8-bit RGBA
   const ihdrData = Buffer.alloc(13);
   ihdrData.writeUInt32BE(1, 0); // width
@@ -635,8 +641,16 @@ function buildChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typeBytes, data, crc]);
 }
 
+function readPngTextKeyword(chunkType: string, chunkData: Buffer): string | null {
+  if (chunkType !== "tEXt" && chunkType !== "iTXt") return null;
+
+  const nullIdx = chunkData.indexOf(0);
+  if (nullIdx <= 0) return null;
+  return chunkData.subarray(0, nullIdx).toString("latin1");
+}
+
 /** Inject a tEXt chunk into an existing PNG buffer, right before the first IDAT. */
-function injectTextChunk(png: Buffer, keyword: string, text: string): Buffer {
+export function injectTextChunk(png: Buffer, keyword: string, text: string): Buffer {
   // Validate PNG signature
   if (png.subarray(0, 8).compare(PNG_SIGNATURE) !== 0) {
     throw new Error("Invalid PNG signature");
@@ -656,6 +670,13 @@ function injectTextChunk(png: Buffer, keyword: string, text: string): Buffer {
     const chunkType = png.subarray(offset + 4, offset + 8).toString("ascii");
     const totalChunkSize = 4 + 4 + chunkLen + 4; // length + type + data + crc
     const chunkBuf = png.subarray(offset, offset + totalChunkSize);
+    const chunkData = png.subarray(offset + 8, offset + 8 + chunkLen);
+    const embeddedKeyword = readPngTextKeyword(chunkType, chunkData);
+
+    if (embeddedKeyword && CHARACTER_CARD_PNG_KEYWORDS.has(embeddedKeyword)) {
+      offset += totalChunkSize;
+      continue;
+    }
 
     if (chunkType === "IDAT" && !inserted) {
       parts.push(textChunk);

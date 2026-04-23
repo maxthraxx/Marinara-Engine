@@ -121,6 +121,7 @@ class GameAudioManager {
   /** Play background music with crossfade. */
   playMusic(tag: string, manifest?: Record<string, { path: string }> | null): void {
     if (tag === this.currentMusicTag) return;
+    const previousMusicTag = this.currentMusicTag;
     this.currentMusicTag = tag;
 
     // Defer playback if the user hasn't interacted yet (avoids autoplay warnings)
@@ -141,43 +142,76 @@ class GameAudioManager {
     }
 
     const oldAudio = this.musicElement;
+    if (this.nextMusicElement && this.nextMusicElement !== oldAudio) {
+      releaseAudio(this.nextMusicElement);
+      this.nextMusicElement = null;
+    }
+    if (oldAudio) {
+      oldAudio.volume = this.isMuted ? 0 : this.musicVolume;
+      oldAudio.muted = this.isMuted;
+    }
     this.nextMusicElement = newAudio;
 
     newAudio
       .play()
       .then(() => {
+        if (this.nextMusicElement !== newAudio) {
+          releaseAudio(newAudio);
+          return;
+        }
         // Playback started — clear any pending retry
         this.pendingMusic = null;
+        const steps = CROSSFADE_MS / 50;
+        const fadeStep = this.musicVolume / steps;
+        let step = 0;
+
+        const interval = setInterval(() => {
+          if (this.nextMusicElement !== newAudio) {
+            clearInterval(interval);
+            if (this.fadeInterval === interval) this.fadeInterval = null;
+            releaseAudio(newAudio);
+            return;
+          }
+
+          step++;
+          // Fade in new
+          newAudio.volume = Math.min(this.isMuted ? 0 : this.musicVolume, fadeStep * step);
+          // Fade out old
+          if (oldAudio) {
+            oldAudio.volume = Math.max(0, (this.isMuted ? 0 : this.musicVolume) - fadeStep * step);
+          }
+
+          if (step >= steps) {
+            clearInterval(interval);
+            if (this.fadeInterval === interval) this.fadeInterval = null;
+            if (oldAudio) {
+              releaseAudio(oldAudio);
+            }
+            this.musicElement = newAudio;
+            this.nextMusicElement = null;
+          }
+        }, 50);
+
+        this.fadeInterval = interval;
       })
       .catch(() => {
+        if (this.nextMusicElement !== newAudio) {
+          releaseAudio(newAudio);
+          return;
+        }
+
+        this.nextMusicElement = null;
+        releaseAudio(newAudio);
+
         // Autoplay blocked — queue for retry on user gesture
         this.pendingMusic = { tag, manifest };
+        this.currentMusicTag = previousMusicTag;
+        if (oldAudio) {
+          oldAudio.volume = this.isMuted ? 0 : this.musicVolume;
+          oldAudio.muted = this.isMuted;
+        }
         this.ensureGestureListener();
       });
-
-    const steps = CROSSFADE_MS / 50;
-    const fadeStep = this.musicVolume / steps;
-    let step = 0;
-
-    this.fadeInterval = setInterval(() => {
-      step++;
-      // Fade in new
-      newAudio.volume = Math.min(this.isMuted ? 0 : this.musicVolume, fadeStep * step);
-      // Fade out old
-      if (oldAudio) {
-        oldAudio.volume = Math.max(0, (this.isMuted ? 0 : this.musicVolume) - fadeStep * step);
-      }
-
-      if (step >= steps) {
-        if (this.fadeInterval) clearInterval(this.fadeInterval);
-        this.fadeInterval = null;
-        if (oldAudio) {
-          releaseAudio(oldAudio);
-        }
-        this.musicElement = newAudio;
-        this.nextMusicElement = null;
-      }
-    }, 50);
   }
 
   /** Stop music with fade out. */
@@ -229,6 +263,8 @@ class GameAudioManager {
   /** Set looping ambient sound. */
   playAmbient(tag: string, manifest?: Record<string, { path: string }> | null): void {
     if (tag === this.currentAmbientTag) return;
+    const previousAmbientTag = this.currentAmbientTag;
+    const previousAmbient = this.ambientElement;
     this.currentAmbientTag = tag;
 
     // Defer playback if the user hasn't interacted yet (avoids autoplay warnings)
@@ -237,23 +273,39 @@ class GameAudioManager {
       return;
     }
 
-    if (this.ambientElement) {
-      releaseAudio(this.ambientElement);
-    }
-
     const url = this.resolveAssetUrl(tag, manifest);
-    this.ambientElement = new Audio(url);
-    this.ambientElement.loop = true;
-    this.ambientElement.volume = this.isMuted ? 0 : this.ambientVolume;
-    this.ambientElement.muted = this.isMuted;
-    this.ambientElement
+    const nextAmbient = new Audio(url);
+    nextAmbient.loop = true;
+    nextAmbient.volume = this.isMuted ? 0 : this.ambientVolume;
+    nextAmbient.muted = this.isMuted;
+    nextAmbient
       .play()
       .then(() => {
+        if (this.currentAmbientTag !== tag) {
+          releaseAudio(nextAmbient);
+          return;
+        }
+
+        if (previousAmbient && previousAmbient !== nextAmbient) {
+          releaseAudio(previousAmbient);
+        }
+        this.ambientElement = nextAmbient;
         this.pendingAmbient = null;
       })
       .catch((err) => {
+        releaseAudio(nextAmbient);
+        if (this.currentAmbientTag !== tag) {
+          return;
+        }
+
         console.warn("[audio] Ambient playback failed:", tag, err);
         this.pendingAmbient = { tag, manifest };
+        this.currentAmbientTag = previousAmbientTag;
+        this.ambientElement = previousAmbient ?? null;
+        if (previousAmbient) {
+          previousAmbient.volume = this.isMuted ? 0 : this.ambientVolume;
+          previousAmbient.muted = this.isMuted;
+        }
         this.ensureGestureListener();
       });
   }

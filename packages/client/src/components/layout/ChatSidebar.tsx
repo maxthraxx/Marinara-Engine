@@ -16,10 +16,14 @@ import {
   MinusCircle,
   FolderOpen,
   FolderPlus,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   GripVertical,
   CheckSquare,
   Square as SquareIcon,
+  ArrowUpDown,
+  Tag,
 } from "lucide-react";
 import { useChats, useCreateChat, useDeleteChat, useDeleteChatGroup } from "../../hooks/use-chats";
 import { useConnections } from "../../hooks/use-connections";
@@ -37,9 +41,17 @@ import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useUIStore, type UserStatus } from "../../stores/ui.store";
 import { cn } from "../../lib/utils";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import type { ChatFolder, ChatMode } from "@marinara-engine/shared";
+import type { Chat, ChatFolder, ChatMode } from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal";
 import { Reorder, useDragControls } from "framer-motion";
+
+type ChatSortOption = "newest" | "oldest" | "name-asc" | "name-desc";
+
+function getChatTags(chat: Pick<Chat, "metadata">): string[] {
+  return Array.isArray(chat.metadata?.tags)
+    ? chat.metadata.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
+    : [];
+}
 
 const MODE_CONFIG: Record<
   string,
@@ -119,6 +131,9 @@ export function ChatSidebar() {
     return map;
   }, [allCharacters]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [sort, setSort] = useState<ChatSortOption>("newest");
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [tagsExpanded, setTagsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"conversation" | "roleplay" | "game">("conversation");
   const [deleteTarget, setDeleteTarget] = useState<{
     chatId: string;
@@ -152,14 +167,51 @@ export function ChatSidebar() {
   // Exit multi-select when switching tabs
   useEffect(() => {
     exitMultiSelect();
-  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+    setActiveTag(null);
+    setTagsExpanded(false);
+  }, [activeTab, exitMultiSelect]);
 
-  const filtered = chats?.filter(
-    (c) =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) &&
-      c.mode === activeTab &&
-      !(c.mode === "conversation" && c.metadata?.gameId),
+  const modeChats = useMemo(
+    () =>
+      (chats ?? []).filter(
+        (chat) => chat.mode === activeTab && !(chat.mode === "conversation" && chat.metadata?.gameId),
+      ),
+    [chats, activeTab],
   );
+
+  const allTags = useMemo(() => {
+    const tags = new Set<string>();
+    for (const chat of modeChats) {
+      for (const tag of getChatTags(chat)) tags.add(tag);
+    }
+    return [...tags].sort((a, b) => a.localeCompare(b));
+  }, [modeChats]);
+
+  useEffect(() => {
+    if (activeTag && !allTags.includes(activeTag)) {
+      setActiveTag(null);
+    }
+  }, [activeTag, allTags]);
+
+  const filtered = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+
+    return modeChats.filter((chat) => {
+      const tags = getChatTags(chat);
+      if (activeTag && !tags.includes(activeTag)) return false;
+      if (!query) return true;
+
+      const characterNames = chat.characterIds
+        .map((characterId) => charLookup.get(characterId)?.name ?? "")
+        .filter(Boolean);
+
+      return (
+        chat.name.toLowerCase().includes(query) ||
+        tags.some((tag) => tag.toLowerCase().includes(query)) ||
+        characterNames.some((name) => name.toLowerCase().includes(query))
+      );
+    });
+  }, [modeChats, searchQuery, activeTag, charLookup]);
 
   // ── Collapse chats that share a groupId into one entry ──
   const displayChats = useMemo(() => {
@@ -175,11 +227,22 @@ export function ChatSidebar() {
       }
     }
 
-    // Sort by most recently updated first
-    const sorted = [...filtered].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    const sorted = [...filtered].sort((a, b) => {
+      switch (sort) {
+        case "oldest":
+          return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+        case "name-asc":
+          return a.name.localeCompare(b.name);
+        case "name-desc":
+          return b.name.localeCompare(a.name);
+        case "newest":
+        default:
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      }
+    });
 
     const seenGroups = new Set<string>();
-    const result: { chat: (typeof filtered)[0]; branchCount: number }[] = [];
+    const result: { chat: (typeof sorted)[number]; branchCount: number }[] = [];
 
     for (const chat of sorted) {
       if (chat.groupId) {
@@ -192,7 +255,7 @@ export function ChatSidebar() {
     }
 
     return result;
-  }, [chats, filtered]);
+  }, [chats, filtered, sort]);
 
   // ── Folder grouping ──
   const modeFolders = useMemo(() => {
@@ -269,6 +332,8 @@ export function ChatSidebar() {
       // user is actively browsing search results and shouldn't lose them).
       if (!internalNavRef.current) {
         setSearchQuery("");
+        setActiveTag(null);
+        setTagsExpanded(false);
       }
       internalNavRef.current = false;
       s.tabSynced = true;
@@ -716,17 +781,93 @@ export function ChatSidebar() {
         })}
       </div>
 
-      {/* Search */}
-      <div className="px-3 py-2">
-        <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 ring-1 ring-transparent transition-all focus-within:ring-[var(--primary)]/40">
-          <Search size="0.8125rem" className="text-[var(--muted-foreground)]" />
+      {/* Search + filters */}
+      <div className="space-y-1.5 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 ring-1 ring-transparent transition-all focus-within:ring-[var(--primary)]/40">
+          <Search size="0.8125rem" className="shrink-0 text-[var(--muted-foreground)]" />
           <input
             type="text"
             placeholder={`Search ${activeTab === "conversation" ? "conversations" : activeTab === "game" ? "games" : "roleplays"}...`}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="flex-1 bg-transparent text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] outline-none"
+            className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] outline-none"
           />
+        </div>
+
+        <div className="space-y-1.5">
+          <div className="relative">
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as ChatSortOption)}
+              className="w-full appearance-none rounded-lg bg-[var(--secondary)] py-2 pl-2.5 pr-7 text-[0.6875rem] text-[var(--foreground)] outline-none ring-1 ring-transparent transition-all focus:ring-[var(--primary)]/40"
+              title="Sort chats"
+            >
+              <option value="newest">Sort: Newest</option>
+              <option value="oldest">Sort: Oldest</option>
+              <option value="name-asc">Sort: A-Z</option>
+              <option value="name-desc">Sort: Z-A</option>
+            </select>
+            <ArrowUpDown
+              size="0.625rem"
+              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
+            />
+          </div>
+
+          {allTags.length > 0 && (
+            <div className="flex max-w-full flex-wrap items-center gap-1">
+              <button
+                onClick={() => setTagsExpanded((prev) => !prev)}
+                className={cn(
+                  "flex max-w-full items-center gap-1 rounded-lg px-1.5 py-1 text-[0.625rem] transition-colors",
+                  activeTag
+                    ? "bg-[var(--primary)]/15 text-[var(--primary)]"
+                    : "text-[var(--muted-foreground)] hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]",
+                )}
+                title={tagsExpanded ? "Collapse tags" : "Expand tags"}
+              >
+                <Tag size="0.6875rem" className="shrink-0" />
+                <span className="max-w-full truncate">
+                  {activeTag ? `Tag: ${activeTag}` : `Tags (${allTags.length})`}
+                </span>
+                {tagsExpanded ? (
+                  <ChevronUp size="0.625rem" className="shrink-0" />
+                ) : (
+                  <ChevronDown size="0.625rem" className="shrink-0" />
+                )}
+              </button>
+              {activeTag && (
+                <button
+                  onClick={() => setActiveTag(null)}
+                  className="rounded-lg px-2 py-1 text-[0.625rem] text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/10"
+                >
+                  Clear
+                </button>
+              )}
+              {(tagsExpanded ? allTags : allTags.slice(0, 4)).map((tag) => (
+                <button
+                  key={tag}
+                  onClick={() => setActiveTag((prev) => (prev === tag ? null : tag))}
+                  className={cn(
+                    "max-w-full truncate rounded-lg px-2 py-1 text-[0.625rem] font-medium transition-all",
+                    activeTag === tag
+                      ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
+                      : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]",
+                  )}
+                  title={tag}
+                >
+                  {tag}
+                </button>
+              ))}
+              {!tagsExpanded && allTags.length > 4 && (
+                <button
+                  onClick={() => setTagsExpanded(true)}
+                  className="rounded-lg px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]"
+                >
+                  +{allTags.length - 4} more
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -752,7 +893,9 @@ export function ChatSidebar() {
               )}
             </div>
             <p className="text-xs text-[var(--muted-foreground)]">
-              No {activeTab === "conversation" ? "conversations" : activeTab === "game" ? "games" : "roleplays"} yet
+              {searchQuery.trim() || activeTag
+                ? `No ${activeTab === "conversation" ? "conversations" : activeTab === "game" ? "games" : "roleplays"} match the current filters`
+                : `No ${activeTab === "conversation" ? "conversations" : activeTab === "game" ? "games" : "roleplays"} yet`}
             </p>
             <button
               onClick={handleNewChatFromTab}

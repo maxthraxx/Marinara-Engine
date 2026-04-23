@@ -109,6 +109,11 @@ const ROLEPLAY_AVATAR_STYLE_OPTIONS: Array<{ id: RoleplayAvatarStyle; label: str
     desc: "Compact portrait bubbles beside each roleplay message.",
   },
   {
+    id: "rectangles",
+    label: "Small Rectangles",
+    desc: "Compact side portraits with a taller frame for less top-edge cutoff.",
+  },
+  {
     id: "panel",
     label: "Glued Side Panel",
     desc: "A taller portrait strip fused into the message bubble.",
@@ -750,7 +755,7 @@ function AppearanceSettings() {
         <div className="flex items-center gap-1.5">
           <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
           <span className="text-xs font-medium">Roleplay Avatars</span>
-          <HelpTooltip text="Choose how avatars sit next to roleplay messages. Small Circles keeps the current compact layout. Glued Side Panel embeds a larger portrait strip into the message bubble itself." />
+          <HelpTooltip text="Choose how avatars sit next to roleplay messages. Small Circles keeps the current compact layout. Small Rectangles keeps avatars beside the bubble but gives portraits a taller frame. Glued Side Panel embeds a larger portrait strip into the message bubble itself." />
         </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {ROLEPLAY_AVATAR_STYLE_OPTIONS.map((opt) => (
@@ -773,6 +778,16 @@ function AppearanceSettings() {
                       <div className="mt-1.5 ml-4 h-1.5 w-20 rounded-full bg-white/12" />
                     </div>
                   </div>
+                ) : opt.id === "rectangles" ? (
+                  <div className="flex h-14 items-center px-3">
+                    <div className="h-11 w-8 overflow-hidden rounded-xl bg-gradient-to-b from-rose-400/65 via-orange-300/45 to-zinc-600/70 ring-1 ring-white/12">
+                      <div className="h-full w-full bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.2),transparent_58%)]" />
+                    </div>
+                    <div className="ml-2.5 flex-1 rounded-2xl rounded-tl-sm bg-black/25 px-3 py-2">
+                      <div className="h-1.5 w-14 rounded-full bg-white/20" />
+                      <div className="mt-1.5 h-1.5 w-20 rounded-full bg-white/12" />
+                    </div>
+                  </div>
                 ) : (
                   <div className="flex h-14 items-stretch overflow-hidden">
                     <div className="relative w-14 overflow-hidden border-r border-white/8 bg-gradient-to-b from-rose-400/60 via-orange-300/45 to-transparent">
@@ -792,8 +807,8 @@ function AppearanceSettings() {
           ))}
         </div>
         <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-          The larger panel crops portraits from the top on short messages and fades them back into the bubble background
-          on taller ones.
+          Rectangles keep the compact side slot but give portraits a bit more vertical room. The larger panel crops
+          portraits from the top on short messages and fades them back into the bubble background on taller ones.
         </p>
       </div>
 

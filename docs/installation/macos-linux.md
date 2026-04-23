@@ -85,7 +85,7 @@ When you launch Marinara Engine via `./start.sh` from a git checkout, the launch
 
 ### In-App Update Check
 
-Go to **Settings → Advanced → Updates** and click **Check for Updates**. If a new version is available, click **Apply Update** to pull, rebuild, and restart the server automatically.
+Go to **Settings → Advanced → Updates** and click **Check for Updates**. If a new version is available, click **Apply Update** to pull and rebuild from within the app. When it finishes, relaunch Marinara Engine from `./start.sh` to start the updated build.
 
 ### Manual Update
 

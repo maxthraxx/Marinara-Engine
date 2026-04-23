@@ -67,7 +67,7 @@ export interface LorebookEntry {
   useRegex: boolean;
 
   // ── Injection settings ──
-  /** 0 = before character, 1 = after character */
+  /** 0 = before character, 1 = after character, 2 = inject at message depth */
   position: number;
   /** Insertion depth in the message array */
   depth: number;

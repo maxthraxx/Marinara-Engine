@@ -16,8 +16,8 @@
 //
 // Assistant commands (Professor Mari):
 // - [create_persona: name="...", description="...", personality="...", appearance="..."]
-// - [create_character: name="...", description="...", personality="...", first_message="...", scenario="..."]
-// - [update_character: name="...", description="...", personality="...", first_message="...", scenario="...", backstory="...", appearance="...", mes_example="...", creator_notes="...", system_prompt="...", post_history_instructions="..."]
+// - [create_character: name="...", description="...", personality="...", first_message="...", scenario="...", backstory="...", appearance="...", mes_example="...", creator_notes="...", system_prompt="...", post_history_instructions="...", creator="...", character_version="...", tags="tag1, tag2", alternate_greetings="hello || hi", talkativeness=0.5, fav=true, world="...", depth_prompt="...", depth_prompt_depth=4, depth_prompt_role="system"]
+// - [update_character: name="...", description="...", personality="...", first_message="...", scenario="...", backstory="...", appearance="...", mes_example="...", creator_notes="...", system_prompt="...", post_history_instructions="...", creator="...", character_version="...", tags="tag1, tag2", alternate_greetings="hello || hi", talkativeness=0.5, fav=true, world="...", depth_prompt="...", depth_prompt_depth=4, depth_prompt_role="system"]
 // - [update_persona: name="...", description="...", personality="...", appearance="...", scenario="...", backstory="..."]
 // - [create_chat: character="...", mode="conversation|roleplay"]
 // - [navigate: panel="...", tab="..."]
@@ -93,6 +93,22 @@ export interface CreateCharacterCommand {
   personality?: string;
   firstMessage?: string;
   scenario?: string;
+  backstory?: string;
+  appearance?: string;
+  mesExample?: string;
+  creatorNotes?: string;
+  systemPrompt?: string;
+  postHistoryInstructions?: string;
+  creator?: string;
+  characterVersion?: string;
+  tags?: string[];
+  alternateGreetings?: string[];
+  talkativeness?: number;
+  fav?: boolean;
+  world?: string;
+  depthPrompt?: string;
+  depthPromptDepth?: number;
+  depthPromptRole?: "system" | "user" | "assistant";
 }
 
 export interface UpdateCharacterCommand {
@@ -108,6 +124,16 @@ export interface UpdateCharacterCommand {
   creatorNotes?: string;
   systemPrompt?: string;
   postHistoryInstructions?: string;
+  creator?: string;
+  characterVersion?: string;
+  tags?: string[];
+  alternateGreetings?: string[];
+  talkativeness?: number;
+  fav?: boolean;
+  world?: string;
+  depthPrompt?: string;
+  depthPromptDepth?: number;
+  depthPromptRole?: "system" | "user" | "assistant";
 }
 
 export interface UpdatePersonaCommand {
@@ -176,6 +202,93 @@ const UPDATE_PERSONA_RE = /\[update_persona:\s*([^\]]+)\]/gi;
 const CREATE_CHAT_RE = /\[create_chat:\s*([^\]]+)\]/gi;
 const NAVIGATE_RE = /\[navigate:\s*([^\]]+)\]/gi;
 const FETCH_RE = /\[fetch:\s*([^\]]+)\]/gi;
+
+function parseQuotedParam(params: string, key: string, allowEmpty = false): string | undefined {
+  const match = params.match(new RegExp(`${key}="([^"]*)"`));
+  if (!match) return undefined;
+  const value = match[1] ?? "";
+  if (!allowEmpty && value.length === 0) return undefined;
+  return value;
+}
+
+function parseStringList(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (value.trim().length === 0) return [];
+  const delimiter = value.includes("||") ? "||" : ",";
+  return value
+    .split(delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseBooleanParam(params: string, key: string): boolean | undefined {
+  const match = params.match(new RegExp(`${key}=(true|false)`, "i"));
+  if (!match) return undefined;
+  return match[1]?.toLowerCase() === "true";
+}
+
+function parseNumberParam(params: string, key: string): number | undefined {
+  const match = params.match(new RegExp(`${key}=(-?[0-9]+(?:\.[0-9]+)?)`, "i"));
+  if (!match) return undefined;
+  const value = Number.parseFloat(match[1] ?? "");
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function applyCommonCharacterFields(
+  cmd: CreateCharacterCommand | UpdateCharacterCommand,
+  params: string,
+  options: { allowEmptyStrings: boolean },
+) {
+  const readText = (key: string) => parseQuotedParam(params, key, options.allowEmptyStrings);
+  const assignText = <K extends keyof CreateCharacterCommand & keyof UpdateCharacterCommand>(
+    key: K,
+    paramName: string,
+  ) => {
+    const value = readText(paramName);
+    if (value !== undefined) {
+      cmd[key] = value as CreateCharacterCommand[K] & UpdateCharacterCommand[K];
+    }
+  };
+
+  assignText("description", "description");
+  assignText("personality", "personality");
+  assignText("firstMessage", "first_message");
+  assignText("scenario", "scenario");
+  assignText("backstory", "backstory");
+  assignText("appearance", "appearance");
+  assignText("mesExample", "mes_example");
+  assignText("creatorNotes", "creator_notes");
+  assignText("systemPrompt", "system_prompt");
+  assignText("postHistoryInstructions", "post_history_instructions");
+  assignText("creator", "creator");
+  assignText("characterVersion", "character_version");
+  assignText("world", "world");
+  assignText("depthPrompt", "depth_prompt");
+
+  const tags = parseStringList(readText("tags"));
+  if (tags !== undefined) cmd.tags = tags;
+
+  const alternateGreetings = parseStringList(readText("alternate_greetings"));
+  if (alternateGreetings !== undefined) cmd.alternateGreetings = alternateGreetings;
+
+  const talkativeness = parseNumberParam(params, "talkativeness");
+  if (talkativeness !== undefined) {
+    cmd.talkativeness = Math.max(0, Math.min(1, talkativeness));
+  }
+
+  const fav = parseBooleanParam(params, "fav");
+  if (fav !== undefined) cmd.fav = fav;
+
+  const depthPromptDepth = parseNumberParam(params, "depth_prompt_depth");
+  if (depthPromptDepth !== undefined) {
+    cmd.depthPromptDepth = Math.max(0, Math.floor(depthPromptDepth));
+  }
+
+  const depthPromptRole = readText("depth_prompt_role");
+  if (depthPromptRole === "system" || depthPromptRole === "user" || depthPromptRole === "assistant") {
+    cmd.depthPromptRole = depthPromptRole;
+  }
+}
 /**
  * Parse all character commands from a message and return the cleaned message
  * with commands stripped out.
@@ -289,44 +402,18 @@ export function parseCharacterCommands(content: string): {
   for (const match of content.matchAll(CREATE_CHARACTER_RE)) {
     const params = match[1]!;
     const cmd: CreateCharacterCommand = { type: "create_character", name: "" };
-    const nameMatch = params.match(/name="([^"]+)"/);
-    if (nameMatch) cmd.name = nameMatch[1]!;
-    const descMatch = params.match(/description="([^"]+)"/);
-    if (descMatch) cmd.description = descMatch[1]!;
-    const persMatch = params.match(/personality="([^"]+)"/);
-    if (persMatch) cmd.personality = persMatch[1]!;
-    const fmMatch = params.match(/first_message="([^"]+)"/);
-    if (fmMatch) cmd.firstMessage = fmMatch[1]!;
-    const scenMatch = params.match(/scenario="([^"]+)"/);
-    if (scenMatch) cmd.scenario = scenMatch[1]!;
+    const name = parseQuotedParam(params, "name");
+    if (name) cmd.name = name;
+    applyCommonCharacterFields(cmd, params, { allowEmptyStrings: false });
     if (cmd.name) commands.push(cmd);
   }
 
   for (const match of content.matchAll(UPDATE_CHARACTER_RE)) {
     const params = match[1]!;
     const cmd: UpdateCharacterCommand = { type: "update_character", name: "" };
-    const nameMatch = params.match(/name="([^"]+)"/);
-    if (nameMatch) cmd.name = nameMatch[1]!;
-    const descMatch = params.match(/description="([^"]*)"/);
-    if (descMatch) cmd.description = descMatch[1]!;
-    const persMatch = params.match(/personality="([^"]*)"/);
-    if (persMatch) cmd.personality = persMatch[1]!;
-    const fmMatch = params.match(/first_message="([^"]*)"/);
-    if (fmMatch) cmd.firstMessage = fmMatch[1]!;
-    const scenMatch = params.match(/scenario="([^"]*)"/);
-    if (scenMatch) cmd.scenario = scenMatch[1]!;
-    const backstoryMatch = params.match(/backstory="([^"]*)"/);
-    if (backstoryMatch) cmd.backstory = backstoryMatch[1]!;
-    const appearanceMatch = params.match(/appearance="([^"]*)"/);
-    if (appearanceMatch) cmd.appearance = appearanceMatch[1]!;
-    const mesExampleMatch = params.match(/mes_example="([^"]*)"/);
-    if (mesExampleMatch) cmd.mesExample = mesExampleMatch[1]!;
-    const creatorNotesMatch = params.match(/creator_notes="([^"]*)"/);
-    if (creatorNotesMatch) cmd.creatorNotes = creatorNotesMatch[1]!;
-    const systemPromptMatch = params.match(/system_prompt="([^"]*)"/);
-    if (systemPromptMatch) cmd.systemPrompt = systemPromptMatch[1]!;
-    const phiMatch = params.match(/post_history_instructions="([^"]*)"/);
-    if (phiMatch) cmd.postHistoryInstructions = phiMatch[1]!;
+    const name = parseQuotedParam(params, "name");
+    if (name) cmd.name = name;
+    applyCommonCharacterFields(cmd, params, { allowEmptyStrings: true });
     if (cmd.name) commands.push(cmd);
   }
 

@@ -1,10 +1,12 @@
 {
   "name": "@marinara-engine/client",
   "private": true,
-  "version": "1.5.4",
+  "version": "1.5.5",
   "type": "module",
   "scripts": {
+    "predev": "pnpm --filter @marinara-engine/shared build",
     "dev": "vite",
+    "prebuild": "pnpm --filter @marinara-engine/shared build",
     "build": "tsc -b && vite build",
     "clean": "node -e \"const fs=require('fs');['dist','tsconfig.tsbuildinfo'].forEach(p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}})\"",
     "preview": "vite preview",

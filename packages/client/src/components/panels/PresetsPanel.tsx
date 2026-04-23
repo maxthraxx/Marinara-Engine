@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Panel: Presets (overhauled — search, assign, edit, duplicate)
 // ──────────────────────────────────────────────
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import { usePresets, useDeletePreset, useDuplicatePreset, useSetDefaultPreset } from "../../hooks/use-presets";
 import { useUpdateChat, useUpdateChatMetadata } from "../../hooks/use-chats";
@@ -119,6 +119,38 @@ export function PresetsPanel() {
     }
   };
 
+  const handleDeleteSelected = useCallback(async () => {
+    const ids = [...selectedPresetIds];
+    if (ids.length === 0) return;
+
+    if (
+      !(await showConfirmDialog({
+        title: "Delete Presets",
+        message: `Delete ${ids.length} preset${ids.length === 1 ? "" : "s"}?`,
+        confirmLabel: "Delete",
+        tone: "destructive",
+      }))
+    ) {
+      return;
+    }
+
+    const results = await Promise.allSettled(ids.map((id) => deletePreset.mutateAsync(id)));
+    const failedIds = ids.filter((_, index) => results[index]?.status === "rejected");
+    const deletedCount = ids.length - failedIds.length;
+
+    if (deletedCount > 0) {
+      toast.success(`Deleted ${deletedCount} preset${deletedCount === 1 ? "" : "s"}`);
+    }
+
+    if (failedIds.length > 0) {
+      setSelectedPresetIds(new Set(failedIds));
+      toast.error(`Failed to delete ${failedIds.length} preset${failedIds.length === 1 ? "" : "s"}`);
+      return;
+    }
+
+    exitSelectionMode();
+  }, [selectedPresetIds, deletePreset]);
+
   return (
     <div className="flex flex-col gap-2 p-3">
       {/* Action buttons */}
@@ -172,6 +204,14 @@ export function PresetsPanel() {
             className="rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
           >
             Clear
+          </button>
+          <button
+            onClick={handleDeleteSelected}
+            disabled={selectedPresetIds.size === 0}
+            className="inline-flex items-center gap-1 rounded-lg bg-[var(--destructive)]/12 px-2.5 py-1 text-[0.625rem] font-medium text-[var(--destructive)] transition-all hover:bg-[var(--destructive)]/20 disabled:opacity-40"
+          >
+            <Trash2 size="0.6875rem" />
+            Delete
           </button>
           <button
             onClick={handleExportSelected}

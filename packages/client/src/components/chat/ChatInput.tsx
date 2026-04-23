@@ -11,6 +11,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useCreateMessage, chatKeys } from "../../hooks/use-chats";
+import { characterKeys } from "../../hooks/use-characters";
 import type { Message } from "@marinara-engine/shared";
 import {
   matchSlashCommand,
@@ -18,6 +19,7 @@ import {
   type SlashCommand,
   type SlashCommandContext,
 } from "../../lib/slash-commands";
+import { resolveInputMacrosForChat } from "../../lib/chat-macros";
 import { cn } from "../../lib/utils";
 import { EmojiPicker } from "../ui/EmojiPicker";
 import { QuickConnectionSwitcher } from "./QuickConnectionSwitcher";
@@ -327,6 +329,10 @@ export const ChatInput = memo(function ChatInput({
         toast.error("Failed to translate message — sending original");
       }
     }
+
+    const cachedCharacters = qc.getQueryData<Array<{ id: string; data: unknown }>>(characterKeys.list());
+    const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(characterKeys.personas);
+    message = resolveInputMacrosForChat(message, chat, cachedCharacters, cachedPersonas);
 
     if (textareaRef.current) {
       textareaRef.current.value = "";

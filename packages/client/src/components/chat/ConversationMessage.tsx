@@ -21,10 +21,10 @@ import type { Message } from "@marinara-engine/shared";
 import { cn, copyToClipboard } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
 import { chatKeys } from "../../hooks/use-chats";
-import type { CharacterMap } from "./ChatArea";
+import { resolveMessageMacros } from "../../lib/chat-macros";
 import { useTranslate } from "../../hooks/use-translate";
 import { api } from "../../lib/api-client";
-import type { MessageSelectionToggle } from "./chat-area.types";
+import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
 
 /** Build style object for name color (supports gradients). */
 function nameColorStyle(color?: string): React.CSSProperties | undefined {
@@ -32,10 +32,13 @@ function nameColorStyle(color?: string): React.CSSProperties | undefined {
   if (color.includes("gradient(")) {
     return {
       backgroundImage: color,
+      backgroundRepeat: "no-repeat",
+      backgroundSize: "100% 100%",
       WebkitBackgroundClip: "text",
       WebkitTextFillColor: "transparent",
       backgroundClip: "text",
       color: "transparent",
+      display: "inline-block",
     };
   }
   return { color };
@@ -186,12 +189,6 @@ function groupConsecutiveSegments(segments: SpeakerSegment[]): GroupedSegment[] 
   return groups;
 }
 
-interface PersonaInfo {
-  name: string;
-  avatarUrl: string | null;
-  nameColor?: string;
-}
-
 interface MessageData {
   id: string;
   chatId: string;
@@ -287,14 +284,57 @@ export const ConversationMessage = memo(function ConversationMessage({
 
   // Character info
   const charInfo = message.characterId && characterMap ? characterMap.get(message.characterId) : null;
+  const primaryCharInfo =
+    charInfo ??
+    (characterMap
+      ? (Array.from(characterMap.values()).find(
+          (candidate): candidate is NonNullable<typeof candidate> => !!candidate,
+        ) ?? null)
+      : null);
 
   // For user messages, prefer per-message persona snapshot (stored when message was sent)
   // to preserve the correct persona name/avatar even after switching personas.
   // Fall back to the current personaInfo prop for older messages without snapshots.
   const msgPersona = isUser && extra.personaSnapshot ? extra.personaSnapshot : null;
   const avatarUrl = isUser ? (msgPersona?.avatarUrl ?? personaInfo?.avatarUrl ?? null) : (charInfo?.avatarUrl ?? null);
-  const displayName = isUser ? (msgPersona?.name ?? personaInfo?.name ?? "You") : (charInfo?.name ?? "Assistant");
+  const displayName = isUser
+    ? (msgPersona?.name ?? personaInfo?.name ?? "You")
+    : (primaryCharInfo?.name ?? "Assistant");
   const nameColor = isUser ? (msgPersona?.nameColor ?? personaInfo?.nameColor) : charInfo?.nameColor;
+  const renderedContent = useMemo(
+    () =>
+      resolveMessageMacros(message.content, {
+        userName: msgPersona?.name ?? personaInfo?.name ?? "You",
+        persona: {
+          name: msgPersona?.name ?? personaInfo?.name ?? "You",
+          description: msgPersona?.description ?? personaInfo?.description,
+          personality: msgPersona?.personality ?? personaInfo?.personality,
+          backstory: msgPersona?.backstory ?? personaInfo?.backstory,
+          appearance: msgPersona?.appearance ?? personaInfo?.appearance,
+          scenario: msgPersona?.scenario ?? personaInfo?.scenario,
+        },
+        primaryCharacter: primaryCharInfo ?? { name: displayName },
+        characters: characterMap ? Array.from(characterMap.values()) : displayName ? [{ name: displayName }] : [],
+      }),
+    [
+      characterMap,
+      displayName,
+      message.content,
+      msgPersona?.appearance,
+      msgPersona?.backstory,
+      msgPersona?.description,
+      msgPersona?.name,
+      msgPersona?.personality,
+      msgPersona?.scenario,
+      personaInfo?.appearance,
+      personaInfo?.backstory,
+      personaInfo?.description,
+      personaInfo?.name,
+      personaInfo?.personality,
+      personaInfo?.scenario,
+      primaryCharInfo,
+    ],
+  );
 
   // Remove an attachment from this message (keeps it in gallery)
   const qc = useQueryClient();
@@ -354,22 +394,22 @@ export const ConversationMessage = memo(function ConversationMessage({
 
   // Parse speaker tags or Name: text format for group merged-mode messages
   const groupedSegments = useMemo(() => {
-    if (isUser || !message.content) return null;
+    if (isUser || !renderedContent) return null;
     // Try <speaker> tags first (backward compat)
-    const speakerSegs = parseSpeakerTags(message.content);
+    const speakerSegs = parseSpeakerTags(renderedContent);
     if (speakerSegs) return groupConsecutiveSegments(speakerSegs);
     // Try Name: text format
     const knownNames = charByName ? new Set(charByName.keys()) : new Set<string>();
-    const nameSegs = parseNamePrefixFormat(message.content, knownNames);
+    const nameSegs = parseNamePrefixFormat(renderedContent, knownNames);
     if (nameSegs) return groupConsecutiveSegments(nameSegs);
     return null;
-  }, [isUser, message.content, charByName]);
+  }, [isUser, renderedContent, charByName]);
 
   // Staggered reveal for multi-speaker grouped messages.
   // On first render (history load), show all segments immediately.
   // When content changes (new message arrival), reveal one by one.
   const segmentCount = groupedSegments?.length ?? 0;
-  const prevContentRef = useRef(message.content);
+  const prevContentRef = useRef(renderedContent);
   const initialRenderRef = useRef(true);
   const [visibleSegments, setVisibleSegments] = useState(segmentCount);
 
@@ -378,12 +418,12 @@ export const ConversationMessage = memo(function ConversationMessage({
     if (initialRenderRef.current) {
       initialRenderRef.current = false;
       setVisibleSegments(segmentCount);
-      prevContentRef.current = message.content;
+      prevContentRef.current = renderedContent;
       return;
     }
     // Content changed — new message or regeneration
-    if (message.content !== prevContentRef.current && segmentCount > 1) {
-      prevContentRef.current = message.content;
+    if (renderedContent !== prevContentRef.current && segmentCount > 1) {
+      prevContentRef.current = renderedContent;
       setVisibleSegments(1);
       let count = 1;
       const reveal = () => {
@@ -398,8 +438,8 @@ export const ConversationMessage = memo(function ConversationMessage({
     }
     // Segment count changed without content change (shouldn't happen, but be safe)
     setVisibleSegments(segmentCount);
-    prevContentRef.current = message.content;
-  }, [message.content, segmentCount]);
+    prevContentRef.current = renderedContent;
+  }, [renderedContent, segmentCount]);
 
   const thinking = extra?.thinking;
   const swipeCount = message.swipeCount ?? 0;
@@ -427,10 +467,10 @@ export const ConversationMessage = memo(function ConversationMessage({
 
   // Actions
   const handleCopy = useCallback(() => {
-    copyToClipboard(message.content);
+    copyToClipboard(renderedContent);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
-  }, [message.content]);
+  }, [renderedContent]);
 
   const startEditing = useCallback(() => {
     setEditing(true);
@@ -865,10 +905,10 @@ export const ConversationMessage = memo(function ConversationMessage({
           <div
             className={cn(
               "mari-message-content text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap",
-              isStreaming && !message.content && "py-1",
+              isStreaming && !renderedContent && "py-1",
             )}
           >
-            {isStreaming && !message.content ? (
+            {isStreaming && !renderedContent ? (
               <div className="flex items-center gap-1">
                 <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:0ms]" />
                 <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:150ms]" />
@@ -876,7 +916,7 @@ export const ConversationMessage = memo(function ConversationMessage({
               </div>
             ) : (
               <>
-                <MessageContent content={message.content} mentionNames={mentionNames} />
+                <MessageContent content={renderedContent} mentionNames={mentionNames} />
                 {isStreaming && (
                   <span className="ml-0.5 inline-block h-4 w-[0.125rem] animate-pulse rounded-full bg-[var(--foreground)]/50" />
                 )}
@@ -899,7 +939,7 @@ export const ConversationMessage = memo(function ConversationMessage({
         )}
 
         {/* Image attachments (selfies, illustrations) — skip when content is already an image URL */}
-        {extra.attachments && extra.attachments.length > 0 && !IMAGE_URL_RE.test(message.content.trim()) && (
+        {extra.attachments && extra.attachments.length > 0 && !IMAGE_URL_RE.test(renderedContent.trim()) && (
           <div className="mt-1.5 flex flex-col items-center gap-2">
             {extra.attachments.map((att: any, i: number) =>
               att.type === "image" || att.type?.startsWith("image/") ? (
@@ -962,7 +1002,7 @@ export const ConversationMessage = memo(function ConversationMessage({
           <MsgAction icon={copied ? "✓" : <Copy size="0.75rem" />} onClick={handleCopy} title="Copy" />
           <MsgAction
             icon={<Languages size="0.75rem" />}
-            onClick={() => translate(message.id, message.content, message.chatId)}
+            onClick={() => translate(message.id, renderedContent, message.chatId)}
             title={translatedText ? "Hide translation" : "Translate"}
             className={translatedText ? "text-blue-400" : undefined}
           />

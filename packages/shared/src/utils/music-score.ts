@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────
-// Music Score — Deterministic Rule Engine
+// Music Score — Rule-Based Selector
 //
 // Maps (game state, weather, time, biome) to the
 // best available music tag without LLM involvement.
@@ -77,6 +77,10 @@ function moodScore(tagParts: string[], moodKeywords: string[]): number {
   return score;
 }
 
+function pickRandom<T>(items: readonly T[]): T {
+  return items[Math.floor(Math.random() * items.length)]!;
+}
+
 /**
  * Pick the best music tag for the current game context.
  * Returns `null` when the current music is already appropriate.
@@ -125,24 +129,23 @@ export function scoreMusic(input: MusicScoreInput): string | null {
     return { tag, score };
   });
 
-  // Shuffle first for stable tie-breaking, then sort by score descending
-  for (let i = scored.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [scored[i], scored[j]] = [scored[j]!, scored[i]!];
+  // 6. Always pick a different track from the currently playing one when possible.
+  const eligible = scored.filter((entry) => entry.tag !== currentMusic);
+  const poolBase = eligible.length > 0 ? eligible : scored;
+  if (!poolBase.length) return null;
+
+  // 7. Prefer the strongest matches, but widen the pool until it is large
+  //    enough to prevent a tiny set of keyword-heavy filenames from monopolizing playback.
+  let threshold = Math.max(...poolBase.map((entry) => entry.score));
+  let selectionPool = poolBase.filter((entry) => entry.score >= threshold);
+  const targetPoolSize = Math.min(12, poolBase.length);
+
+  while (selectionPool.length < targetPoolSize && threshold > 0) {
+    threshold -= 1;
+    selectionPool = poolBase.filter((entry) => entry.score >= threshold);
   }
-  scored.sort((a, b) => b.score - a.score);
 
-  const best = scored[0]!;
-
-  // 6. Always pick a different track from the currently playing one.
-  //    Music should change every main GM turn to keep things fresh.
-  if (best.tag === currentMusic) {
-    const others = scored.filter((s) => s.tag !== currentMusic);
-    if (others.length > 0) return others[0]!.tag;
-    return null; // only one track available — keep it
-  }
-
-  return best.tag;
+  return pickRandom(selectionPool).tag;
 }
 
 // ──────────────────────────────────────────────

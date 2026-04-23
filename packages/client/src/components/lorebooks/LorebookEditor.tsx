@@ -3,7 +3,15 @@
 // Replaces the chat area when editing a lorebook.
 // Tabs: Overview, Entries, Entry Editor
 // ──────────────────────────────────────────────
-import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import {
   useLorebook,
   useUpdateLorebook,
@@ -1357,6 +1365,27 @@ function VectorizeSection({ lorebookId, entryCount }: { lorebookId: string; entr
   );
 }
 
+function insertTabAtSelection(element: HTMLTextAreaElement, value: string, applyValue: (nextValue: string) => void) {
+  const start = element.selectionStart;
+  const end = element.selectionEnd;
+  const nextValue = `${value.slice(0, start)}\t${value.slice(end)}`;
+  applyValue(nextValue);
+
+  requestAnimationFrame(() => {
+    element.selectionStart = element.selectionEnd = start + 1;
+  });
+}
+
+function handleTextareaTabKeyDown(
+  event: ReactKeyboardEvent<HTMLTextAreaElement>,
+  value: string,
+  applyValue: (nextValue: string) => void,
+) {
+  if (event.key !== "Tab" || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
+  event.preventDefault();
+  insertTabAtSelection(event.currentTarget, value, applyValue);
+}
+
 /** Textarea with an expand button that opens a fullscreen modal editor. */
 function ExpandableTextarea({
   value,
@@ -1379,6 +1408,7 @@ function ExpandableTextarea({
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => handleTextareaTabKeyDown(e, value, onChange)}
           rows={rows ?? 6}
           className="w-full resize-y rounded-xl bg-[var(--secondary)] p-3 pr-9 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
           placeholder={placeholder}
@@ -1457,6 +1487,7 @@ function ExpandedContentModal({
             ref={textareaRef}
             value={local}
             onChange={(e) => setLocal(e.target.value)}
+            onKeyDown={(e) => handleTextareaTabKeyDown(e, local, setLocal)}
             className="h-full w-full resize-none rounded-lg bg-[var(--secondary)] p-4 text-sm text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             placeholder={placeholder}
           />

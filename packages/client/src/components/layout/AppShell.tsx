@@ -17,6 +17,9 @@ const ChatArea = lazy(() => import("../chat/ChatArea").then((module) => ({ defau
 const CharacterEditor = lazy(() =>
   import("../characters/CharacterEditor").then((module) => ({ default: module.CharacterEditor })),
 );
+const CharacterLibraryView = lazy(() =>
+  import("../characters/CharacterLibraryView").then((module) => ({ default: module.CharacterLibraryView })),
+);
 const LorebookEditor = lazy(() =>
   import("../lorebooks/LorebookEditor").then((module) => ({ default: module.LorebookEditor })),
 );
@@ -169,6 +172,7 @@ export function AppShell() {
   }, [debouncedCheckOverflow]);
 
   const characterDetailId = useUIStore((s) => s.characterDetailId);
+  const characterLibraryOpen = useUIStore((s) => s.characterLibraryOpen);
   const lorebookDetailId = useUIStore((s) => s.lorebookDetailId);
   const presetDetailId = useUIStore((s) => s.presetDetailId);
   const connectionDetailId = useUIStore((s) => s.connectionDetailId);
@@ -245,6 +249,8 @@ export function AppShell() {
     <PresetEditor />
   ) : characterDetailId ? (
     <CharacterEditor />
+  ) : characterLibraryOpen ? (
+    <CharacterLibraryView />
   ) : lorebookDetailId ? (
     <LorebookEditor />
   ) : null;
@@ -302,7 +308,8 @@ export function AppShell() {
           aria-orientation="vertical"
           aria-label="Resize left sidebar"
           onMouseDown={startSidebarResize}
-          className="relative z-20 hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 md:block"
+          className="absolute inset-y-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 md:block"
+          style={{ left: sidebarOpen ? sidebarWidth : 0 }}
         />
       )}
 

@@ -293,6 +293,7 @@ export function AgentEditor() {
       name: localName,
       description: localDescription,
       phase: localPhase,
+      enabled: true,
       connectionId: localConnectionId || null,
       promptTemplate: localPrompt,
       settings: {
@@ -323,7 +324,6 @@ export function AgentEditor() {
         const created = (await createAgent.mutateAsync({
           ...payload,
           type: typeId,
-          enabled: builtIn?.enabledByDefault ?? true,
         })) as { id?: string } | undefined;
         // After creating a new custom agent, switch agentDetailId to its DB id
         if (!builtIn && created?.id) {

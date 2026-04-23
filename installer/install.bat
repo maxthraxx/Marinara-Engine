@@ -11,7 +11,7 @@ set "INSTALL_ERROR="
 echo.
 echo  +==========================================+
 echo  ^|   Marinara Engine - Windows Installer     ^|
-echo  ^|   v1.5.4                                  ^|
+echo  ^|   v1.5.5                                  ^|
 
 echo  +==========================================+
 echo.
@@ -79,7 +79,8 @@ goto :git_ok
 :install_git
 echo  [..] Git not found - downloading installer...
 set "GIT_EXE=%TEMP%\git-install.exe"
-powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/git-for-windows/git/releases/latest' -UseBasicParsing; $asset = $rel.assets | Where-Object { $_.name -match '64-bit\.exe$' } | Select-Object -First 1; Invoke-WebRequest -Uri $asset.browser_download_url -OutFile '%GIT_EXE%' -UseBasicParsing } catch { exit 1 }"
+set "GIT_DOWNLOAD_URL=https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.1/Git-2.47.1-64-bit.exe"
+powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%GIT_DOWNLOAD_URL%' -OutFile '%GIT_EXE%' -UseBasicParsing } catch { exit 1 }"
 if errorlevel 1 (
     set "INSTALL_ERROR=Failed to download Git. Please install manually from https://git-scm.com"
     goto :fatal

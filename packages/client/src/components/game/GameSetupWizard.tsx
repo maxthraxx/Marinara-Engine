@@ -19,6 +19,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import type { GameSetupConfig, GameGmMode } from "@marinara-engine/shared";
+import { getCharacterTitle } from "../../lib/character-display";
 import { cn } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
 import {
@@ -37,12 +38,12 @@ interface GameSetupWizardProps {
   onComplete: (
     config: GameSetupConfig,
     preferences: string,
-    connections: { gmConnectionId?: string; characterConnectionId?: string },
+    connections: { gmConnectionId?: string },
     gameName?: string,
   ) => void;
   onCancel: () => void;
   isLoading: boolean;
-  characters: Array<{ id: string; name: string; avatarUrl?: string | null }>;
+  characters: Array<{ id: string; name: string; comment?: string | null; avatarUrl?: string | null }>;
 }
 
 interface PersonaDisplayInfo {
@@ -94,8 +95,6 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const [customizeParameters, setCustomizeParameters] = useState(false);
   const [generationParameters, setGenerationParameters] =
     useState<EditableGenerationParameters>(ROLEPLAY_PARAMETER_DEFAULTS);
-  const [charConnectionId, setCharConnectionId] = useState<string | null>(null);
-  const [sameConnection, setSameConnection] = useState(true);
   const [personaSearch, setPersonaSearch] = useState("");
   const [rating, setRating] = useState<"sfw" | "nsfw">("sfw");
   const [useLocalScene, setUseLocalScene] = useState(true);
@@ -214,12 +213,23 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   };
 
   const filteredGmCharacters = useMemo(
-    () => characters.filter((c) => c.name.toLowerCase().includes(gmSearch.toLowerCase())),
+    () =>
+      characters.filter((c) => {
+        const query = gmSearch.toLowerCase();
+        const title = getCharacterTitle(c)?.toLowerCase() ?? "";
+        return c.name.toLowerCase().includes(query) || title.includes(query);
+      }),
     [characters, gmSearch],
   );
 
   const filteredPartyCharacters = useMemo(
-    () => characters.filter((c) => c.id !== gmCharacterId && c.name.toLowerCase().includes(partySearch.toLowerCase())),
+    () =>
+      characters.filter((c) => {
+        if (c.id === gmCharacterId) return false;
+        const query = partySearch.toLowerCase();
+        const title = getCharacterTitle(c)?.toLowerCase() ?? "";
+        return c.name.toLowerCase().includes(query) || title.includes(query);
+      }),
     [characters, gmCharacterId, partySearch],
   );
 
@@ -269,7 +279,6 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
       preferences,
       {
         gmConnectionId: gmConnectionId ?? undefined,
-        characterConnectionId: sameConnection ? (gmConnectionId ?? undefined) : (charConnectionId ?? undefined),
       },
       gameName.trim() || undefined,
     );
@@ -511,22 +520,31 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                 className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-transparent transition-all placeholder:text-[var(--muted-foreground)] focus:ring-[var(--primary)]/40"
               />
               <div className="mt-1.5 flex flex-wrap gap-1">
-                {["English", "日本語", "한국어", "中文", "Español", "Français", "Deutsch", "Português", "Русский"].map(
-                  (lang) => (
-                    <button
-                      key={lang}
-                      onClick={() => setLanguage(lang)}
-                      className={cn(
-                        "rounded-full px-2 py-0.5 text-[0.625rem] transition-colors",
-                        language === lang
-                          ? "bg-[var(--primary)]/20 text-[var(--primary)] ring-1 ring-[var(--primary)]/40"
-                          : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10",
-                      )}
-                    >
-                      {lang}
-                    </button>
-                  ),
-                )}
+                {[
+                  "English",
+                  "日本語",
+                  "한국어",
+                  "中文",
+                  "Español",
+                  "Français",
+                  "Deutsch",
+                  "Polski",
+                  "Português",
+                  "Русский",
+                ].map((lang) => (
+                  <button
+                    key={lang}
+                    onClick={() => setLanguage(lang)}
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[0.625rem] transition-colors",
+                      language === lang
+                        ? "bg-[var(--primary)]/20 text-[var(--primary)] ring-1 ring-[var(--primary)]/40"
+                        : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10",
+                    )}
+                  >
+                    {lang}
+                  </button>
+                ))}
               </div>
               <p className="mt-1 text-[0.575rem] text-[var(--muted-foreground)]">
                 All narration and dialogue will be written in this language.
@@ -635,7 +653,14 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                             {c.name[0]}
                           </div>
                         )}
-                        <span className="flex-1 truncate text-xs">{c.name}</span>
+                        <div className="min-w-0 flex-1">
+                          <span className="block truncate text-xs">{c.name}</span>
+                          {getCharacterTitle(c) && (
+                            <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                              {getCharacterTitle(c)}
+                            </span>
+                          )}
+                        </div>
                         {c.id === gmCharacterId && (
                           <span className="text-[0.625rem] text-[var(--primary)]">Selected</span>
                         )}
@@ -679,7 +704,14 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                             {c.name[0]}
                           </div>
                         )}
-                        <span className="flex-1 truncate text-xs">{c.name}</span>
+                        <div className="min-w-0 flex-1">
+                          <span className="block truncate text-xs">{c.name}</span>
+                          {getCharacterTitle(c) && (
+                            <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                              {getCharacterTitle(c)}
+                            </span>
+                          )}
+                        </div>
                         <button
                           onClick={() => togglePartyMember(cid)}
                           className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
@@ -727,7 +759,14 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                             {c.name[0]}
                           </div>
                         )}
-                        <span className="flex-1 truncate text-xs">{c.name}</span>
+                        <div className="min-w-0 flex-1">
+                          <span className="block truncate text-xs">{c.name}</span>
+                          {getCharacterTitle(c) && (
+                            <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                              {getCharacterTitle(c)}
+                            </span>
+                          )}
+                        </div>
                         {isSelected ? (
                           <span className="text-[0.625rem] text-[var(--primary)]">Added</span>
                         ) : (
@@ -850,7 +889,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
             <div>
               <label className="mb-1.5 block text-xs font-medium text-[var(--foreground)]">
                 <Plug size={12} className="mr-1 inline" />
-                GM Model
+                GM / Party Model
               </label>
               <select
                 value={gmConnectionId ?? ""}
@@ -906,39 +945,6 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                 <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                   No connections configured. Add one in Settings → Connections.
                 </p>
-              )}
-            </div>
-
-            {/* Character Model */}
-            <div>
-              <label className="mb-1.5 flex items-center gap-2 text-xs font-medium text-[var(--foreground)]">
-                Character Model
-                <button
-                  onClick={() => setSameConnection(!sameConnection)}
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[0.625rem] transition-colors",
-                    sameConnection
-                      ? "bg-[var(--primary)]/15 text-[var(--primary)]"
-                      : "bg-[var(--secondary)] text-[var(--muted-foreground)]",
-                  )}
-                >
-                  {sameConnection ? "Same as GM" : "Different"}
-                </button>
-              </label>
-              {!sameConnection && (
-                <select
-                  value={charConnectionId ?? ""}
-                  onChange={(e) => setCharConnectionId(e.target.value || null)}
-                  className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-transparent transition-all focus:ring-[var(--primary)]/40"
-                >
-                  <option value="">Select a connection…</option>
-                  {connections.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                      {c.model ? ` — ${c.model}` : ""}
-                    </option>
-                  ))}
-                </select>
               )}
             </div>
 
@@ -1205,40 +1211,38 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
               </div>
             </div>
 
-          {/* Start Muted */}
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
-            <button
-              onClick={() => setStartMuted(!startMuted)}
-              className="flex w-full items-center justify-between gap-2 text-left"
-            >
-              <div className="flex items-center gap-2">
-                {startMuted ? (
-                  <VolumeX size={14} className="text-[var(--muted-foreground)]" />
-                ) : (
-                  <Volume2 size={14} className="text-[var(--primary)]" />
-                )}
-                <div>
-                  <p className="text-xs font-medium text-[var(--foreground)]">Start Muted</p>
-                  <p className="text-[0.55rem] text-[var(--muted-foreground)]">
-                    Begin the game with all audio muted
-                  </p>
-                </div>
-              </div>
-              <div
-                className={cn(
-                  "flex h-5 w-8 items-center rounded-full px-0.5 transition-colors",
-                  startMuted ? "bg-[var(--primary)]" : "bg-[var(--secondary)]",
-                )}
+            {/* Start Muted */}
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
+              <button
+                onClick={() => setStartMuted(!startMuted)}
+                className="flex w-full items-center justify-between gap-2 text-left"
               >
+                <div className="flex items-center gap-2">
+                  {startMuted ? (
+                    <VolumeX size={14} className="text-[var(--muted-foreground)]" />
+                  ) : (
+                    <Volume2 size={14} className="text-[var(--primary)]" />
+                  )}
+                  <div>
+                    <p className="text-xs font-medium text-[var(--foreground)]">Start Muted</p>
+                    <p className="text-[0.55rem] text-[var(--muted-foreground)]">Begin the game with all audio muted</p>
+                  </div>
+                </div>
                 <div
                   className={cn(
-                    "h-4 w-4 rounded-full bg-white transition-transform",
-                    startMuted && "translate-x-3.5",
+                    "flex h-5 w-8 items-center rounded-full px-0.5 transition-colors",
+                    startMuted ? "bg-[var(--primary)]" : "bg-[var(--secondary)]",
                   )}
-                />
-              </div>
-            </button>
-          </div>
+                >
+                  <div
+                    className={cn(
+                      "h-4 w-4 rounded-full bg-white transition-transform",
+                      startMuted && "translate-x-3.5",
+                    )}
+                  />
+                </div>
+              </button>
+            </div>
           </>
         )}
       </div>

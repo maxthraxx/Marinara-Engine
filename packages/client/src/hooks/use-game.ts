@@ -56,6 +56,13 @@ interface ConcludeSessionResponse {
   summary: SessionSummary;
 }
 
+interface RecruitPartyMemberResponse {
+  sessionChat: Chat;
+  added: boolean;
+  characterName: string;
+  cardCreated: boolean;
+}
+
 interface DiceRollResponse {
   result: DiceRollResult;
 }
@@ -152,14 +159,28 @@ export function useStartSession() {
   return useMutation({
     mutationFn: (data: { gameId: string; connectionId?: string }) =>
       api.post<StartSessionResponse>("/game/session/start", data),
+    onMutate: (variables) => {
+      toast.loading("Starting the next session and generating recap...", {
+        id: `game-session-start:${variables.gameId}`,
+      });
+    },
     onSuccess: (res, variables) => {
       store.getState().setActiveGame(variables.gameId, res.sessionChat.id, null);
       store.getState().setSessionNumber(res.sessionNumber);
       qc.setQueryData(chatKeys.detail(res.sessionChat.id), res.sessionChat);
       useChatStore.getState().setActiveChatId(res.sessionChat.id);
+      toast.success(`Session ${res.sessionNumber} is ready.`, {
+        id: `game-session-start:${variables.gameId}`,
+      });
       qc.invalidateQueries({ queryKey: chatKeys.list() });
       qc.invalidateQueries({ queryKey: gameKeys.sessions(variables.gameId) });
       qc.invalidateQueries({ queryKey: chatKeys.messages(res.sessionChat.id) });
+    },
+    onError: (err, variables) => {
+      console.error("[startSession] Error:", err);
+      toast.error(err.message || "Failed to start the next session.", {
+        id: `game-session-start:${variables.gameId}`,
+      });
     },
   });
 }
@@ -170,9 +191,48 @@ export function useConcludeSession() {
   return useMutation({
     mutationFn: (data: { chatId: string; connectionId?: string }) =>
       api.post<ConcludeSessionResponse>("/game/session/conclude", data),
+    onMutate: (variables) => {
+      console.info("[game/session/conclude] Starting conclude request", variables);
+      toast.loading("Ending session and generating summary...", {
+        id: `game-session-conclude:${variables.chatId}`,
+      });
+    },
     onSuccess: (_, variables) => {
+      console.info("[game/session/conclude] Conclude request completed", variables);
+      toast.success("Session concluded.", {
+        id: `game-session-conclude:${variables.chatId}`,
+      });
       qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
       qc.invalidateQueries({ queryKey: chatKeys.messages(variables.chatId) });
+    },
+    onError: (err, variables) => {
+      console.error("[game/session/conclude] Error:", err);
+      toast.error(err.message || "Failed to end session.", {
+        id: `game-session-conclude:${variables.chatId}`,
+      });
+    },
+  });
+}
+
+export function useRecruitPartyMember() {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: { chatId: string; characterName: string; connectionId?: string }) =>
+      api.post<RecruitPartyMemberResponse>("/game/party/recruit", data),
+    onSuccess: (res, variables) => {
+      qc.setQueryData(chatKeys.detail(variables.chatId), res.sessionChat);
+      qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
+      qc.invalidateQueries({ queryKey: chatKeys.list() });
+      if (res.added) {
+        toast.success(`${res.characterName} joined the party.`);
+      } else if (res.cardCreated) {
+        toast.success(`${res.characterName}'s party card was created.`);
+      }
+    },
+    onError: (err) => {
+      console.error("[recruitPartyMember] Error:", err);
+      toast.error(err.message || "Failed to recruit party member.");
     },
   });
 }
@@ -352,7 +412,7 @@ export function useCombatRound() {
   return useMutation({
     mutationFn: (data: {
       chatId: string;
-      combatants: Array<Omit<Combatant, "sprite" | "skills" | "mp" | "maxMp">>;
+      combatants: Array<Omit<Combatant, "sprite">>;
       round: number;
       playerAction?: CombatPlayerAction;
     }) => api.post<{ result: CombatRoundResult; combatants: Combatant[] }>("/game/combat/round", data),

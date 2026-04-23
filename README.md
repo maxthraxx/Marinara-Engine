@@ -15,18 +15,26 @@
 
 ## Table of Contents
 
-- [Screenshots](#screenshots)
-- [Latest Release](#latest-release)
-- [Roadmap](#roadmap)
-- [Installation](#installation)
-- [Features](#features)
-- [Documentation](#documentation)
-- [Community & Support](#community--support)
-- [Contributors](#contributors)
-- [License](#license)
+- [🍝 Marinara Engine](#-marinara-engine)
+  - [Table of Contents](#table-of-contents)
+  - [Latest Release](#latest-release)
+  - [Roadmap](#roadmap)
+  - [Installation](#installation)
+  - [Features](#features)
+    - [Chat \& Roleplay](#chat--roleplay)
+    - [Visual \& Immersive](#visual--immersive)
+    - [AI Agent System](#ai-agent-system)
+    - [Prompt Engineering](#prompt-engineering)
+    - [Connections \& Providers](#connections--providers)
+    - [Export \& Data](#export--data)
+  - [Documentation](#documentation)
+  - [Community \& Support](#community--support)
+  - [Contributors](#contributors)
+  - [License](#license)
 
 ---
 
+<a id="screenshots"></a>
 <details>
 <summary><h2>Screenshots</h2></summary>
 
@@ -92,7 +100,7 @@
 
 ## Latest Release
 
-Current stable release: **[v1.5.4](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v1.5.4)**.
+Current stable release: **[v1.5.5](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v1.5.5)**.
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes. Tagged releases use the `vX.Y.Z` format and are published on the [Releases](https://github.com/Pasta-Devs/Marinara-Engine/releases) page.
 
@@ -187,6 +195,13 @@ Export chats as JSONL or plain text. Fully local SQLite database — all data st
 - [Pwildani](https://github.com/pwildani)
 - [Romu](https://github.com/Romuromylus)
 - [Felor](https://github.com/felorhik)
+- [MagicGoddess](https://github.com/MagicGoddess)
+- [Mm14141](https://github.com/mm14141)
+- [Romu](https://github.com/Romuromylus)
+- [Shadota](https://github.com/Shadota)
+- [Teuku Rezhaldy](https://github.com/0-trspace)
+- [Mohammad Javed](https://github.com/Javedz678)
+- [Cha1latte](https://github.com/cha1latte)
 
 ---
 

@@ -46,6 +46,40 @@ export interface ImageGenResult {
   ext: string;
 }
 
+const EXPLICIT_IMAGE_SOURCES = new Set([
+  "openai",
+  "nanogpt",
+  "pollinations",
+  "stability",
+  "togetherai",
+  "novelai",
+  "comfyui",
+  "automatic1111",
+  "gemini_image",
+]);
+
+function normalizeExplicitImageSource(serviceHint: string): string {
+  const normalized = serviceHint.trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "drawthings") return "automatic1111";
+  return EXPLICIT_IMAGE_SOURCES.has(normalized) ? normalized : "";
+}
+
+function resolveImageBackend(source: string, baseUrl: string, serviceHint: string, requestModel?: string): string {
+  const inferredSource = inferImageSource(requestModel || source, baseUrl);
+  const explicitSource = normalizeExplicitImageSource(serviceHint);
+
+  if (!explicitSource) return inferredSource;
+
+  // Gemini image models exposed through OpenAI-compatible proxies (for example LinkAPI)
+  // must use the chat-completions path even if an older connection still says "openai".
+  if (explicitSource === "openai" && inferredSource === "gemini_image") {
+    return inferredSource;
+  }
+
+  return explicitSource;
+}
+
 /**
  * Generate an image using the configured image generation connection.
  * Returns the base64 data and metadata needed to save it.
@@ -57,9 +91,7 @@ export async function generateImage(
   serviceHint: string,
   request: ImageGenRequest,
 ): Promise<ImageGenResult> {
-  // Infer the source from model name / base URL if the source looks like a legacy service ID
-  // or if the caller passes a model name as source. An explicit serviceHint overrides inference.
-  const resolvedSource = serviceHint || inferImageSource(source, baseUrl);
+  const resolvedSource = resolveImageBackend(source, baseUrl, serviceHint, request.model);
   switch (resolvedSource) {
     case "openai":
     case "nanogpt":

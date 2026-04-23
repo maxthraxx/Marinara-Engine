@@ -29,6 +29,7 @@ import { useChatPresets, useApplyChatPreset } from "../../hooks/use-chat-presets
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { api } from "../../lib/api-client";
+import { getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import type { Chat, ChatMode, ChatPreset } from "@marinara-engine/shared";
 import { useQueryClient } from "@tanstack/react-query";
@@ -143,7 +144,8 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   }, [chat.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const characters = useMemo(
-    () => (allCharacters ?? []) as Array<{ id: string; data: string; avatarPath: string | null }>,
+    () =>
+      (allCharacters ?? []) as Array<{ id: string; data: string; comment?: string | null; avatarPath: string | null }>,
     [allCharacters],
   );
   const personas = (allPersonas ?? []) as Array<{
@@ -159,14 +161,26 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
 
   const [search, setSearch] = useState("");
 
-  const charName = useCallback((c: { id?: string; data: string }) => {
-    try {
-      const p = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-      return (p as { name?: string }).name ?? "Unknown";
-    } catch {
-      return "Unknown";
+  const charInfoMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof parseCharacterDisplayData>>();
+    for (const character of characters) {
+      map.set(character.id, parseCharacterDisplayData(character));
     }
-  }, []);
+    return map;
+  }, [characters]);
+
+  const getCharacterInfo = useCallback(
+    (c: { id?: string; data: string; comment?: string | null }) => {
+      if (c.id && charInfoMap.has(c.id)) return charInfoMap.get(c.id)!;
+      return parseCharacterDisplayData(c);
+    },
+    [charInfoMap],
+  );
+
+  const charName = useCallback(
+    (c: { id?: string; data: string; comment?: string | null }) => getCharacterInfo(c).name,
+    [getCharacterInfo],
+  );
 
   // Build an auto-generated chat name from character IDs
   const buildAutoName = useCallback(
@@ -215,9 +229,13 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     [chat.id, updateChat],
   );
 
-  const available = characters.filter(
-    (c) => !chatCharIds.includes(c.id) && charName(c).toLowerCase().includes(search.toLowerCase()),
-  );
+  const available = characters.filter((c) => {
+    if (chatCharIds.includes(c.id)) return false;
+    const info = getCharacterInfo(c);
+    const query = search.toLowerCase();
+    const title = getCharacterTitle(info)?.toLowerCase() ?? "";
+    return info.name.toLowerCase().includes(query) || title.includes(query);
+  });
 
   const hasConnection = !!chat.connectionId;
   const hasCharacters = chatCharIds.length > 0;
@@ -363,11 +381,13 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
                     const c = characters.find((ch) => ch.id === cid);
                     if (!c) return null;
                     const name = charName(c);
+                    const title = getCharacterTitle(getCharacterInfo(c));
                     return (
                       <button
                         key={cid}
                         onClick={() => toggleCharacter(cid)}
                         className="flex items-center gap-1.5 rounded-full bg-[var(--primary)]/15 pl-1 pr-2.5 py-1 text-xs ring-1 ring-[var(--primary)]/30 transition-all hover:bg-[var(--destructive)]/15 hover:ring-[var(--destructive)]/30 group"
+                        title={title ? `${name} - ${title}` : name}
                       >
                         {c.avatarPath ? (
                           <img
@@ -406,7 +426,8 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
                 </div>
                 <div className="max-h-40 overflow-y-auto border-t border-[var(--border)]">
                   {available.map((c) => {
-                    const name = charName(c);
+                    const info = getCharacterInfo(c);
+                    const title = getCharacterTitle(info);
                     return (
                       <button
                         key={c.id}
@@ -416,16 +437,23 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
                         {c.avatarPath ? (
                           <img
                             src={c.avatarPath}
-                            alt={name}
+                            alt={info.name}
                             loading="lazy"
                             className="h-7 w-7 rounded-full object-cover"
                           />
                         ) : (
                           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent)] text-[0.5625rem] font-bold">
-                            {name[0]}
+                            {info.name[0]}
                           </div>
                         )}
-                        <span className="flex-1 truncate text-xs">{name}</span>
+                        <div className="min-w-0 flex-1">
+                          <span className="block truncate text-xs">{info.name}</span>
+                          {title && (
+                            <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                              {title}
+                            </span>
+                          )}
+                        </div>
                         <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
                       </button>
                     );
@@ -614,7 +642,8 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     comment?: string | null;
   }>;
   const characters = useMemo(
-    () => (allCharacters ?? []) as Array<{ id: string; data: string; avatarPath: string | null }>,
+    () =>
+      (allCharacters ?? []) as Array<{ id: string; data: string; comment?: string | null; avatarPath: string | null }>,
     [allCharacters],
   );
 
@@ -630,30 +659,28 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const activeLorebookIds: string[] = useMemo(() => metadata.activeLorebookIds ?? [], [metadata.activeLorebookIds]);
 
   // Character name helper
-  const charNameMap = useMemo(() => {
-    const map = new Map<string, string>();
+  const charInfoMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof parseCharacterDisplayData>>();
     for (const c of characters) {
-      try {
-        const p = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-        map.set(c.id, (p as { name?: string }).name ?? "Unknown");
-      } catch {
-        map.set(c.id, "Unknown");
-      }
+      map.set(c.id, parseCharacterDisplayData(c));
     }
     return map;
   }, [characters]);
 
   const charName = useCallback(
-    (c: { id?: string; data: string }) => {
-      if (c.id && charNameMap.has(c.id)) return charNameMap.get(c.id)!;
-      try {
-        const p = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-        return (p as { name?: string }).name ?? "Unknown";
-      } catch {
-        return "Unknown";
-      }
+    (c: { id?: string; data: string; comment?: string | null }) => {
+      if (c.id && charInfoMap.has(c.id)) return charInfoMap.get(c.id)!.name;
+      return parseCharacterDisplayData(c).name;
     },
-    [charNameMap],
+    [charInfoMap],
+  );
+
+  const charTitle = useCallback(
+    (c: { id?: string; data: string; comment?: string | null }) => {
+      if (c.id && charInfoMap.has(c.id)) return getCharacterTitle(charInfoMap.get(c.id)!);
+      return getCharacterTitle(parseCharacterDisplayData(c));
+    },
+    [charInfoMap],
   );
 
   // Track whether the user has manually edited the chat name.
@@ -665,10 +692,10 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const buildAutoName = useCallback(
     (charIds: string[]) => {
       if (charIds.length === 0) return "New Roleplay";
-      const names = charIds.map((id) => charNameMap.get(id)).filter((n): n is string => !!n);
+      const names = charIds.map((id) => charInfoMap.get(id)?.name).filter((n): n is string => !!n);
       return names.length > 0 ? names.join(", ") : "New Roleplay";
     },
-    [charNameMap],
+    [charInfoMap],
   );
 
   // ── Mutations ──
@@ -884,9 +911,12 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   }
 
   function renderCharacters() {
-    const available = characters.filter(
-      (c) => !chatCharIds.includes(c.id) && charName(c).toLowerCase().includes(charSearch.toLowerCase()),
-    );
+    const available = characters.filter((c) => {
+      if (chatCharIds.includes(c.id)) return false;
+      const query = charSearch.toLowerCase();
+      const title = charTitle(c)?.toLowerCase() ?? "";
+      return charName(c).toLowerCase().includes(query) || title.includes(query);
+    });
 
     return (
       <div className="space-y-2">
@@ -897,6 +927,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
               const c = characters.find((ch) => ch.id === cid);
               if (!c) return null;
               const name = charName(c);
+              const title = charTitle(c);
               return (
                 <div
                   key={cid}
@@ -909,7 +940,14 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                       {name[0]}
                     </div>
                   )}
-                  <span className="flex-1 truncate text-xs">{name}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-xs">{name}</span>
+                    {title && (
+                      <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                        {title}
+                      </span>
+                    )}
+                  </div>
                   <button
                     onClick={() => toggleCharacter(cid)}
                     className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
@@ -937,6 +975,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
           <div className="max-h-32 overflow-y-auto">
             {available.map((c) => {
               const name = charName(c);
+              const title = charTitle(c);
               return (
                 <button
                   key={c.id}
@@ -950,7 +989,14 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                       {name[0]}
                     </div>
                   )}
-                  <span className="flex-1 truncate text-xs">{name}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-xs">{name}</span>
+                    {title && (
+                      <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                        {title}
+                      </span>
+                    )}
+                  </div>
                   <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
                 </button>
               );
@@ -1165,11 +1211,13 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                         const c = characters.find((ch) => ch.id === cid);
                         if (!c) return null;
                         const name = charName(c);
+                        const title = charTitle(c);
                         return (
                           <button
                             key={cid}
                             onClick={() => toggleCharacter(cid)}
                             className="flex items-center gap-1.5 rounded-full bg-[var(--primary)]/15 pl-1 pr-2.5 py-1 text-xs ring-1 ring-[var(--primary)]/30 transition-all hover:bg-[var(--destructive)]/15 hover:ring-[var(--destructive)]/30 group"
+                            title={title ? `${name} - ${title}` : name}
                           >
                             {c.avatarPath ? (
                               <img
@@ -1206,12 +1254,15 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                     </div>
                     <div className="max-h-40 overflow-y-auto">
                       {characters
-                        .filter(
-                          (c) =>
-                            !chatCharIds.includes(c.id) && charName(c).toLowerCase().includes(charSearch.toLowerCase()),
-                        )
+                        .filter((c) => {
+                          if (chatCharIds.includes(c.id)) return false;
+                          const query = charSearch.toLowerCase();
+                          const title = charTitle(c)?.toLowerCase() ?? "";
+                          return charName(c).toLowerCase().includes(query) || title.includes(query);
+                        })
                         .map((c) => {
                           const name = charName(c);
+                          const title = charTitle(c);
                           return (
                             <button
                               key={c.id}
@@ -1230,15 +1281,24 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                                   {name[0]}
                                 </div>
                               )}
-                              <span className="flex-1 truncate text-xs">{name}</span>
+                              <div className="min-w-0 flex-1">
+                                <span className="block truncate text-xs">{name}</span>
+                                {title && (
+                                  <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                                    {title}
+                                  </span>
+                                )}
+                              </div>
                               <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
                             </button>
                           );
                         })}
-                      {characters.filter(
-                        (c) =>
-                          !chatCharIds.includes(c.id) && charName(c).toLowerCase().includes(charSearch.toLowerCase()),
-                      ).length === 0 && (
+                      {characters.filter((c) => {
+                        if (chatCharIds.includes(c.id)) return false;
+                        const query = charSearch.toLowerCase();
+                        const title = charTitle(c)?.toLowerCase() ?? "";
+                        return charName(c).toLowerCase().includes(query) || title.includes(query);
+                      }).length === 0 && (
                         <p className="px-3 py-3 text-center text-[0.6875rem] text-[var(--muted-foreground)]">
                           {characters.filter((c) => !chatCharIds.includes(c.id)).length === 0
                             ? "All characters added."

@@ -101,8 +101,9 @@ function buildMacroHelpText(): string {
 
   return [
     "Supported Macros:",
+    "Tip: In group chats, a bracketed block containing character macros like {{char}} and {{description}} repeats once per character.",
     ...Array.from(sections.entries()).flatMap(([category, lines], index) =>
-      index === 0 ? [`${category}:`, ...lines] : ["", `${category}:`, ...lines],
+      index === 0 ? ["", `${category}:`, ...lines] : ["", `${category}:`, ...lines],
     ),
   ].join("\n");
 }

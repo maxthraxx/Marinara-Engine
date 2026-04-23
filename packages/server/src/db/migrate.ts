@@ -43,6 +43,7 @@ const CREATE_TABLES: string[] = [
   `CREATE TABLE IF NOT EXISTS characters (
     id TEXT PRIMARY KEY NOT NULL,
     data TEXT NOT NULL,
+    comment TEXT NOT NULL DEFAULT '',
     avatar_path TEXT,
     sprite_folder_path TEXT,
     created_at TEXT NOT NULL,
@@ -495,6 +496,11 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "api_connections",
     column: "embedding_base_url",
     definition: "TEXT",
+  },
+  {
+    table: "characters",
+    column: "comment",
+    definition: "TEXT NOT NULL DEFAULT ''",
   },
   {
     table: "personas",

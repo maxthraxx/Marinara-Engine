@@ -102,6 +102,8 @@ export interface Character {
   id: string;
   /** Original V2 data preserved for export compatibility */
   data: CharacterData;
+  /** User-only note shown under the character name in selectors and editors */
+  comment: string;
   /** Path to avatar image file */
   avatarPath: string | null;
   /** Path to sprite folder */

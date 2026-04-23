@@ -2,20 +2,58 @@
 
 This file is the release-notes source of truth for Marinara Engine. Reuse these entries when publishing GitHub Releases for tags in the `vX.Y.Z` format.
 
-## [1.5.6]
-
-### Added
-
-- Text-to-speech support via any OpenAI-compatible provider. Configure the base URL, API key, model, voice, and speed in the Connections panel. Voices are fetched dynamically from your provider and fall back to the OpenAI built-in list when the endpoint is unavailable.
-- Per-message speak button with loading feedback. While audio is fetching or playing, all other speak buttons are disabled so only one message plays at a time.
-- Autoplay option for Roleplay, Conversation, and Game modes — automatically speaks each assistant message as it finishes generating.
-- TTS settings auto-save as you change them; no manual save step required.
-
 ## [1.5.5]
 
 ### Added
 
+- New agent: Card Evolution Auditor that actively updates your characters as they grow.
+- Polska gurom!!! In Game mode.
+- GM can now add party members during the game and create character cards for them.
+- Turn, Scene Analysis, and Assets Image Generation retry button in Game mode.
+- Improved Game mode's structure and prompts.
+- Custom widgets, notes/books, session summaries, and inventory in Game mode are now all editable.
+- You can now upload custom NPC portraits in Game mode when clicking on the portraits.
+- The Characters tab now opens a full-page library with large card browsing, creator-note previews, and a selected-card overview before editing.
 - Chat galleries and character galleries now support selecting and uploading multiple images in one action.
+- Chat branches can now be switched from a selector at the top of the chat bar instead of only through Manage Chat Files.
+- Conversation schedules now let you customize per-character idle and DND response delays, plus inactivity follow-up timing.
+- Character titles to mirror the ones Personas have.
+- Various macros, see all under `/macros`.
+- Game mode combat improvements (statuses, abilities).
+- Bulk delete.
+- Search filters for chats in the Chats tab.
+- TTS support.
+- FAQ on the home page.
+
+### Fixed
+
+- Fixed sidecar startup state and enabled logs for Ollama to see what's going on.
+- You can now use tab when writing lorebook entries.
+- Some image generation endpoints.
+- Clicking roleplay image attachments now opens them in Marinara's in-app lightbox instead of a new browser tab.
+- Auto-play in game mode now pauses when you're reading a note, a book, or doing a QTE event.
+- Opening a conversation no longer resets the autonomous-message inactivity timers just because the message history finished loading.
+- OpenAI-compatible connections no longer send reasoning payloads to models that do not support them.
+- Selfies and sprite generation no longer force a character avatar as a hidden reference image by default.
+- Explicitly adding or editing an agent no longer persists it as globally disabled.
+- Memory recall now stays inside a dedicated prompt budget before injection, preventing recalled history from crowding out agent and thinking context.
+- Exporting a modified character to PNG no longer reuses stale embedded card metadata from the avatar image.
+- Sprites get displayed automatically when you add Expression Engine to your chat, and their setup was moved to the Agents section of Chat Settings.
+- More ComfyUI fixes.
+- Group chats' inconsistent injections: now, upon regenerations, the model knows who should respond.
+- Game mode scene-wrap now only sends the current party's character names instead of the entire imported character library, preventing large libraries from tripping the 100-name limit.
+- Professor Mari now has access to all the fields in character cards/personas/lorebooks/etc. and can correctly split info into them.
+- The Windows installer now downloads Git from a valid prerequisite URL again instead of failing the autodownload step with a missing PowerShell `-Uri` argument.
+- Mobile UI fixes for Game mode.
+- Increased the output size to 16384 tokens on the new Game setup generation to prevent malformed JSON errors.
+- Decreased padding for text in boxes in the Glued Side Panel avatars option.
+- Edit Sheet in Game mode black screen bug.
+- CYOA choices can now be edited.
+- UI fixes.
+- Lorebook entries now don't stay active after they've been activated once, and the lorebooks respect the token limits of how many active entries there may be at once.
+- Custom widgets now may change between sessions.
+- No more looping music/ambiance in Game mode.
+- If a provider accepts a smaller context size than the overall model allows, we now automatically reduce the output size to match the allowed size.
 
 ## [1.5.4]
 

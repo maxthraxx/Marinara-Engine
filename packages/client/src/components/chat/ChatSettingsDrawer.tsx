@@ -2,7 +2,7 @@
 // Chat: Settings Drawer — per-chat configuration
 // ──────────────────────────────────────────────
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQueries } from "@tanstack/react-query";
 import {
   X,
   Users,
@@ -58,7 +58,7 @@ import {
 } from "../ui/GenerationParametersEditor";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SummariesEditorModal } from "./SummariesEditorModal";
-import { useCharacters, useCharacterSprites, usePersonas, useCharacterGroups } from "../../hooks/use-characters";
+import { useCharacters, usePersonas, useCharacterGroups, type SpriteInfo } from "../../hooks/use-characters";
 import { useLorebooks } from "../../hooks/use-lorebooks";
 import { usePresetFull, usePresets } from "../../hooks/use-presets";
 import { useConnections, useSaveConnectionDefaults } from "../../hooks/use-connections";
@@ -73,6 +73,7 @@ import {
   chatKeys,
 } from "../../hooks/use-chats";
 import { api } from "../../lib/api-client";
+import { getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
 import { useUIStore } from "../../stores/ui.store";
 import {
   useChatPresets,
@@ -306,6 +307,10 @@ export function ChatSettingsDrawer({
   const lorebookKeeperEnabledByDefault = isEnabledFlag(lorebookKeeperConfig?.enabled);
   const lorebookKeeperActive =
     activeAgentIds.includes("lorebook-keeper") || (activeAgentIds.length === 0 && lorebookKeeperEnabledByDefault);
+  const expressionConfig = agentConfigsByType.get("expression") ?? null;
+  const expressionEnabledByDefault = isEnabledFlag(expressionConfig?.enabled);
+  const expressionActive =
+    activeAgentIds.includes("expression") || (activeAgentIds.length === 0 && expressionEnabledByDefault);
   const lorebookKeeperTargetLorebookId =
     typeof metadata.lorebookKeeperTargetLorebookId === "string" ? metadata.lorebookKeeperTargetLorebookId : "";
   const lorebookKeeperReadBehindMessages = normalizeNonNegativeInteger(
@@ -336,34 +341,73 @@ export function ChatSettingsDrawer({
       (allCharacters ?? []) as Array<{
         id: string;
         data: string;
+        comment?: string | null;
         avatarPath: string | null;
       }>,
     [allCharacters],
   );
 
+  const chatCharacters = useMemo(
+    () =>
+      chatCharIds
+        .map((characterId) => characters.find((character) => character.id === characterId))
+        .filter((character): character is { id: string; data: string; avatarPath: string | null } => !!character),
+    [chatCharIds, characters],
+  );
+
+  const chatSpriteQueries = useQueries({
+    queries: chatCharacters.map((character) => ({
+      queryKey: ["sprites", character.id],
+      queryFn: () => api.get<SpriteInfo[]>(`/sprites/${character.id}`),
+      enabled: !!character.id,
+      staleTime: 5 * 60_000,
+    })),
+  });
+
+  const chatCharactersWithSprites = chatCharacters.filter((character, index) => {
+    const sprites = chatSpriteQueries[index]?.data;
+    return Array.isArray(sprites) && sprites.length > 0;
+  });
+  const chatCharactersLoading = chatCharIds.length > 0 && allCharacters == null;
+  const chatSpriteChoicesLoading =
+    chatCharacters.length > 0 &&
+    chatCharactersWithSprites.length === 0 &&
+    chatSpriteQueries.some((query) => query.isLoading);
+
   // Memoize character name parsing — avoids repeated JSON.parse per render
-  const charNameMap = useMemo(() => {
-    const map = new Map<string, string>();
+  const charInfoMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof parseCharacterDisplayData>>();
     for (const c of characters) {
-      try {
-        const p = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-        map.set(c.id, (p as { name?: string }).name ?? "Unknown");
-      } catch {
-        map.set(c.id, "Unknown");
-      }
+      map.set(c.id, parseCharacterDisplayData(c));
     }
     return map;
   }, [characters]);
 
-  const charName = (c: { id?: string; data: string }) => {
-    if (c.id && charNameMap.has(c.id)) return charNameMap.get(c.id)!;
-    try {
-      const p = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-      return (p as { name?: string }).name ?? "Unknown";
-    } catch {
-      return "Unknown";
+  const charNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [id, info] of charInfoMap) {
+      map.set(id, info.name);
     }
-  };
+    return map;
+  }, [charInfoMap]);
+
+  const getCharacterInfo = useCallback(
+    (c: { id?: string; data: string; comment?: string | null }) => {
+      if (c.id && charInfoMap.has(c.id)) return charInfoMap.get(c.id)!;
+      return parseCharacterDisplayData(c);
+    },
+    [charInfoMap],
+  );
+
+  const charName = useCallback(
+    (c: { id?: string; data: string; comment?: string | null }) => getCharacterInfo(c).name,
+    [getCharacterInfo],
+  );
+
+  const charTitle = useCallback(
+    (c: { id?: string; data: string; comment?: string | null }) => getCharacterTitle(getCharacterInfo(c)),
+    [getCharacterInfo],
+  );
 
   // ── First message confirm state ──
   const [firstMesConfirm, setFirstMesConfirm] = useState<{
@@ -399,6 +443,15 @@ export function ChatSettingsDrawer({
     if (idx >= 0) {
       current.splice(idx, 1);
       updateChat.mutate({ id: chat.id, characterIds: current });
+      if (spriteCharacterIds.includes(charId)) {
+        const nextSpritePlacements = { ...normalizeSpritePlacements(metadata.spritePlacements) };
+        delete nextSpritePlacements[charId];
+        updateMeta.mutate({
+          id: chat.id,
+          spriteCharacterIds: spriteCharacterIds.filter((id) => id !== charId),
+          spritePlacements: nextSpritePlacements,
+        });
+      }
     } else {
       current.push(charId);
       updateChat.mutate(
@@ -566,10 +619,6 @@ export function ChatSettingsDrawer({
     updateChat.mutate({ id: chat.id, connectionId });
   };
 
-  const setPartyConnection = (connectionId: string | null) => {
-    updateMeta.mutate({ id: chat.id, gameCharacterConnectionId: connectionId });
-  };
-
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(chat.name);
   const [showCharPicker, setShowCharPicker] = useState(false);
@@ -663,14 +712,14 @@ export function ChatSettingsDrawer({
     setAddingAgentToChat(true);
     try {
       if (config) {
-        await updateAgentConfig.mutateAsync({ id: config.id, settings: nextSettings });
+        await updateAgentConfig.mutateAsync({ id: config.id, enabled: true, settings: nextSettings });
       } else if (builtInMeta) {
         await createAgent.mutateAsync({
           type: builtInMeta.id,
           name: agent.name,
           description: agent.description,
           phase: agent.phase,
-          enabled: builtInMeta.enabledByDefault,
+          enabled: true,
           connectionId: null,
           promptTemplate: "",
           settings: nextSettings,
@@ -988,7 +1037,7 @@ export function ChatSettingsDrawer({
               <div className="space-y-2">
                 <div>
                   <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                    GM Model
+                    GM / Party Model
                   </label>
                   <select
                     value={chat.connectionId ?? ""}
@@ -997,24 +1046,6 @@ export function ChatSettingsDrawer({
                   >
                     <option value="">None</option>
                     <option value="random">🎲 Random</option>
-                    {((connections ?? []) as Array<{ id: string; name: string; model?: string }>).map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                        {c.model ? ` — ${c.model}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                    Party AI Model
-                  </label>
-                  <select
-                    value={(metadata.gameCharacterConnectionId as string) ?? ""}
-                    onChange={(e) => setPartyConnection(e.target.value || null)}
-                    className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                  >
-                    <option value="">Same as GM</option>
                     {((connections ?? []) as Array<{ id: string; name: string; model?: string }>).map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
@@ -1221,12 +1252,20 @@ export function ChatSettingsDrawer({
                       const c = characters.find((ch) => ch.id === cid);
                       if (!c) return null;
                       const name = charName(c);
+                      const title = charTitle(c);
                       return (
                         <div
                           key={c.id}
                           className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
                         >
-                          <span className="flex-1 truncate text-xs">{name}</span>
+                          <div className="min-w-0 flex-1">
+                            <span className="block truncate text-xs">{name}</span>
+                            {title && (
+                              <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                                {title}
+                              </span>
+                            )}
+                          </div>
                           <button
                             onClick={() => toggleCharacter(c.id)}
                             className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
@@ -1260,9 +1299,14 @@ export function ChatSettingsDrawer({
                 >
                   {characters
                     .filter((c) => !chatCharIds.includes(c.id))
-                    .filter((c) => charName(c).toLowerCase().includes(charSearch.toLowerCase()))
+                    .filter((c) => {
+                      const query = charSearch.toLowerCase();
+                      const title = charTitle(c)?.toLowerCase() ?? "";
+                      return charName(c).toLowerCase().includes(query) || title.includes(query);
+                    })
                     .map((c) => {
                       const name = charName(c);
+                      const title = charTitle(c);
                       return (
                         <button
                           key={c.id}
@@ -1272,7 +1316,14 @@ export function ChatSettingsDrawer({
                           }}
                           className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)]"
                         >
-                          <span className="flex-1 truncate text-xs">{name}</span>
+                          <div className="min-w-0 flex-1">
+                            <span className="block truncate text-xs">{name}</span>
+                            {title && (
+                              <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                                {title}
+                              </span>
+                            )}
+                          </div>
                           <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
                         </button>
                       );
@@ -1449,7 +1500,7 @@ export function ChatSettingsDrawer({
                     const c = characters.find((ch) => ch.id === cid);
                     if (!c) return null;
                     const name = charName(c);
-                    const spriteActive = spriteCharacterIds.includes(c.id);
+                    const title = charTitle(c);
                     return (
                       <div key={c.id}>
                         {dropIdx === i && dragIdx !== null && dragIdx !== i && (
@@ -1494,14 +1545,15 @@ export function ChatSettingsDrawer({
                                 {name[0]}
                               </div>
                             )}
-                            <span className="flex-1 truncate text-xs">{name}</span>
+                            <div className="min-w-0 flex-1">
+                              <span className="block truncate text-xs">{name}</span>
+                              {title && (
+                                <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                                  {title}
+                                </span>
+                              )}
+                            </div>
                           </button>
-                          <SpriteToggleButton
-                            characterId={c.id}
-                            active={spriteActive}
-                            disabled={!spriteActive && spriteCharacterIds.length >= 3}
-                            onToggle={() => toggleSprite(c.id)}
-                          />
                           <button
                             onClick={() => toggleCharacter(c.id)}
                             className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
@@ -1516,72 +1568,6 @@ export function ChatSettingsDrawer({
                   {dropIdx === chatCharIds.length && dragIdx !== null && (
                     <div className="h-0.5 rounded-full bg-[var(--primary)] mx-2 mt-1" />
                   )}
-                </div>
-              )}
-
-              {/* Sprite layout — only show if any sprites enabled */}
-              {spriteCharacterIds.length > 0 && (
-                <div className="mt-2 rounded-lg bg-[var(--secondary)] px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
-                    <span className="flex-1 text-[0.6875rem] text-[var(--muted-foreground)]">Sprite Layout</span>
-                    <button
-                      onClick={() => onToggleSpriteArrange?.()}
-                      className={cn(
-                        "rounded-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors ring-1 ring-[var(--border)]",
-                        spriteArrangeMode
-                          ? "bg-[var(--primary)] text-white"
-                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-                      )}
-                    >
-                      {spriteArrangeMode ? "Done" : "Arrange"}
-                    </button>
-                    <button
-                      onClick={resetSpritePlacements}
-                      disabled={!hasCustomSpritePlacements}
-                      className={cn(
-                        "rounded-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors ring-1 ring-[var(--border)]",
-                        hasCustomSpritePlacements
-                          ? "text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
-                          : "cursor-not-allowed opacity-40 text-[var(--muted-foreground)]",
-                      )}
-                    >
-                      Reset
-                    </button>
-                  </div>
-
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Default Side</span>
-                    <div className="flex rounded-md ring-1 ring-[var(--border)]">
-                      <button
-                        onClick={() => setSpriteSide("left")}
-                        className={cn(
-                          "px-2.5 py-1 text-[0.625rem] font-medium transition-colors rounded-l-md",
-                          spritePosition === "left"
-                            ? "bg-[var(--primary)] text-white"
-                            : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-                        )}
-                      >
-                        Left
-                      </button>
-                      <button
-                        onClick={() => setSpriteSide("right")}
-                        className={cn(
-                          "px-2.5 py-1 text-[0.625rem] font-medium transition-colors rounded-r-md",
-                          spritePosition === "right"
-                            ? "bg-[var(--primary)] text-white"
-                            : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-                        )}
-                      >
-                        Right
-                      </button>
-                    </div>
-                  </div>
-
-                  <p className="mt-2 text-[0.5625rem] leading-relaxed text-[var(--muted-foreground)]">
-                    Arrange mode lets you drag sprites anywhere in the chat area. Reset clears saved positions. Changing
-                    the side flips the current layout.
-                  </p>
                 </div>
               )}
 
@@ -1605,9 +1591,14 @@ export function ChatSettingsDrawer({
                 >
                   {characters
                     .filter((c) => !chatCharIds.includes(c.id))
-                    .filter((c) => charName(c).toLowerCase().includes(charSearch.toLowerCase()))
+                    .filter((c) => {
+                      const query = charSearch.toLowerCase();
+                      const title = charTitle(c)?.toLowerCase() ?? "";
+                      return charName(c).toLowerCase().includes(query) || title.includes(query);
+                    })
                     .map((c) => {
                       const name = charName(c);
+                      const title = charTitle(c);
                       return (
                         <button
                           key={c.id}
@@ -1624,14 +1615,25 @@ export function ChatSettingsDrawer({
                               {name[0]}
                             </div>
                           )}
-                          <span className="flex-1 truncate text-xs">{name}</span>
+                          <div className="min-w-0 flex-1">
+                            <span className="block truncate text-xs">{name}</span>
+                            {title && (
+                              <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                                {title}
+                              </span>
+                            )}
+                          </div>
                           <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
                         </button>
                       );
                     })}
                   {characters
                     .filter((c) => !chatCharIds.includes(c.id))
-                    .filter((c) => charName(c).toLowerCase().includes(charSearch.toLowerCase())).length === 0 && (
+                    .filter((c) => {
+                      const query = charSearch.toLowerCase();
+                      const title = charTitle(c)?.toLowerCase() ?? "";
+                      return charName(c).toLowerCase().includes(query) || title.includes(query);
+                    }).length === 0 && (
                     <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
                       {characters.filter((c) => !chatCharIds.includes(c.id)).length === 0
                         ? "All characters already added."
@@ -2347,6 +2349,11 @@ export function ChatSettingsDrawer({
               help="When enabled, AI agents run automatically during generation to enrich the chat with world state tracking, expression detection, and more."
             >
               <div className="space-y-2">
+                {isGame && metadata.enableAgents && (
+                  <p className="px-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                    Toggle agents for this game session. Only two are allowed to ensure the game's format doesn't break.
+                  </p>
+                )}
                 <button
                   onClick={() => {
                     updateMeta.mutate({ id: chat.id, enableAgents: !metadata.enableAgents });
@@ -2362,7 +2369,7 @@ export function ChatSettingsDrawer({
                     <span className="text-xs font-medium">{isGame ? "Enable Scene Analysis" : "Enable Agents"}</span>
                     <p className="text-[0.625rem] text-[var(--muted-foreground)]">
                       {isGame
-                        ? "Analyse scenes for backgrounds, music, effects, and expressions after each GM turn"
+                        ? "Analyse scenes for backgrounds, music, effects, and expressions after each GM turn."
                         : "Run AI agents during generation (world state, expressions, etc.)"}
                     </p>
                     {isGame &&
@@ -2417,11 +2424,6 @@ export function ChatSettingsDrawer({
                     </select>
                   </div>
                 )}
-                <p className="text-[0.625rem] text-[var(--muted-foreground)] px-1">
-                  {metadata.enableAgents
-                    ? "If enabled, this chat can use workspace default agents or any agents you add below."
-                    : "If disabled, no agents (workspace default or per-chat) will run for this chat."}
-                </p>
 
                 {metadata.enableAgents && !isGame && (
                   <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/70 p-3">
@@ -2502,6 +2504,173 @@ export function ChatSettingsDrawer({
                           ? "Lorebook Keeper is not currently enabled in workspace defaults. These chat settings will apply once it is enabled."
                           : "Lorebook Keeper is not in this chat's active agent list. Add it below to make these settings take effect."}
                     </p>
+                  </div>
+                )}
+
+                {metadata.enableAgents && !isGame && (
+                  <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/70 p-3">
+                    <div className="flex items-start gap-2">
+                      <Image size="0.75rem" className="mt-0.5 text-[var(--primary)]" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 text-[0.6875rem] font-medium">
+                          <span>Expression Engine Sprites</span>
+                          {spriteCharacterIds.length > 0 && (
+                            <span className="rounded-full bg-[var(--primary)]/10 px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--primary)]">
+                              {spriteCharacterIds.length}/3 enabled
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                          Choose which added characters can appear as VN sprites and control the sprite layout for this
+                          chat.
+                        </p>
+                      </div>
+                    </div>
+
+                    {chatCharIds.length === 0 ? (
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                        Add characters to this chat first to enable sprite selection.
+                      </p>
+                    ) : chatCharactersLoading ? (
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">Loading added characters...</p>
+                    ) : chatCharactersWithSprites.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {chatCharactersWithSprites.map((character) => {
+                          const name = charName(character);
+                          const title = charTitle(character);
+                          const spriteActive = spriteCharacterIds.includes(character.id);
+
+                          return (
+                            <div
+                              key={character.id}
+                              className="flex items-center gap-2.5 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]"
+                            >
+                              <button
+                                onClick={() => {
+                                  onClose();
+                                  useUIStore.getState().openCharacterDetail(character.id);
+                                }}
+                                className="flex min-w-0 flex-1 items-center gap-2.5 text-left transition-colors hover:opacity-80"
+                                title="Open character card"
+                              >
+                                {character.avatarPath ? (
+                                  <img
+                                    src={character.avatarPath}
+                                    alt={name}
+                                    loading="lazy"
+                                    className="h-8 w-8 rounded-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent)] text-[0.625rem] font-bold">
+                                    {name[0]}
+                                  </div>
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <span className="block truncate text-xs font-medium">{name}</span>
+                                  {title && (
+                                    <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                                      {title}
+                                    </span>
+                                  )}
+                                  <span className="block text-[0.625rem] text-[var(--muted-foreground)]">
+                                    Uploaded sprites available
+                                  </span>
+                                </div>
+                              </button>
+
+                              <SpriteToggleButton
+                                active={spriteActive}
+                                disabled={!spriteActive && spriteCharacterIds.length >= 3}
+                                onToggle={() => toggleSprite(character.id)}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : chatSpriteChoicesLoading ? (
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                        Checking added characters for uploaded sprites...
+                      </p>
+                    ) : (
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                        None of the added characters have uploaded sprites yet. Open a character card to add them first.
+                      </p>
+                    )}
+
+                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      {expressionActive
+                        ? "Only added characters with uploaded sprites appear here. You can enable up to 3 at a time."
+                        : activeAgentIds.length === 0
+                          ? "Expression Engine is not currently enabled in workspace defaults. These sprite choices will apply once it is enabled."
+                          : "Expression Engine is not in this chat's active agent list. Add it below to show sprites during roleplay."}
+                    </p>
+
+                    {spriteCharacterIds.length > 0 && (
+                      <div className="rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
+                        <div className="flex items-center gap-2">
+                          <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
+                          <span className="flex-1 text-[0.6875rem] text-[var(--muted-foreground)]">Sprite Layout</span>
+                          <button
+                            onClick={() => onToggleSpriteArrange?.()}
+                            className={cn(
+                              "rounded-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors ring-1 ring-[var(--border)]",
+                              spriteArrangeMode
+                                ? "bg-[var(--primary)] text-white"
+                                : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                            )}
+                          >
+                            {spriteArrangeMode ? "Done" : "Arrange"}
+                          </button>
+                          <button
+                            onClick={resetSpritePlacements}
+                            disabled={!hasCustomSpritePlacements}
+                            className={cn(
+                              "rounded-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors ring-1 ring-[var(--border)]",
+                              hasCustomSpritePlacements
+                                ? "text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+                                : "cursor-not-allowed opacity-40 text-[var(--muted-foreground)]",
+                            )}
+                          >
+                            Reset
+                          </button>
+                        </div>
+
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                            Default Side
+                          </span>
+                          <div className="flex rounded-md ring-1 ring-[var(--border)]">
+                            <button
+                              onClick={() => setSpriteSide("left")}
+                              className={cn(
+                                "rounded-l-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors",
+                                spritePosition === "left"
+                                  ? "bg-[var(--primary)] text-white"
+                                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                              )}
+                            >
+                              Left
+                            </button>
+                            <button
+                              onClick={() => setSpriteSide("right")}
+                              className={cn(
+                                "rounded-r-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors",
+                                spritePosition === "right"
+                                  ? "bg-[var(--primary)] text-white"
+                                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                              )}
+                            >
+                              Right
+                            </button>
+                          </div>
+                        </div>
+
+                        <p className="mt-2 text-[0.5625rem] leading-relaxed text-[var(--muted-foreground)]">
+                          Arrange mode lets you drag sprites anywhere in the chat area. Reset clears saved positions.
+                          Changing the side flips the current layout.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2599,7 +2768,7 @@ export function ChatSettingsDrawer({
                           <Image size="0.75rem" /> Image Generation
                         </span>
                         <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                          Auto-generate NPC portraits and location backgrounds during gameplay
+                          Auto-generate NPC portraits and location backgrounds during gameplay.
                         </p>
                       </div>
                       <div
@@ -2643,9 +2812,6 @@ export function ChatSettingsDrawer({
                   <>
                     {isGame ? (
                       <div className="space-y-1">
-                        <p className="text-[0.625rem] text-[var(--muted-foreground)] px-1">
-                          Toggle agents for this game session. Add or remove agents from the main Agents page.
-                        </p>
                         {gameAgentPool.map((agentId) => {
                           const agent =
                             availableAgents.find((a) => a.id === agentId) ??
@@ -3896,37 +4062,30 @@ function PickerDropdown({
 }
 
 // ── Sprite toggle button (per character) ──
-// Uses the hook internally so we can conditionally render based on whether sprites exist.
 function SpriteToggleButton({
-  characterId,
   active,
   disabled,
   onToggle,
 }: {
-  characterId: string;
   active: boolean;
   disabled: boolean;
   onToggle: () => void;
 }) {
-  const { data: sprites } = useCharacterSprites(characterId);
-  const hasSprites = Array.isArray(sprites) && sprites.length > 0;
-
-  if (!hasSprites) return null;
-
   return (
     <button
       onClick={onToggle}
       disabled={disabled}
       className={cn(
-        "flex h-5 w-5 items-center justify-center rounded-md transition-colors",
+        "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[0.625rem] font-medium transition-colors ring-1",
         active
-          ? "text-[var(--primary)] hover:bg-[var(--primary)]/15"
-          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+          ? "bg-[var(--primary)]/10 text-[var(--primary)] ring-[var(--primary)]/30 hover:bg-[var(--primary)]/15"
+          : "text-[var(--muted-foreground)] ring-[var(--border)] hover:bg-[var(--accent)]",
         disabled && "opacity-30 cursor-not-allowed",
       )}
-      title={active ? "Hide sprite" : disabled ? "Max 3 sprites" : "Show sprite"}
+      title={active ? "Disable sprite" : disabled ? "Max 3 sprites" : "Enable sprite"}
     >
       <Image size="0.6875rem" />
+      <span>{active ? "Enabled" : "Enable"}</span>
     </button>
   );
 }
@@ -4016,6 +4175,8 @@ function ScheduleEditor({
       weekStart: string;
       days: Record<string, ScheduleBlock[]>;
       inactivityThresholdMinutes: number;
+      idleResponseDelayMinutes?: number;
+      dndResponseDelayMinutes?: number;
       talkativeness: number;
     }
   >;
@@ -4025,7 +4186,25 @@ function ScheduleEditor({
 }) {
   const [expandedCharId, setExpandedCharId] = useState<string | null>(null);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<Record<string, ScheduleBlock[]> | null>(null);
+  const [editDraft, setEditDraft] = useState<{
+    days: Record<string, ScheduleBlock[]>;
+    inactivityThresholdMinutes: string;
+    idleResponseDelayMinutes: string;
+    dndResponseDelayMinutes: string;
+  } | null>(null);
+
+  const parseRequiredMinutes = (value: string, fallback: number, min: number, max: number) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+  };
+
+  const parseOptionalMinutes = (value: string, min: number, max: number) => {
+    if (!value.trim()) return undefined;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return undefined;
+    return Math.max(min, Math.min(max, parsed));
+  };
 
   // When a character is expanded, load their schedule into a draft for editing
   const handleExpandChar = (charId: string) => {
@@ -4037,7 +4216,14 @@ function ScheduleEditor({
     }
     const schedule = characterSchedules[charId];
     if (schedule) {
-      setEditDraft(JSON.parse(JSON.stringify(schedule.days)));
+      setEditDraft({
+        days: JSON.parse(JSON.stringify(schedule.days)),
+        inactivityThresholdMinutes: String(schedule.inactivityThresholdMinutes),
+        idleResponseDelayMinutes:
+          typeof schedule.idleResponseDelayMinutes === "number" ? String(schedule.idleResponseDelayMinutes) : "",
+        dndResponseDelayMinutes:
+          typeof schedule.dndResponseDelayMinutes === "number" ? String(schedule.dndResponseDelayMinutes) : "",
+      });
     }
     setExpandedCharId(charId);
     setExpandedDay(null);
@@ -4046,10 +4232,30 @@ function ScheduleEditor({
   const handleSave = () => {
     if (!expandedCharId || !editDraft) return;
     const updated = { ...characterSchedules };
-    updated[expandedCharId] = {
-      ...updated[expandedCharId]!,
-      days: editDraft,
+    const existingSchedule = updated[expandedCharId]!;
+    const nextSchedule = {
+      ...existingSchedule,
+      days: editDraft.days,
+      inactivityThresholdMinutes: parseRequiredMinutes(
+        editDraft.inactivityThresholdMinutes,
+        existingSchedule.inactivityThresholdMinutes,
+        15,
+        360,
+      ),
     };
+    const idleDelay = parseOptionalMinutes(editDraft.idleResponseDelayMinutes, 0, 120);
+    const dndDelay = parseOptionalMinutes(editDraft.dndResponseDelayMinutes, 0, 120);
+    if (idleDelay === undefined) {
+      delete nextSchedule.idleResponseDelayMinutes;
+    } else {
+      nextSchedule.idleResponseDelayMinutes = idleDelay;
+    }
+    if (dndDelay === undefined) {
+      delete nextSchedule.dndResponseDelayMinutes;
+    } else {
+      nextSchedule.dndResponseDelayMinutes = dndDelay;
+    }
+    updated[expandedCharId] = nextSchedule;
     onSave(updated);
     setExpandedCharId(null);
     setEditDraft(null);
@@ -4057,28 +4263,36 @@ function ScheduleEditor({
 
   const updateBlock = (day: string, idx: number, field: keyof ScheduleBlock, value: string) => {
     if (!editDraft) return;
-    const newDraft = { ...editDraft };
-    const dayBlocks = [...(newDraft[day] ?? [])];
+    const newDraft = { ...editDraft, days: { ...editDraft.days } };
+    const dayBlocks = [...(newDraft.days[day] ?? [])];
     dayBlocks[idx] = { ...dayBlocks[idx]!, [field]: value };
-    newDraft[day] = dayBlocks;
+    newDraft.days[day] = dayBlocks;
     setEditDraft(newDraft);
+  };
+
+  const updateDraftSetting = (
+    field: "inactivityThresholdMinutes" | "idleResponseDelayMinutes" | "dndResponseDelayMinutes",
+    value: string,
+  ) => {
+    if (!editDraft) return;
+    setEditDraft({ ...editDraft, [field]: value });
   };
 
   const addBlock = (day: string) => {
     if (!editDraft) return;
-    const newDraft = { ...editDraft };
-    const dayBlocks = [...(newDraft[day] ?? [])];
+    const newDraft = { ...editDraft, days: { ...editDraft.days } };
+    const dayBlocks = [...(newDraft.days[day] ?? [])];
     dayBlocks.push({ time: "12:00-13:00", activity: "Free time", status: "online" });
-    newDraft[day] = dayBlocks;
+    newDraft.days[day] = dayBlocks;
     setEditDraft(newDraft);
   };
 
   const removeBlock = (day: string, idx: number) => {
     if (!editDraft) return;
-    const newDraft = { ...editDraft };
-    const dayBlocks = [...(newDraft[day] ?? [])];
+    const newDraft = { ...editDraft, days: { ...editDraft.days } };
+    const dayBlocks = [...(newDraft.days[day] ?? [])];
     dayBlocks.splice(idx, 1);
-    newDraft[day] = dayBlocks;
+    newDraft.days[day] = dayBlocks;
     setEditDraft(newDraft);
   };
 
@@ -4113,8 +4327,66 @@ function ScheduleEditor({
             {/* Expanded schedule editor */}
             {isExpanded && editDraft && (
               <div className="border-t border-[var(--border)] px-3 py-2 space-y-1.5">
+                <div className="rounded-md bg-[var(--background)] p-2 space-y-1.5">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <label className="space-y-1">
+                      <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                        Inactivity
+                      </span>
+                      <input
+                        type="number"
+                        min={15}
+                        max={360}
+                        step={5}
+                        value={editDraft.inactivityThresholdMinutes}
+                        onChange={(e) => updateDraftSetting("inactivityThresholdMinutes", e.target.value)}
+                        className="w-full rounded bg-[var(--secondary)] px-1.5 py-1 text-[0.625rem] outline-none ring-1 ring-transparent focus:ring-[var(--primary)]/40"
+                        placeholder="120"
+                      />
+                      <span className="block text-[0.5rem] text-[var(--muted-foreground)]">
+                        Minutes before they follow up.
+                      </span>
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                        Idle Delay
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={120}
+                        step={0.5}
+                        value={editDraft.idleResponseDelayMinutes}
+                        onChange={(e) => updateDraftSetting("idleResponseDelayMinutes", e.target.value)}
+                        className="w-full rounded bg-[var(--secondary)] px-1.5 py-1 text-[0.625rem] outline-none ring-1 ring-transparent focus:ring-[var(--primary)]/40"
+                        placeholder="Default"
+                      />
+                      <span className="block text-[0.5rem] text-[var(--muted-foreground)]">
+                        Blank keeps the built-in 1-3 minute range.
+                      </span>
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-[0.55rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                        DND Delay
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={120}
+                        step={0.5}
+                        value={editDraft.dndResponseDelayMinutes}
+                        onChange={(e) => updateDraftSetting("dndResponseDelayMinutes", e.target.value)}
+                        className="w-full rounded bg-[var(--secondary)] px-1.5 py-1 text-[0.625rem] outline-none ring-1 ring-transparent focus:ring-[var(--primary)]/40"
+                        placeholder="Default"
+                      />
+                      <span className="block text-[0.5rem] text-[var(--muted-foreground)]">
+                        Blank keeps the built-in 2-5 minute range.
+                      </span>
+                    </label>
+                  </div>
+                </div>
                 {SCHEDULE_DAYS.map((day) => {
-                  const blocks = editDraft[day] ?? [];
+                  const blocks = editDraft.days[day] ?? [];
                   const isDayExpanded = expandedDay === day;
 
                   return (

@@ -148,7 +148,7 @@ export function SpriteGenerationModal({
 
   // Config state
   const [appearance, setAppearance] = useState(defaultAppearance ?? "");
-  const [referenceImages, setReferenceImages] = useState<string[]>(defaultAvatarUrl ? [defaultAvatarUrl] : []);
+  const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [preset, setPreset] = useState<PresetKey>("6 (2×3)");
   const [selectedExpressions, setSelectedExpressions] = useState<string[]>([
     ...EXPRESSION_PRESETS["6 (2×3)"].expressions,
@@ -195,7 +195,7 @@ export function SpriteGenerationModal({
   // Reset reference image & appearance when the target character changes
   useEffect(() => {
     setAppearance(defaultAppearance ?? "");
-    setReferenceImages(defaultAvatarUrl ? [defaultAvatarUrl] : []);
+    setReferenceImages([]);
     setStep(0);
     setGeneratedSheet(null);
     setCells([]);

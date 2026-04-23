@@ -29,14 +29,14 @@ export function GameChoiceCards({ choices, onSelect, disabled }: GameChoiceCards
 
   return (
     <div className="mx-auto w-full max-w-2xl px-3 pb-3">
-      <div className="rounded-2xl border border-white/15 bg-black/50 p-3 backdrop-blur-md shadow-[0_8px_24px_rgba(0,0,0,0.3)]">
+      <div className="flex max-h-[min(52dvh,calc(100dvh-10.5rem))] flex-col rounded-2xl border border-white/15 bg-black/50 p-3 backdrop-blur-md shadow-[0_8px_24px_rgba(0,0,0,0.3)] md:max-h-none">
         <div className="mb-2 flex items-center gap-2">
           <span className="rounded-full bg-white/10 px-2 py-0.5 text-[0.625rem] font-semibold uppercase tracking-wide text-white/90">
             Choose your action
           </span>
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 overflow-y-auto overscroll-contain pr-1">
           {choices.map((choice, i) => (
             <button
               key={i}

@@ -155,6 +155,8 @@ export function ChatConversationSurface({
           characterNames={characterNames}
           personaInfo={personaInfo}
           chatMeta={chatMeta}
+          chatName={chat?.name}
+          chatGroupId={chat?.groupId ?? null}
           chatCharIds={chatCharIds}
           onDelete={onDelete}
           onRegenerate={onRegenerate}

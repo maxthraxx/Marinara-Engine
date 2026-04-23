@@ -14,6 +14,9 @@ export interface JournalEntry {
   type: "location" | "npc" | "combat" | "quest" | "item" | "event" | "note";
   title: string;
   content: string;
+  readableType?: "note" | "book";
+  sourceMessageId?: string;
+  sourceSegmentIndex?: number;
 }
 
 export interface QuestEntry {
@@ -41,6 +44,17 @@ export interface Journal {
 
 function getReadableEntryKey(title: string, content: string): string {
   return `${title.replace(/\r\n/g, "\n").trim()}\u0000${content.replace(/\r\n/g, "\n").trim()}`;
+}
+
+function normalizeReadableTitle(title: string, readableType?: "note" | "book"): string {
+  const trimmed = title.trim();
+  if (trimmed) return trimmed;
+  return readableType === "book" ? "Book" : "Note";
+}
+
+function normalizeReadableType(title: string, readableType?: "note" | "book"): "note" | "book" {
+  if (readableType === "book" || readableType === "note") return readableType;
+  return title.trim().toLowerCase() === "book" ? "book" : "note";
 }
 
 // ── Builder Functions ──
@@ -186,8 +200,65 @@ export function addEventEntry(journal: Journal, title: string, content: string):
   };
 }
 
-/** Add a readable note or book entry (shown in the Library tab). */
-export function addNoteEntry(journal: Journal, title: string, content: string): Journal {
+/** Add or update a readable note or book entry (shown in the Library tab). */
+export function addNoteEntry(
+  journal: Journal,
+  title: string,
+  content: string,
+  options: {
+    readableType?: "note" | "book";
+    sourceMessageId?: string;
+    sourceSegmentIndex?: number;
+  } = {},
+): Journal {
+  const readableType = normalizeReadableType(title, options.readableType);
+  const normalizedTitle = normalizeReadableTitle(title, readableType);
+  const normalizedContent = content.replace(/\r\n/g, "\n").trim();
+  const sourceMessageId =
+    typeof options.sourceMessageId === "string" && options.sourceMessageId.trim()
+      ? options.sourceMessageId.trim()
+      : undefined;
+  const sourceSegmentIndex = Number.isInteger(options.sourceSegmentIndex) ? options.sourceSegmentIndex : undefined;
+
+  const updateExistingEntry = (matcher: (entry: JournalEntry) => boolean): Journal | null => {
+    const existingIndex = journal.entries.findIndex((entry) => entry.type === "note" && matcher(entry));
+    if (existingIndex < 0) return null;
+
+    const existingEntry = journal.entries[existingIndex]!;
+    if (
+      existingEntry.title === normalizedTitle &&
+      existingEntry.content === normalizedContent &&
+      existingEntry.readableType === readableType &&
+      existingEntry.sourceMessageId === sourceMessageId &&
+      existingEntry.sourceSegmentIndex === sourceSegmentIndex
+    ) {
+      return journal;
+    }
+
+    const nextEntries = [...journal.entries];
+    nextEntries[existingIndex] = {
+      ...existingEntry,
+      title: normalizedTitle,
+      content: normalizedContent,
+      readableType,
+      ...(sourceMessageId ? { sourceMessageId } : {}),
+      ...(sourceSegmentIndex != null ? { sourceSegmentIndex } : {}),
+    };
+
+    return { ...journal, entries: nextEntries };
+  };
+
+  if (sourceMessageId && sourceSegmentIndex != null) {
+    const bySource = updateExistingEntry(
+      (entry) => entry.sourceMessageId === sourceMessageId && entry.sourceSegmentIndex === sourceSegmentIndex,
+    );
+    if (bySource) return bySource;
+  }
+
+  const nextKey = getReadableEntryKey(normalizedTitle, normalizedContent);
+  const byContent = updateExistingEntry((entry) => getReadableEntryKey(entry.title, entry.content) === nextKey);
+  if (byContent) return byContent;
+
   const seenReadableKeys = new Set<string>();
   let removedDuplicates = false;
   const dedupedEntries = journal.entries.filter((entry) => {
@@ -201,14 +272,24 @@ export function addNoteEntry(journal: Journal, title: string, content: string): 
     return true;
   });
 
-  const nextKey = getReadableEntryKey(title, content);
   if (seenReadableKeys.has(nextKey)) {
     return removedDuplicates ? { ...journal, entries: dedupedEntries } : journal;
   }
 
   return {
     ...journal,
-    entries: [...dedupedEntries, { timestamp: new Date().toISOString(), type: "note", title, content }],
+    entries: [
+      ...dedupedEntries,
+      {
+        timestamp: new Date().toISOString(),
+        type: "note",
+        title: normalizedTitle,
+        content: normalizedContent,
+        readableType,
+        ...(sourceMessageId ? { sourceMessageId } : {}),
+        ...(sourceSegmentIndex != null ? { sourceSegmentIndex } : {}),
+      },
+    ],
   };
 }
 
@@ -292,10 +373,12 @@ export function buildDeterministicSummary(
     combatEntries.length > 0
       ? `The party fought ${combatEntries.length} encounter(s) this session.`
       : "A peaceful session focused on exploration and dialogue.";
+  const latestLocation = journal.locations[journal.locations.length - 1] ?? map?.name ?? "the party's current position";
 
   return {
     sessionNumber,
     summary: buildStructuredRecap(journal, sessionNumber),
+    resumePoint: `The next session should resume from ${latestLocation}.`,
     partyDynamics,
     partyState: `${journal.locations.length} locations explored, ${questEntries.filter((q) => q.status === "active").length} active quests`,
     keyDiscoveries,

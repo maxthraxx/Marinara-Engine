@@ -14,18 +14,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { BUILT_IN_AGENTS, LOCAL_SIDECAR_CONNECTION_ID, getDefaultAgentPrompt } from "@marinara-engine/shared";
 import { showConfirmDialog } from "../../lib/app-dialogs";
-import {
-  Plus,
-  Trash2,
-  Link,
-  Check,
-  Shuffle,
-  ExternalLink,
-  X,
-  Copy,
-  BrainCircuit,
-  Settings2,
-} from "lucide-react";
+import { Plus, Trash2, Link, Check, Shuffle, ExternalLink, X, Copy, BrainCircuit, Settings2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { toast } from "sonner";
 import { TTSConfigCard } from "./settings/TTSConfigCard";
@@ -116,7 +105,7 @@ function SidecarCard() {
             name: agent.name,
             description: agent.description,
             phase: agent.phase,
-            enabled: agent.enabledByDefault,
+            enabled: true,
             connectionId: LOCAL_SIDECAR_CONNECTION_ID,
             promptTemplate: getDefaultAgentPrompt(agent.id),
             settings: {},
@@ -446,7 +435,6 @@ export function ConnectionsPanel() {
           Click to edit · Set active connection in Chat Settings
         </p>
       )}
-
     </div>
   );
 }

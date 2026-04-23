@@ -30,6 +30,10 @@ export interface WeekSchedule {
   days: Record<string, DaySchedule>;
   /** How many minutes of user inactivity before this character messages unprompted (0 = never) */
   inactivityThresholdMinutes: number;
+  /** Optional exact response delay in minutes while idle */
+  idleResponseDelayMinutes?: number;
+  /** Optional exact response delay in minutes while busy / DND */
+  dndResponseDelayMinutes?: number;
   /** How chatty the character is — affects autonomous messaging frequency (0-100) */
   talkativeness: number;
 }
@@ -313,7 +317,31 @@ export function getMonday(date: Date = new Date()): Date {
  * Calculate a delay in milliseconds for a "busy" character's response.
  * Returns 0 for online characters, 2-5 minutes for busy characters.
  */
-export function getBusyDelay(status: "online" | "idle" | "dnd" | "offline"): number {
+function getConfiguredResponseDelayMinutes(
+  status: "online" | "idle" | "dnd" | "offline",
+  schedule?: Pick<WeekSchedule, "idleResponseDelayMinutes" | "dndResponseDelayMinutes">,
+): number | null {
+  const rawValue =
+    status === "idle"
+      ? schedule?.idleResponseDelayMinutes
+      : status === "dnd"
+        ? schedule?.dndResponseDelayMinutes
+        : null;
+  if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
+    return null;
+  }
+  return Math.max(0, Math.min(120, rawValue));
+}
+
+function getConfiguredResponseDelay(
+  status: "online" | "idle" | "dnd" | "offline",
+  schedule?: Pick<WeekSchedule, "idleResponseDelayMinutes" | "dndResponseDelayMinutes">,
+): number {
+  const overrideMinutes = getConfiguredResponseDelayMinutes(status, schedule);
+  if (overrideMinutes !== null) {
+    return overrideMinutes * 60 * 1000;
+  }
+
   switch (status) {
     case "online":
       return 0;
@@ -326,21 +354,22 @@ export function getBusyDelay(status: "online" | "idle" | "dnd" | "offline"): num
   }
 }
 
+export function getBusyDelay(
+  status: "online" | "idle" | "dnd" | "offline",
+  schedule?: Pick<WeekSchedule, "idleResponseDelayMinutes" | "dndResponseDelayMinutes">,
+): number {
+  return getConfiguredResponseDelay(status, schedule);
+}
+
 /**
  * Shorter delay for direct user messages (user is actively waiting).
  * Returns 0 for online, shorter delays for idle/dnd than autonomous delays.
  */
-export function getDirectMessageDelay(status: "online" | "idle" | "dnd" | "offline"): number {
-  switch (status) {
-    case "online":
-      return 0;
-    case "idle":
-      return (60 + Math.random() * 120) * 1000; // 1-3 minutes
-    case "dnd":
-      return (120 + Math.random() * 180) * 1000; // 2-5 minutes
-    case "offline":
-      return 0;
-  }
+export function getDirectMessageDelay(
+  status: "online" | "idle" | "dnd" | "offline",
+  schedule?: Pick<WeekSchedule, "idleResponseDelayMinutes" | "dndResponseDelayMinutes">,
+): number {
+  return getConfiguredResponseDelay(status, schedule);
 }
 
 /**

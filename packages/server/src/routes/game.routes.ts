@@ -18,6 +18,8 @@ import {
   buildGmSystemPrompt,
   buildSessionSummaryPrompt,
   buildCardAdjustmentPrompt,
+  buildCampaignProgressionPrompt,
+  buildPartyRecruitCardPrompt,
   type GmPromptContext,
 } from "../services/game/gm-prompts.js";
 import { buildPartySystemPrompt } from "../services/game/party-prompts.js";
@@ -40,7 +42,7 @@ import { rollEncounter, rollEnemyCount } from "../services/game/encounter.servic
 import { processReputationActions } from "../services/game/reputation.service.js";
 import { createCheckpointService, type CheckpointTrigger } from "../services/game/checkpoint.service.js";
 import { resolveSkillCheck, attributeModifier, getGoverningAttribute } from "../services/game/skill-check.service.js";
-import { applyAllSegmentEdits } from "../services/game/segment-edits.js";
+import { applyAllSegmentEdits, stripGmCommandTags } from "../services/game/segment-edits.js";
 import { processLorebooks } from "../services/lorebook/index.js";
 import {
   applyMoraleEvent,
@@ -121,7 +123,7 @@ function findCharAvatarFuzzy(npcName: string, charAvatarByName: Map<string, stri
 
 const gameSetupConfigSchema = z.object({
   genre: z.string().min(1).max(200),
-  setting: z.string().min(1).max(500),
+  setting: z.string().min(1),
   tone: z.string().min(1).max(200),
   difficulty: z.string().min(1).max(100),
   playerGoals: z.string().max(2000).default(""),
@@ -171,6 +173,12 @@ const concludeSessionSchema = z.object({
   connectionId: z.string().optional(),
 });
 
+const recruitPartyMemberSchema = z.object({
+  chatId: z.string().min(1),
+  characterName: z.string().min(1).max(200),
+  connectionId: z.string().optional(),
+});
+
 const diceRollSchema = z.object({
   chatId: z.string().min(1),
   notation: z
@@ -215,6 +223,116 @@ function parseMeta(raw: unknown): Record<string, unknown> {
   return (raw as Record<string, unknown>) ?? {};
 }
 
+function normalizeCharacterLookupName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function buildRecruitCharacterSourceCard(characterData: Record<string, any>): string {
+  const lines = [`Name: ${String(characterData.name || "Unknown")}`];
+  if (typeof characterData.personality === "string" && characterData.personality.trim()) {
+    lines.push(`Personality: ${characterData.personality.trim()}`);
+  }
+  if (typeof characterData.description === "string" && characterData.description.trim()) {
+    lines.push(`Description: ${characterData.description.trim()}`);
+  }
+  const backstory =
+    typeof characterData.extensions?.backstory === "string" && characterData.extensions.backstory.trim()
+      ? characterData.extensions.backstory.trim()
+      : typeof characterData.backstory === "string" && characterData.backstory.trim()
+        ? characterData.backstory.trim()
+        : "";
+  const appearance =
+    typeof characterData.extensions?.appearance === "string" && characterData.extensions.appearance.trim()
+      ? characterData.extensions.appearance.trim()
+      : typeof characterData.appearance === "string" && characterData.appearance.trim()
+        ? characterData.appearance.trim()
+        : "";
+  if (backstory) lines.push(`Backstory: ${backstory}`);
+  if (appearance) lines.push(`Appearance: ${appearance}`);
+  return lines.join("\n");
+}
+
+function extractRecruitCharacterRpgStats(characterData: Record<string, any>) {
+  const rpgStats = characterData.extensions?.rpgStats;
+  if (!rpgStats?.enabled || !Array.isArray(rpgStats.attributes) || !rpgStats.hp) return undefined;
+
+  return {
+    attributes: rpgStats.attributes
+      .map((attribute: Record<string, unknown>) => ({
+        name: typeof attribute.name === "string" ? attribute.name.trim() : "",
+        value: Number(attribute.value) || 0,
+      }))
+      .filter((attribute: { name: string; value: number }) => attribute.name),
+    hp: {
+      value: Math.max(0, Number(rpgStats.hp.max) || 0),
+      max: Math.max(1, Number(rpgStats.hp.max) || 1),
+    },
+  };
+}
+
+function normalizeGeneratedGameCharacterCard(raw: Record<string, unknown>, fallbackName: string) {
+  const normalizeStringArray = (value: unknown) =>
+    Array.isArray(value) ? value.map((entry) => String(entry).trim()).filter(Boolean) : [];
+
+  const extraEntries =
+    raw.extra && typeof raw.extra === "object" && !Array.isArray(raw.extra)
+      ? Object.fromEntries(
+          Object.entries(raw.extra as Record<string, unknown>)
+            .map(([key, value]) => [key.trim(), String(value).trim()] as const)
+            .filter(([key, value]) => key && value),
+        )
+      : {};
+
+  return {
+    name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : fallbackName,
+    shortDescription: typeof raw.shortDescription === "string" ? raw.shortDescription.trim() : "",
+    class: typeof raw.class === "string" ? raw.class.trim() : "",
+    abilities: normalizeStringArray(raw.abilities),
+    strengths: normalizeStringArray(raw.strengths),
+    weaknesses: normalizeStringArray(raw.weaknesses),
+    extra: extraEntries,
+  };
+}
+
+function buildFallbackGameCharacterCard(characterData: Record<string, any>, characterName: string) {
+  const description =
+    typeof characterData.description === "string" && characterData.description.trim()
+      ? characterData.description.trim()
+      : typeof characterData.personality === "string" && characterData.personality.trim()
+        ? characterData.personality.trim()
+        : `${characterName} joins the party.`;
+  const appearance =
+    typeof characterData.extensions?.appearance === "string" && characterData.extensions.appearance.trim()
+      ? characterData.extensions.appearance.trim()
+      : typeof characterData.appearance === "string" && characterData.appearance.trim()
+        ? characterData.appearance.trim()
+        : "";
+  const backstory =
+    typeof characterData.extensions?.backstory === "string" && characterData.extensions.backstory.trim()
+      ? characterData.extensions.backstory.trim()
+      : typeof characterData.backstory === "string" && characterData.backstory.trim()
+        ? characterData.backstory.trim()
+        : "";
+
+  return {
+    name: characterName,
+    shortDescription: description,
+    class: "Companion",
+    abilities: [],
+    strengths: [],
+    weaknesses: [],
+    extra: Object.fromEntries(
+      [
+        ["appearance", appearance],
+        ["backstory", backstory],
+      ].filter((entry): entry is [string, string] => Boolean(entry[1])),
+    ),
+  };
+}
+
 function getDiscordWebhookUrl(meta: Record<string, unknown>): string {
   return typeof meta.discordWebhookUrl === "string" ? meta.discordWebhookUrl.trim() : "";
 }
@@ -253,14 +371,25 @@ function normalizeSessionStatsSnapshot(value: unknown): Record<string, unknown> 
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function deriveResumePointFallback(summary: string): string {
+  const paragraphs = summary
+    .split(/\n{2,}/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  return paragraphs[paragraphs.length - 1] ?? summary;
+}
+
 function normalizeStoredSessionSummaries(raw: unknown): SessionSummary[] {
   if (!Array.isArray(raw)) return [];
 
   return raw.map((item, index) => {
     const source = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+    const summary = normalizeSessionText(source.summary, `Session ${index + 1} concluded.`);
     return {
       sessionNumber: index + 1,
-      summary: normalizeSessionText(source.summary, `Session ${index + 1} concluded.`),
+      summary,
+      resumePoint: normalizeSessionText(source.resumePoint, deriveResumePointFallback(summary)),
       partyDynamics: normalizeSessionText(source.partyDynamics),
       partyState: normalizeSessionText(source.partyState),
       keyDiscoveries: normalizeSessionTextList(source.keyDiscoveries),
@@ -278,9 +407,11 @@ function normalizeSessionSummaryPayload(
   sessionNumber: number,
   fallback: string,
 ): SessionSummary {
+  const summary = normalizeSessionText(payload.summary, fallback);
   return {
     sessionNumber,
-    summary: normalizeSessionText(payload.summary, fallback),
+    summary,
+    resumePoint: normalizeSessionText(payload.resumePoint, deriveResumePointFallback(summary)),
     partyDynamics: normalizeSessionText(payload.partyDynamics),
     partyState: normalizeSessionText(payload.partyState),
     keyDiscoveries: normalizeSessionTextList(payload.keyDiscoveries),
@@ -290,6 +421,33 @@ function normalizeSessionSummaryPayload(
     npcUpdates: normalizeSessionTextList(payload.npcUpdates),
     timestamp: new Date().toISOString(),
   };
+}
+
+function normalizePartyArcPayload(raw: unknown): PartyArc[] {
+  if (!Array.isArray(raw)) return [];
+
+  const arcs: PartyArc[] = [];
+  for (const item of raw) {
+    const source = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+    const name = normalizeSessionText(source.name);
+    const arc = normalizeSessionText(source.arc);
+    const goal = normalizeSessionText(source.goal);
+    if (!name || !arc) continue;
+
+    const completed = typeof source.completed === "boolean" ? source.completed : false;
+    const resolution = normalizeSessionText(source.resolution);
+
+    const nextArc: PartyArc = {
+      name,
+      arc,
+      goal,
+      ...(completed ? { completed } : {}),
+      ...(resolution ? { resolution } : {}),
+    };
+    arcs.push(nextArc);
+  }
+
+  return arcs;
 }
 
 type ChatInventoryItem = { name: string; quantity: number };
@@ -838,7 +996,7 @@ export async function gameRoutes(app: FastifyInstance) {
       gameDialogueChatId: null,
       gameCombatChatId: null,
       gameSetupConfig: setupConfig,
-      gameCharacterConnectionId: characterConnectionId || connectionId || null,
+      gameCharacterConnectionId: null,
       gameSceneConnectionId: setupConfig.sceneConnectionId || null,
       gameNpcs: [],
       enableAgents: true,
@@ -874,7 +1032,14 @@ export async function gameRoutes(app: FastifyInstance) {
       connectionId,
       chat.connectionId,
     );
-    const provider = createLLMProvider(conn.provider, baseUrl, conn.apiKey!, conn.maxContext, conn.openrouterProvider, conn.maxTokensOverride);
+    const provider = createLLMProvider(
+      conn.provider,
+      baseUrl,
+      conn.apiKey!,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+    );
     const setupGenerationParameters = resolveStoredGameGenerationParameters(meta, defaultGenerationParameters);
 
     let gmCharacterCard: string | null = null;
@@ -1200,18 +1365,13 @@ export async function gameRoutes(app: FastifyInstance) {
       const cards = (setupData.characterCards as Array<Record<string, unknown>>)
         .map((c) => {
           const name = (c.name as string) || "";
+          const normalizedCard = normalizeGeneratedGameCharacterCard(c, name);
           // Merge in RPG stats from the character/persona card if enabled
           const charStats = partyRpgStats[name] ?? null;
           const isPersona = personaName && name.toLowerCase() === personaName.toLowerCase();
           const rpg = isPersona ? personaRpgStats : charStats;
           return {
-            name,
-            shortDescription: (c.shortDescription as string) || "",
-            class: (c.class as string) || "",
-            abilities: (c.abilities as string[]) || [],
-            strengths: (c.strengths as string[]) || [],
-            weaknesses: (c.weaknesses as string[]) || [],
-            extra: (c.extra as Record<string, string>) || {},
+            ...normalizedCard,
             // Stats from character/persona cards (if RPG stats were enabled)
             rpgStats: rpg
               ? {
@@ -1383,6 +1543,23 @@ export async function gameRoutes(app: FastifyInstance) {
       }
 
       const sessionNumber = summaries.length + 1;
+      const latestSessionMessages = await chats.listMessages(latestSession.id);
+      let latestSessionEndingBeat: string | null = null;
+      for (let i = latestSessionMessages.length - 1; i >= 0; i--) {
+        const message = latestSessionMessages[i]!;
+        if (typeof message.content !== "string" || !message.content.trim()) continue;
+        if (message.role === "assistant") {
+          latestSessionEndingBeat = message.content;
+          break;
+        }
+        if (
+          latestSessionEndingBeat == null &&
+          message.role === "narrator" &&
+          !/^\*\*Session \d+ Concluded\*\*/.test(message.content.trim())
+        ) {
+          latestSessionEndingBeat = message.content;
+        }
+      }
 
       const newChat = await chats.create({
         name: `${baseSessionName} — Session ${sessionNumber}`,
@@ -1439,7 +1616,7 @@ export async function gameRoutes(app: FastifyInstance) {
           );
 
           const recapMessages: ChatMessage[] = [
-            { role: "system", content: buildRecapPrompt(summaries) },
+            { role: "system", content: buildRecapPrompt(summaries, latestSessionEndingBeat) },
             { role: "user", content: "Generate the session recap." },
           ];
 
@@ -1539,6 +1716,7 @@ export async function gameRoutes(app: FastifyInstance) {
   // ── POST /game/session/conclude ──
   app.post("/session/conclude", async (req) => {
     const { chatId, connectionId } = concludeSessionSchema.parse(req.body);
+    console.log("[game/session/conclude] Starting manual conclude for chat %s", chatId);
     const chats = createChatsStorage(app.db);
     const connections = createConnectionsStorage(app.db);
 
@@ -1546,6 +1724,7 @@ export async function gameRoutes(app: FastifyInstance) {
     if (!chat) throw new Error("Chat not found");
 
     const meta = parseMeta(chat.metadata);
+    const setupConfig = meta.gameSetupConfig as GameSetupConfig | null;
     const prevSummaries = normalizeStoredSessionSummaries(meta.gamePreviousSessionSummaries);
     const sessionNumber = prevSummaries.length + 1;
 
@@ -1566,10 +1745,17 @@ export async function gameRoutes(app: FastifyInstance) {
     const latestState = await gameStates.getLatest(chatId);
 
     const { conn, baseUrl } = await resolveConnection(connections, connectionId, chat.connectionId);
-    const provider = createLLMProvider(conn.provider, baseUrl, conn.apiKey!, conn.maxContext, conn.openrouterProvider, conn.maxTokensOverride);
+    const provider = createLLMProvider(
+      conn.provider,
+      baseUrl,
+      conn.apiKey!,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+    );
 
     const summaryMessages: ChatMessage[] = [
-      { role: "system", content: buildSessionSummaryPrompt() },
+      { role: "system", content: buildSessionSummaryPrompt(setupConfig?.language ?? null) },
       {
         role: "user",
         content: [
@@ -1591,6 +1777,7 @@ export async function gameRoutes(app: FastifyInstance) {
         temperature: 0.5,
       }),
     );
+    console.log("[game/session/conclude] Summary generation completed for chat %s", chatId);
     const summaryExtraction = extractLeadingThinkingBlocks(result.content ?? "");
 
     let summary: SessionSummary;
@@ -1599,6 +1786,49 @@ export async function gameRoutes(app: FastifyInstance) {
       summary = normalizeSessionSummaryPayload(parsed, sessionNumber, "Session concluded.");
     } catch {
       summary = normalizeSessionSummaryPayload({}, sessionNumber, summaryExtraction.content || "Session concluded.");
+    }
+
+    let updatedStoryArc = (meta.gameStoryArc as string) || null;
+    let updatedPlotTwists = Array.isArray(meta.gamePlotTwists) ? (meta.gamePlotTwists as string[]) : [];
+    let updatedPartyArcs = Array.isArray(meta.gamePartyArcs) ? normalizePartyArcPayload(meta.gamePartyArcs) : [];
+
+    try {
+      const progressionMessages: ChatMessage[] = [
+        { role: "system", content: buildCampaignProgressionPrompt(setupConfig?.language ?? null) },
+        {
+          role: "user",
+          content: [
+            `Session ${sessionNumber} summary:`,
+            JSON.stringify(summary, null, 2),
+            ``,
+            `Current story arc:`,
+            updatedStoryArc || "",
+            ``,
+            `Current plot twists:`,
+            JSON.stringify(updatedPlotTwists, null, 2),
+            ``,
+            `Current party arcs:`,
+            JSON.stringify(updatedPartyArcs, null, 2),
+          ].join("\n"),
+        },
+      ];
+
+      const progressionResult = await provider.chatComplete(
+        progressionMessages,
+        gameGenOptions(conn.model, { temperature: 0.35 }),
+      );
+      const progressionContent = extractLeadingThinkingBlocks(progressionResult.content ?? "").content;
+      const parsedProgression = parseJSON(progressionContent) as Record<string, unknown>;
+
+      const nextStoryArc = normalizeSessionText(parsedProgression.storyArc, updatedStoryArc || "");
+      const nextPlotTwists = normalizeSessionTextList(parsedProgression.plotTwists);
+      const nextPartyArcs = normalizePartyArcPayload(parsedProgression.partyArcs);
+
+      updatedStoryArc = nextStoryArc || null;
+      updatedPlotTwists = nextPlotTwists;
+      updatedPartyArcs = nextPartyArcs;
+    } catch (err) {
+      console.warn("[session/conclude] Campaign progression adjustment failed (non-fatal):", err);
     }
 
     // ── Adjust character cards based on session events ──
@@ -1628,7 +1858,21 @@ export async function gameRoutes(app: FastifyInstance) {
           // Validate each card has at least a name
           const valid = parsedCards.filter((c) => typeof c.name === "string" && c.name);
           if (valid.length > 0) {
-            updatedCards = valid;
+            const existingCardsByName = new Map(
+              currentCards
+                .filter((card) => typeof card.name === "string" && card.name)
+                .map((card) => [(card.name as string).toLowerCase(), card] as const),
+            );
+            updatedCards = valid.map((card) => {
+              const normalizedCard = normalizeGeneratedGameCharacterCard(card, card.name as string);
+              const existingCard = existingCardsByName.get(normalizedCard.name.toLowerCase());
+              return existingCard?.rpgStats
+                ? {
+                    ...normalizedCard,
+                    rpgStats: existingCard.rpgStats,
+                  }
+                : normalizedCard;
+            });
             console.log(`[session/conclude] Updated ${valid.length} character cards after session ${sessionNumber}`);
           }
         }
@@ -1642,6 +1886,9 @@ export async function gameRoutes(app: FastifyInstance) {
       ...meta,
       gameSessionNumber: sessionNumber,
       gameSessionStatus: "concluded",
+      gameStoryArc: updatedStoryArc,
+      gamePlotTwists: updatedPlotTwists,
+      gamePartyArcs: updatedPartyArcs,
       gamePreviousSessionSummaries: [...prevSummaries, summary],
       gameCharacterCards: updatedCards,
     });
@@ -1692,7 +1939,209 @@ export async function gameRoutes(app: FastifyInstance) {
       /* non-fatal */
     }
 
+    console.log("[game/session/conclude] Session %d concluded for chat %s", sessionNumber, chatId);
     return { summary };
+  });
+
+  // ── POST /game/party/recruit ──
+  // Adds a library character to the active party and creates a game character card.
+  app.post("/party/recruit", async (req) => {
+    const input = recruitPartyMemberSchema.parse(req.body);
+    const chats = createChatsStorage(app.db);
+    const chars = createCharactersStorage(app.db);
+    const connections = createConnectionsStorage(app.db);
+    const stateStore = createGameStateStorage(app.db);
+
+    const chat = await chats.getById(input.chatId);
+    if (!chat) throw new Error("Chat not found");
+    if ((chat.mode as string) !== "game") throw new Error("Party recruitment is only available in game mode");
+
+    const meta = parseMeta(chat.metadata);
+    const setupConfig = meta.gameSetupConfig as GameSetupConfig | null;
+    if (!setupConfig) throw new Error("No game setup config found");
+
+    const requestedName = input.characterName.trim();
+    const requestedLookup = normalizeCharacterLookupName(requestedName);
+    const allCharacters = await chars.list();
+    const parsedCharacters = allCharacters.flatMap((row) => {
+      try {
+        const data = (typeof row.data === "string" ? JSON.parse(row.data) : row.data) as Record<string, any>;
+        const name = typeof data.name === "string" ? data.name.trim() : "";
+        if (!name) return [];
+        return [{ row, data, name, lookup: normalizeCharacterLookupName(name) }];
+      } catch {
+        return [];
+      }
+    });
+
+    let matches = parsedCharacters.filter((candidate) => candidate.name.toLowerCase() === requestedName.toLowerCase());
+    if (matches.length === 0) {
+      matches = parsedCharacters.filter((candidate) => candidate.lookup === requestedLookup);
+    }
+    if (matches.length === 0 && requestedLookup.length >= 3) {
+      matches = parsedCharacters.filter(
+        (candidate) =>
+          candidate.lookup.includes(requestedLookup) ||
+          (candidate.lookup.length >= 3 && requestedLookup.includes(candidate.lookup)),
+      );
+    }
+    if (matches.length === 0) {
+      throw new Error(`Character "${requestedName}" not found in the character library`);
+    }
+    if (matches.length > 1) {
+      throw new Error(`Character "${requestedName}" is ambiguous. Use the exact character name.`);
+    }
+
+    const recruit = matches[0]!;
+    const characterById = new Map(parsedCharacters.map((candidate) => [candidate.row.id, candidate.name] as const));
+    let chatCharacterIds: string[] = [];
+    try {
+      chatCharacterIds =
+        typeof chat.characterIds === "string"
+          ? ((JSON.parse(chat.characterIds) as string[]) ?? [])
+          : ((chat.characterIds as string[]) ?? []);
+    } catch {
+      chatCharacterIds = [];
+    }
+
+    const currentPartyIds = Array.from(
+      new Set([
+        ...(setupConfig.partyCharacterIds ?? []),
+        ...((meta.gamePartyCharacterIds as string[]) ?? []),
+        ...chatCharacterIds,
+      ]),
+    );
+    const currentCards = (meta.gameCharacterCards as Array<Record<string, unknown>>) ?? [];
+    const existingCardIndex = currentCards.findIndex(
+      (card) => typeof card.name === "string" && card.name.toLowerCase() === recruit.name.toLowerCase(),
+    );
+    const alreadyInParty = currentPartyIds.includes(recruit.row.id);
+    if (alreadyInParty && existingCardIndex >= 0) {
+      return {
+        sessionChat: chat,
+        added: false,
+        characterName: recruit.name,
+        cardCreated: false,
+      };
+    }
+
+    const fallbackCard = buildFallbackGameCharacterCard(recruit.data, recruit.name);
+    const recruitRpgStats = extractRecruitCharacterRpgStats(recruit.data);
+    let nextCard: Record<string, unknown> = {
+      ...fallbackCard,
+      ...(recruitRpgStats ? { rpgStats: recruitRpgStats } : {}),
+    };
+
+    try {
+      const { conn, baseUrl, defaultGenerationParameters } = await resolveConnection(
+        connections,
+        input.connectionId,
+        chat.connectionId,
+      );
+      const provider = createLLMProvider(
+        conn.provider,
+        baseUrl,
+        conn.apiKey!,
+        conn.maxContext,
+        conn.openrouterProvider,
+      );
+      const generationParameters = resolveStoredGameGenerationParameters(meta, defaultGenerationParameters);
+      const latestState = await stateStore.getLatest(input.chatId);
+      const recentMessages = await chats.listMessages(input.chatId);
+      const recentTranscript = recentMessages
+        .filter((message) => message.role !== "system")
+        .slice(-12)
+        .map((message) => {
+          const cleaned = stripGmCommandTags(message.content ?? "");
+          return cleaned ? `[${message.role}] ${cleaned}` : null;
+        })
+        .filter((entry): entry is string => Boolean(entry))
+        .join("\n\n");
+      const currentState = latestState
+        ? JSON.stringify(
+            {
+              date: latestState.date,
+              time: latestState.time,
+              location: latestState.location,
+              weather: latestState.weather,
+              presentCharacters: latestState.presentCharacters
+                ? typeof latestState.presentCharacters === "string"
+                  ? JSON.parse(latestState.presentCharacters)
+                  : latestState.presentCharacters
+                : [],
+            },
+            null,
+            2,
+          )
+        : null;
+      const prompt = buildPartyRecruitCardPrompt({
+        targetCharacterName: recruit.name,
+        targetCharacterCard: buildRecruitCharacterSourceCard(recruit.data),
+        currentPartyNames: currentPartyIds
+          .map((id) => characterById.get(id))
+          .filter((name): name is string => Boolean(name)),
+        currentPartyCards: currentCards.length > 0 ? JSON.stringify(currentCards, null, 2) : null,
+        worldOverview: (meta.gameWorldOverview as string) || null,
+        storyArc: (meta.gameStoryArc as string) || null,
+        plotTwists: (meta.gamePlotTwists as string[]) || null,
+        currentState,
+        recentTranscript,
+        language: setupConfig.language ?? null,
+      });
+
+      const result = await provider.chatComplete(
+        [
+          { role: "system", content: prompt },
+          { role: "user", content: `Create the recruited companion card for ${recruit.name} now.` },
+        ],
+        gameGenOptions(conn.model, { temperature: 0.6, maxTokens: 1200 }, generationParameters),
+      );
+      const cardContent = extractLeadingThinkingBlocks(result.content ?? "").content;
+      const parsed = parseJSON(cardContent);
+      const rawCard =
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : Array.isArray(parsed) && parsed[0] && typeof parsed[0] === "object"
+            ? (parsed[0] as Record<string, unknown>)
+            : null;
+      if (rawCard) {
+        nextCard = {
+          ...normalizeGeneratedGameCharacterCard(rawCard, recruit.name),
+          ...(recruitRpgStats ? { rpgStats: recruitRpgStats } : {}),
+        };
+      }
+    } catch (error) {
+      console.warn("[game/party/recruit] Failed to generate recruit card, using fallback:", error);
+    }
+
+    const updatedPartyIds = alreadyInParty ? currentPartyIds : [...currentPartyIds, recruit.row.id];
+    const updatedCards = [...currentCards];
+    if (existingCardIndex >= 0) {
+      updatedCards[existingCardIndex] = nextCard;
+    } else {
+      updatedCards.push(nextCard);
+    }
+
+    const updatedSetupConfig: GameSetupConfig = {
+      ...setupConfig,
+      partyCharacterIds: updatedPartyIds,
+    };
+
+    await chats.update(chat.id, { characterIds: updatedPartyIds });
+    const updatedSession = await chats.updateMetadata(chat.id, {
+      ...meta,
+      gameSetupConfig: updatedSetupConfig,
+      gamePartyCharacterIds: updatedPartyIds,
+      gameCharacterCards: updatedCards,
+    });
+    if (!updatedSession) throw new Error("Failed to update game session");
+
+    return {
+      sessionChat: updatedSession,
+      added: !alreadyInParty,
+      characterName: recruit.name,
+      cardCreated: true,
+    };
   });
 
   // ── POST /game/dice/roll ──
@@ -1826,7 +2275,14 @@ export async function gameRoutes(app: FastifyInstance) {
     if (!chat) throw new Error("Chat not found");
 
     const { conn, baseUrl } = await resolveConnection(connections, connectionId, chat.connectionId);
-    const provider = createLLMProvider(conn.provider, baseUrl, conn.apiKey!, conn.maxContext, conn.openrouterProvider, conn.maxTokensOverride);
+    const provider = createLLMProvider(
+      conn.provider,
+      baseUrl,
+      conn.apiKey!,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+    );
 
     const messages: ChatMessage[] = [
       { role: "system", content: buildMapGenerationPrompt(locationType, context) },
@@ -1915,11 +2371,25 @@ export async function gameRoutes(app: FastifyInstance) {
           name: z.string(),
           hp: z.number(),
           maxHp: z.number(),
+          mp: z.number().optional(),
+          maxMp: z.number().optional(),
           attack: z.number(),
           defense: z.number(),
           speed: z.number(),
           level: z.number(),
           side: z.enum(["player", "enemy"]).optional(),
+          skills: z
+            .array(
+              z.object({
+                id: z.string(),
+                name: z.string(),
+                type: z.enum(["attack", "heal", "buff", "debuff"]),
+                mpCost: z.number(),
+                power: z.number(),
+                description: z.string().optional(),
+              }),
+            )
+            .optional(),
           statusEffects: z
             .array(
               z.object({
@@ -2223,7 +2693,11 @@ export async function gameRoutes(app: FastifyInstance) {
         journal = addEventEntry(journal, data.title as string, data.content as string);
         break;
       case "note":
-        journal = addNoteEntry(journal, data.title as string, data.content as string);
+        journal = addNoteEntry(journal, data.title as string, data.content as string, {
+          readableType: data.readableType === "book" || data.readableType === "note" ? data.readableType : undefined,
+          sourceMessageId: typeof data.sourceMessageId === "string" ? data.sourceMessageId : undefined,
+          sourceSegmentIndex: typeof data.sourceSegmentIndex === "number" ? data.sourceSegmentIndex : undefined,
+        });
         break;
     }
 
@@ -2307,11 +2781,10 @@ export async function gameRoutes(app: FastifyInstance) {
     const gameActiveState = (meta.gameActiveState as string) || "exploration";
     const partyCharIds = setupConfig.partyCharacterIds || [];
 
-    // Resolve connection: explicit → character connection → GM connection
-    const charConnId = (meta.gameCharacterConnectionId as string) || null;
+    // Resolve connection: explicit override → GM connection
     const { conn, baseUrl, defaultGenerationParameters } = await resolveConnection(
       connections,
-      input.connectionId ?? charConnId,
+      input.connectionId,
       chat.connectionId,
     );
     const gameGenerationParameters = resolveStoredGameGenerationParameters(meta, defaultGenerationParameters);
@@ -2420,7 +2893,14 @@ export async function gameRoutes(app: FastifyInstance) {
       { role: "user", content: userPrompt },
     ];
 
-    const provider = createLLMProvider(conn.provider, baseUrl, conn.apiKey!, conn.maxContext, conn.openrouterProvider, conn.maxTokensOverride);
+    const provider = createLLMProvider(
+      conn.provider,
+      baseUrl,
+      conn.apiKey!,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+    );
     const result = await provider.chatComplete(
       messages,
       gameGenOptions(
@@ -2527,7 +3007,14 @@ export async function gameRoutes(app: FastifyInstance) {
       { role: "user", content: userPrompt },
     ];
 
-    const provider = createLLMProvider(conn.provider, baseUrl, conn.apiKey!, conn.maxContext, conn.openrouterProvider, conn.maxTokensOverride);
+    const provider = createLLMProvider(
+      conn.provider,
+      baseUrl,
+      conn.apiKey!,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+    );
     console.log(
       "[game/scene-wrap] chatId=%s, model=%s, narration=%d chars",
       input.chatId,

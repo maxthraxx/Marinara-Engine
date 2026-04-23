@@ -54,7 +54,7 @@ import { HelpTooltip } from "../ui/HelpTooltip";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { api } from "../../lib/api-client";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
-import type { WrapFormat, MarkerType } from "@marinara-engine/shared";
+import { SUPPORTED_MACROS, type WrapFormat, type MarkerType } from "@marinara-engine/shared";
 
 /** Intercept Tab in a textarea to insert 2 spaces instead of changing focus. */
 function handleTextareaTab(e: React.KeyboardEvent<HTMLTextAreaElement>, value: string, setValue: (v: string) => void) {
@@ -1948,73 +1948,15 @@ function ExpandedEditorModal({
 }
 
 // ── Macros reference data ──
-const MACRO_REFERENCE = [
-  {
-    category: "Identity",
-    macros: [
-      { macro: "{{user}}", desc: "User's display name (persona name)" },
-      { macro: "{{persona}}", desc: "Alias for {{user}}" },
-      { macro: "{{char}}", desc: "Current character's name" },
-      { macro: "{{characters}}", desc: "Comma-separated list of all character names" },
-    ],
-  },
-  {
-    category: "Context",
-    macros: [
-      { macro: "{{input}}", desc: "Last user message" },
-      { macro: "{{model}}", desc: "Current model name" },
-      { macro: "{{chatId}}", desc: "Current chat ID" },
-    ],
-  },
-  {
-    category: "Date & Time",
-    macros: [
-      { macro: "{{date}}", desc: "Current date (YYYY-MM-DD)" },
-      { macro: "{{time}}", desc: "Current time (HH:MM)" },
-      { macro: "{{datetime}}", desc: "Full ISO datetime" },
-      { macro: "{{weekday}}", desc: "Day name (Monday, etc.)" },
-      { macro: "{{isotime}}", desc: "ISO timestamp" },
-    ],
-  },
-  {
-    category: "Random",
-    macros: [
-      { macro: "{{random}}", desc: "Random number 0-100" },
-      { macro: "{{random:X:Y}}", desc: "Random number between X and Y" },
-      { macro: "{{roll:XdY}}", desc: "Dice roll (e.g. {{roll:2d6}})" },
-    ],
-  },
-  {
-    category: "Variables",
-    macros: [
-      { macro: "{{variable_name}}", desc: "Insert a preset variable's selected value" },
-      { macro: "{{getvar::name}}", desc: "Read a dynamic variable" },
-      { macro: "{{setvar::name::value}}", desc: "Set a variable value" },
-      { macro: "{{addvar::name::value}}", desc: "Append to a variable" },
-      { macro: "{{incvar::name}}", desc: "Increment numeric variable by 1" },
-      { macro: "{{decvar::name}}", desc: "Decrement numeric variable by 1" },
-    ],
-  },
-  {
-    category: "Formatting",
-    macros: [
-      { macro: "{{newline}}", desc: "Literal newline character" },
-      { macro: "{{trim}}", desc: "Remove surrounding whitespace" },
-      { macro: "{{trimStart}}", desc: "Remove leading whitespace" },
-      { macro: "{{trimEnd}}", desc: "Remove trailing whitespace" },
-      { macro: "{{uppercase}}...{{/uppercase}}", desc: "Convert text to UPPERCASE" },
-      { macro: "{{lowercase}}...{{/lowercase}}", desc: "Convert text to lowercase" },
-    ],
-  },
-  {
-    category: "Utility",
-    macros: [
-      { macro: "{{// comment}}", desc: "Author comment (stripped at assembly)" },
-      { macro: "{{noop}}", desc: "No operation (removed)" },
-      { macro: '{{banned "text"}}', desc: "Content filter stub (removed)" },
-    ],
-  },
-];
+const MACRO_REFERENCE = Array.from(
+  SUPPORTED_MACROS.reduce((categories, macro) => {
+    const macros = categories.get(macro.category) ?? [];
+    macros.push({ macro: macro.syntax, desc: macro.description });
+    categories.set(macro.category, macros);
+    return categories;
+  }, new Map<string, Array<{ macro: string; desc: string }>>()),
+  ([category, macros]) => ({ category, macros }),
+);
 
 // ── Macros Reference Modal ──
 function MacrosReferenceModal({ onClose }: { onClose: () => void }) {
@@ -2044,6 +1986,10 @@ function MacrosReferenceModal({ onClose }: { onClose: () => void }) {
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
             Use these macros in your prompt sections. They will be replaced with actual values at generation time.
+          </p>
+          <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+            In group chats, a bracketed block containing character macros like <code>{"{{char}}"}</code> and{" "}
+            <code>{"{{description}}"}</code> repeats once per character.
           </p>
           {MACRO_REFERENCE.map((cat) => (
             <div key={cat.category}>

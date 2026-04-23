@@ -43,16 +43,24 @@ import {
   Star,
   Wand2,
 } from "lucide-react";
+import { getCharacterTitle } from "../../lib/character-display";
 import { useUIStore } from "../../stores/ui.store";
 import { cn, getAvatarCropStyle } from "../../lib/utils";
 
-type CharacterRow = { id: string; data: string; avatarPath: string | null; createdAt: string; updatedAt: string };
+type CharacterRow = {
+  id: string;
+  data: string;
+  comment?: string | null;
+  avatarPath: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 type GroupRow = { id: string; name: string; description: string; characterIds: string; avatarPath: string | null };
 type ParsedCharacterRow = CharacterRow & { parsed: Record<string, any> };
 
 type SortOption = "name-asc" | "name-desc" | "newest" | "oldest" | "favorites";
 
-function getCharacterPreviewMetadata(char: ParsedCharacterRow) {
+function getCharacterPreviewMetadata(char: ParsedCharacterRow): string | null {
   const parts: string[] = [];
   const creator = typeof char.parsed.creator === "string" ? char.parsed.creator.trim() : "";
   const version = typeof char.parsed.character_version === "string" ? char.parsed.character_version.trim() : "";
@@ -74,7 +82,7 @@ function getCharacterPreviewMetadata(char: ParsedCharacterRow) {
   if (specVersion) parts.push(`spec ${specVersion}`);
   if (parts.length > 0) return parts.join(" · ");
   if (tags.length > 0) return tags.slice(0, 3).join(" · ");
-  return "No creator or card metadata";
+  return null;
 }
 
 export function CharactersPanel() {
@@ -88,6 +96,7 @@ export function CharactersPanel() {
   const deleteGroup = useDeleteGroup();
   const openModal = useUIStore((s) => s.openModal);
   const openCharacterDetail = useUIStore((s) => s.openCharacterDetail);
+  const openCharacterLibrary = useUIStore((s) => s.openCharacterLibrary);
   const activeChat = useChatStore((s) => s.activeChat);
   const updateChat = useUpdateChat();
   const createMessage = useCreateMessage(activeChat?.id ?? null);
@@ -194,9 +203,9 @@ export function CharactersPanel() {
   }, [characters]) as ParsedCharacterRow[];
 
   const charMap = useMemo(() => {
-    const map = new Map<string, { name: string; avatarPath: string | null }>();
+    const map = new Map<string, { name: string; comment?: string | null; avatarPath: string | null }>();
     for (const c of parsedCharacters) {
-      map.set(c.id, { name: c.parsed.name ?? "Unknown", avatarPath: c.avatarPath });
+      map.set(c.id, { name: c.parsed.name ?? "Unknown", comment: c.comment, avatarPath: c.avatarPath });
     }
     return map;
   }, [parsedCharacters]);
@@ -219,6 +228,7 @@ export function CharactersPanel() {
       list = list.filter(
         (c) =>
           (c.parsed.name ?? "").toLowerCase().includes(q) ||
+          (typeof c.comment === "string" && c.comment.toLowerCase().includes(q)) ||
           (c.parsed.description ?? "").toLowerCase().includes(q) ||
           (c.parsed.tags ?? []).some((t: string) => t.toLowerCase().includes(q)),
       );
@@ -422,8 +432,49 @@ export function CharactersPanel() {
     }
   }, [selectedCharacterIds]);
 
+  const handleDeleteSelected = useCallback(async () => {
+    const ids = [...selectedCharacterIds];
+    if (ids.length === 0) return;
+
+    if (
+      !(await showConfirmDialog({
+        title: "Delete Characters",
+        message: `Delete ${ids.length} character${ids.length === 1 ? "" : "s"}?`,
+        confirmLabel: "Delete",
+        tone: "destructive",
+      }))
+    ) {
+      return;
+    }
+
+    const results = await Promise.allSettled(ids.map((id) => deleteCharacter.mutateAsync(id)));
+    const failedIds = ids.filter((_, index) => results[index]?.status === "rejected");
+    const deletedCount = ids.length - failedIds.length;
+
+    if (deletedCount > 0) {
+      toast.success(`Deleted ${deletedCount} character${deletedCount === 1 ? "" : "s"}`);
+    }
+
+    if (failedIds.length > 0) {
+      setSelectedCharacterIds(new Set(failedIds));
+      toast.error(`Failed to delete ${failedIds.length} character${failedIds.length === 1 ? "" : "s"}`);
+      return;
+    }
+
+    exitSelectionMode();
+  }, [selectedCharacterIds, deleteCharacter, exitSelectionMode]);
+
   return (
     <div className="flex flex-col gap-2 p-3">
+      <button
+        onClick={openCharacterLibrary}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2.5 text-xs font-medium text-[var(--foreground)] transition-all hover:border-[var(--primary)]/35 hover:bg-[var(--accent)]"
+        title="Open full library"
+      >
+        <Users size="0.875rem" className="text-[var(--primary)]" />
+        Open Full Library
+      </button>
+
       {/* Search + Sort */}
       <div className="flex gap-1.5">
         <div className="relative flex-1">
@@ -605,6 +656,14 @@ export function CharactersPanel() {
             className="rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
           >
             Clear
+          </button>
+          <button
+            onClick={handleDeleteSelected}
+            disabled={selectedCharacterIds.size === 0}
+            className="inline-flex items-center gap-1 rounded-lg bg-[var(--destructive)]/12 px-2.5 py-1 text-[0.625rem] font-medium text-[var(--destructive)] transition-all hover:bg-[var(--destructive)]/20 disabled:opacity-40"
+          >
+            <Trash2 size="0.6875rem" />
+            Delete
           </button>
           <button
             onClick={handleExportSelected}
@@ -817,7 +876,14 @@ export function CharactersPanel() {
                                 <User size="0.75rem" />
                               )}
                             </div>
-                            <span className="flex-1 truncate text-[0.6875rem]">{member.name}</span>
+                            <div className="min-w-0 flex-1">
+                              <span className="block truncate text-[0.6875rem]">{member.name}</span>
+                              {getCharacterTitle(member) && (
+                                <span className="block truncate text-[0.5625rem] italic text-[var(--muted-foreground)]">
+                                  {getCharacterTitle(member)}
+                                </span>
+                              )}
+                            </div>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -890,6 +956,7 @@ export function CharactersPanel() {
       <div className="stagger-children flex flex-col gap-1">
         {sortedCharacters.map((char) => {
           const charName = char.parsed.name ?? "Unnamed";
+          const charTitle = getCharacterTitle({ name: charName, comment: char.comment });
           const charTags = (char.parsed.tags ?? []) as string[];
           const charNameColor = (char.parsed.extensions?.nameColor as string) || undefined;
           const isSelected = chatCharacterIds.includes(char.id);
@@ -989,9 +1056,13 @@ export function CharactersPanel() {
                       ? charNameColor.startsWith("linear-gradient")
                         ? {
                             background: charNameColor,
+                            backgroundRepeat: "no-repeat",
+                            backgroundSize: "100% 100%",
                             WebkitBackgroundClip: "text",
                             WebkitTextFillColor: "transparent",
                             backgroundClip: "text",
+                            color: "transparent",
+                            display: "inline-block",
                           }
                         : { color: charNameColor }
                       : undefined
@@ -999,13 +1070,18 @@ export function CharactersPanel() {
                 >
                   {charName}
                 </div>
-                <div className="truncate text-[0.625rem] text-[var(--muted-foreground)]">
-                  {assigningToGroup
-                    ? isInTargetGroup
-                      ? "In group — click to remove"
-                      : "Click to add to group"
-                    : previewMetadata}
-                </div>
+                {charTitle && (
+                  <div className="truncate text-[0.625rem] italic text-[var(--muted-foreground)]">{charTitle}</div>
+                )}
+                {(assigningToGroup || previewMetadata) && (
+                  <div className="truncate text-[0.625rem] text-[var(--muted-foreground)]">
+                    {assigningToGroup
+                      ? isInTargetGroup
+                        ? "In group — click to remove"
+                        : "Click to add to group"
+                      : previewMetadata}
+                  </div>
+                )}
                 {!assigningToGroup && charTags.length > 0 && (
                   <div className="mt-0.5 flex flex-wrap gap-0.5">
                     {charTags.slice(0, 3).map((tag) => (

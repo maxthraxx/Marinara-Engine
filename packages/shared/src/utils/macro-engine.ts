@@ -7,6 +7,16 @@ export interface MacroContext {
   char: string;
   /** All characters in the chat */
   characters: string[];
+  /** Full per-character card fields for grouped macro expansion */
+  characterProfiles?: Array<{
+    name: string;
+    description?: string;
+    personality?: string;
+    backstory?: string;
+    appearance?: string;
+    scenario?: string;
+    example?: string;
+  }>;
   /** Custom variables from prompt toggle groups */
   variables: Record<string, string>;
   /** Last user input message (for {{input}}) */
@@ -17,6 +27,27 @@ export interface MacroContext {
   model?: string;
   /** Agent data keyed by agent type (for {{agent::TYPE}}) */
   agentData?: Record<string, string>;
+  /** Current character card fields used by macros like {{description}} */
+  characterFields?: {
+    description?: string;
+    personality?: string;
+    backstory?: string;
+    appearance?: string;
+    scenario?: string;
+    example?: string;
+  };
+  /** Active persona card fields used by {{persona}} */
+  personaFields?: {
+    description?: string;
+    personality?: string;
+    backstory?: string;
+    appearance?: string;
+    scenario?: string;
+  };
+}
+
+export interface ResolveMacroOptions {
+  trimResult?: boolean;
 }
 
 export interface SupportedMacroDefinition {
@@ -25,10 +56,23 @@ export interface SupportedMacroDefinition {
   description: string;
 }
 
+const CHARACTER_MACRO_PATTERN = /\{\{(?:char|description|personality|backstory|appearance|scenario|example)\}\}/i;
+
 export const SUPPORTED_MACROS: readonly SupportedMacroDefinition[] = [
-  { category: "Identity", syntax: "{{user}} / {{persona}}", description: "Current user or persona name" },
+  { category: "Identity", syntax: "{{user}}", description: "Current user or persona name" },
+  {
+    category: "Identity",
+    syntax: "{{persona}}",
+    description: "Active persona description, personality, backstory, appearance, and scenario joined by new lines",
+  },
   { category: "Identity", syntax: "{{char}}", description: "Current character name" },
   { category: "Identity", syntax: "{{characters}}", description: "All character names, comma-separated" },
+  { category: "Character", syntax: "{{description}}", description: "Current character description" },
+  { category: "Character", syntax: "{{personality}}", description: "Current character personality" },
+  { category: "Character", syntax: "{{backstory}}", description: "Current character backstory" },
+  { category: "Character", syntax: "{{appearance}}", description: "Current character appearance" },
+  { category: "Character", syntax: "{{scenario}}", description: "Current character scenario" },
+  { category: "Character", syntax: "{{example}}", description: "Current character example dialogue" },
   { category: "Context", syntax: "{{input}}", description: "Most recent user message" },
   { category: "Context", syntax: "{{model}}", description: "Current model name" },
   { category: "Context", syntax: "{{chatId}}", description: "Current chat ID" },
@@ -75,13 +119,76 @@ export const SUPPORTED_MACROS: readonly SupportedMacroDefinition[] = [
   },
 ];
 
+function resolveCharacterScopedMacros(
+  template: string,
+  profile: NonNullable<MacroContext["characterProfiles"]>[number],
+): string {
+  return template
+    .replace(/\{\{char\}\}/gi, profile.name)
+    .replace(/\{\{description\}\}/gi, profile.description ?? "")
+    .replace(/\{\{personality\}\}/gi, profile.personality ?? "")
+    .replace(/\{\{backstory\}\}/gi, profile.backstory ?? "")
+    .replace(/\{\{appearance\}\}/gi, profile.appearance ?? "")
+    .replace(/\{\{scenario\}\}/gi, profile.scenario ?? "")
+    .replace(/\{\{example\}\}/gi, profile.example ?? "");
+}
+
+function expandBracketedCharacterBlocks(template: string, ctx: MacroContext): string {
+  const profiles = ctx.characterProfiles ?? [];
+  if (profiles.length <= 1 || !CHARACTER_MACRO_PATTERN.test(template)) {
+    return template;
+  }
+
+  const lines = template.split(/\r?\n/);
+  const expandedLines: string[] = [];
+  let changed = false;
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!;
+    if (line.trim() !== "[") {
+      expandedLines.push(line);
+      continue;
+    }
+
+    let endIndex = index + 1;
+    while (endIndex < lines.length && lines[endIndex]!.trim() !== "]") {
+      endIndex += 1;
+    }
+
+    if (endIndex >= lines.length) {
+      expandedLines.push(line);
+      continue;
+    }
+
+    const block = lines.slice(index, endIndex + 1).join("\n");
+    if (!CHARACTER_MACRO_PATTERN.test(block)) {
+      expandedLines.push(...lines.slice(index, endIndex + 1));
+      index = endIndex;
+      continue;
+    }
+
+    changed = true;
+    expandedLines.push(
+      ...profiles
+        .map((profile) => resolveCharacterScopedMacros(block, profile))
+        .join("\n")
+        .split("\n"),
+    );
+    index = endIndex;
+  }
+
+  return changed ? expandedLines.join("\n") : template;
+}
+
 /**
  * Replace macros in a prompt string with their values.
  *
  * Supported macros (SillyTavern-compatible):
- *  - {{user}} / {{persona}} — user's display name
+ *  - {{user}} — user's display name
+ *  - {{persona}} — active persona description, personality, backstory, appearance, and scenario joined by new lines
  *  - {{char}} — current character name
  *  - {{characters}} — comma-separated list of all character names
+ *  - {{description}} / {{personality}} / {{backstory}} / {{appearance}} / {{scenario}} / {{example}} — current character card fields
  *  - {{date}} — current real date (YYYY-MM-DD)
  *  - {{time}} — current real time (HH:MM)
  *  - {{datetime}} — full ISO datetime string
@@ -107,11 +214,23 @@ export const SUPPORTED_MACROS: readonly SupportedMacroDefinition[] = [
  *  - {{uppercase}}...{{/uppercase}} — convert to uppercase
  *  - {{lowercase}}...{{/lowercase}} — convert to lowercase
  */
-export function resolveMacros(template: string, ctx: MacroContext): string {
+export function resolveMacros(template: string, ctx: MacroContext, options: ResolveMacroOptions = {}): string {
   let result = template;
+  const personaText = [
+    ctx.personaFields?.description,
+    ctx.personaFields?.personality,
+    ctx.personaFields?.backstory,
+    ctx.personaFields?.appearance,
+    ctx.personaFields?.scenario,
+  ]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join("\n");
 
   // ── Comments — strip first so they don't interfere ──
   result = result.replace(/\{\{\/\/[^}]*\}\}/g, "");
+
+  // ── Multi-character bracket blocks — expand before global substitutions ──
+  result = expandBracketedCharacterBlocks(result, ctx);
 
   // ── No-op & banned ──
   result = result.replace(/\{\{noop\}\}/gi, "");
@@ -119,9 +238,15 @@ export function resolveMacros(template: string, ctx: MacroContext): string {
 
   // ── Static substitutions ──
   result = result.replace(/\{\{user\}\}/gi, ctx.user);
-  result = result.replace(/\{\{persona\}\}/gi, ctx.user);
+  result = result.replace(/\{\{persona\}\}/gi, personaText);
   result = result.replace(/\{\{char\}\}/gi, ctx.char);
   result = result.replace(/\{\{characters\}\}/gi, ctx.characters.join(", "));
+  result = result.replace(/\{\{description\}\}/gi, ctx.characterFields?.description ?? "");
+  result = result.replace(/\{\{personality\}\}/gi, ctx.characterFields?.personality ?? "");
+  result = result.replace(/\{\{backstory\}\}/gi, ctx.characterFields?.backstory ?? "");
+  result = result.replace(/\{\{appearance\}\}/gi, ctx.characterFields?.appearance ?? "");
+  result = result.replace(/\{\{scenario\}\}/gi, ctx.characterFields?.scenario ?? "");
+  result = result.replace(/\{\{example\}\}/gi, ctx.characterFields?.example ?? "");
   result = result.replace(/\{\{input\}\}/gi, ctx.lastInput ?? "");
   result = result.replace(/\{\{model\}\}/gi, ctx.model ?? "");
   result = result.replace(/\{\{chatId\}\}/gi, ctx.chatId ?? "");
@@ -209,7 +334,9 @@ export function resolveMacros(template: string, ctx: MacroContext): string {
     return val !== undefined ? val : match; // leave unknown macros as-is
   });
 
-  result = result.trim();
+  if (options.trimResult !== false) {
+    result = result.trim();
+  }
 
   return result;
 }

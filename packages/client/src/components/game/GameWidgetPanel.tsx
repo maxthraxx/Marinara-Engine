@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { Pencil } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { HudWidget } from "@marinara-engine/shared";
 import { useUpdateGameWidgets } from "../../hooks/use-game";
@@ -59,6 +59,38 @@ const EMPTY_WIDGET_DRAFT: WidgetEditorDraft = {
 
 function getVisibleWidgets(widgets: HudWidget[], position: "hud_left" | "hud_right") {
   return widgets.filter((w) => w.position === position && w.type !== "inventory_grid").slice(0, MAX_WIDGETS);
+}
+
+function formatWidgetTypeLabel(type: HudWidget["type"]) {
+  return type
+    .split("_")
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+function describeWidget(widget: HudWidget) {
+  switch (widget.type) {
+    case "progress_bar":
+    case "gauge":
+    case "relationship_meter":
+      return `${widget.config.value ?? 0} / ${widget.config.max ?? 100}`;
+    case "counter":
+      return `${widget.config.count ?? 0} tracked`;
+    case "stat_block": {
+      const stats = Array.isArray(widget.config.stats) ? widget.config.stats.length : 0;
+      return stats === 1 ? "1 field" : `${stats} fields`;
+    }
+    case "list": {
+      const items = Array.isArray(widget.config.items) ? widget.config.items.length : 0;
+      return items === 1 ? "1 item" : `${items} items`;
+    }
+    case "inventory_grid":
+      return `${widget.config.slots ?? 0} slots`;
+    case "timer":
+      return `${widget.config.seconds ?? 0}s remaining`;
+    default:
+      return formatWidgetTypeLabel(widget.type);
+  }
 }
 
 function createWidgetEditorDraft(widget: HudWidget): WidgetEditorDraft {
@@ -126,13 +158,17 @@ function buildUpdatedWidgetConfig(widget: HudWidget, draft: WidgetEditorDraft): 
       );
       return nextConfig;
     case "stat_block":
-      nextConfig.stats = draft.stats.map((stat, index) => {
+      nextConfig.stats = draft.stats.reduce<Array<{ name: string; value: number | string }>>((result, stat, index) => {
+        const name = stat.name.trim();
+        if (!name) return result;
+
         const existingStat = widget.config.stats?.[index];
-        return {
-          name: stat.name,
+        result.push({
+          name,
           value: coerceStatValue(stat.value, existingStat?.value ?? ""),
-        };
-      });
+        });
+        return result;
+      }, []);
       return nextConfig;
     case "list":
       nextConfig.items = draft.items
@@ -422,12 +458,18 @@ function WidgetEditorModal({
   onClose,
   onSave,
   isSaving,
+  allowStructureEdit = false,
+  description = "Adjust this widget manually when the model misses an update.",
+  saveLabel = "Save Changes",
 }: {
   widget: HudWidget | null;
   open: boolean;
   onClose: () => void;
   onSave: (config: HudWidget["config"]) => Promise<void>;
   isSaving: boolean;
+  allowStructureEdit?: boolean;
+  description?: string;
+  saveLabel?: string;
 }) {
   const [draft, setDraft] = useState<WidgetEditorDraft>(EMPTY_WIDGET_DRAFT);
 
@@ -449,9 +491,7 @@ function WidgetEditorModal({
   return createPortal(
     <Modal open={open} onClose={isSaving ? () => {} : onClose} title={`Edit ${widget.label}`} width="max-w-lg">
       <div className="space-y-4">
-        <p className="text-sm text-[var(--muted-foreground)]">
-          Adjust this widget manually when the model misses an update.
-        </p>
+        <p className="text-sm text-[var(--muted-foreground)]">{description}</p>
 
         {(widget.type === "progress_bar" || widget.type === "gauge" || widget.type === "relationship_meter") && (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -492,19 +532,46 @@ function WidgetEditorModal({
         {widget.type === "stat_block" && (
           <div className="space-y-3">
             {draft.stats.length === 0 ? (
-              <p className="text-sm text-[var(--muted-foreground)]">This stat block has no editable values.</p>
+              <p className="text-sm text-[var(--muted-foreground)]">
+                {allowStructureEdit
+                  ? "This stat block has no fields yet. Add one below."
+                  : "This stat block has no editable values."}
+              </p>
             ) : (
               draft.stats.map((stat, index) => (
                 <div
                   key={`${stat.name}:${index}`}
-                  className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_7rem] sm:items-end"
+                  className={cn(
+                    "grid gap-1.5 sm:items-end",
+                    allowStructureEdit ? "sm:grid-cols-[minmax(0,1fr)_7rem_auto]" : "sm:grid-cols-[minmax(0,1fr)_7rem]",
+                  )}
                 >
-                  <div className="space-y-1.5">
-                    <span className="text-xs font-medium text-[var(--muted-foreground)]">Stat</span>
-                    <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)]/75">
-                      {stat.name}
+                  {allowStructureEdit ? (
+                    <label className="space-y-1.5">
+                      <span className="text-xs font-medium text-[var(--muted-foreground)]">Stat</span>
+                      <input
+                        type="text"
+                        value={stat.name}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            stats: current.stats.map((entry, entryIndex) =>
+                              entryIndex === index ? { ...entry, name: event.target.value } : entry,
+                            ),
+                          }))
+                        }
+                        placeholder="Name"
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] outline-none transition focus:border-[var(--primary)]"
+                      />
+                    </label>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <span className="text-xs font-medium text-[var(--muted-foreground)]">Stat</span>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)]/75">
+                        {stat.name}
+                      </div>
                     </div>
-                  </div>
+                  )}
                   <label className="space-y-1.5">
                     <span className="text-xs font-medium text-[var(--muted-foreground)]">Value</span>
                     <input
@@ -521,8 +588,37 @@ function WidgetEditorModal({
                       className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] outline-none transition focus:border-[var(--primary)]"
                     />
                   </label>
+                  {allowStructureEdit && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          stats: current.stats.filter((_, entryIndex) => entryIndex !== index),
+                        }))
+                      }
+                      className="inline-flex h-10 items-center justify-center rounded-lg border border-[var(--destructive)]/25 px-3 text-sm text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/10"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
               ))
+            )}
+            {allowStructureEdit && (
+              <button
+                type="button"
+                onClick={() =>
+                  setDraft((current) => ({
+                    ...current,
+                    stats: [...current.stats, { name: "", value: "" }],
+                  }))
+                }
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
+              >
+                <Plus size={14} />
+                <span>Add Stat</span>
+              </button>
             )}
           </div>
         )}
@@ -592,12 +688,182 @@ function WidgetEditorModal({
             disabled={isSaving}
             className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {isSaving ? "Saving..." : "Save Changes"}
+            {isSaving ? "Saving..." : saveLabel}
           </button>
         </div>
       </div>
     </Modal>,
     document.body,
+  );
+}
+
+interface GameWidgetSessionPrepModalProps {
+  open: boolean;
+  widgets: HudWidget[];
+  chatId: string;
+  onClose: () => void;
+  onStartSession: () => void;
+  isStartingSession: boolean;
+}
+
+export function GameWidgetSessionPrepModal({
+  open,
+  widgets,
+  chatId,
+  onClose,
+  onStartSession,
+  isStartingSession,
+}: GameWidgetSessionPrepModalProps) {
+  const updateGameWidgets = useUpdateGameWidgets();
+  const [draftWidgets, setDraftWidgets] = useState<HudWidget[]>(widgets);
+  const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setDraftWidgets(widgets);
+      setEditingWidgetId(null);
+    }
+  }, [open, widgets]);
+
+  const editingWidget = useMemo(
+    () => draftWidgets.find((widget) => widget.id === editingWidgetId) ?? null,
+    [draftWidgets, editingWidgetId],
+  );
+
+  useEffect(() => {
+    if (editingWidgetId && !editingWidget) {
+      setEditingWidgetId(null);
+    }
+  }, [editingWidget, editingWidgetId]);
+
+  const handleRemoveWidget = useCallback(
+    (widgetId: string) => {
+      const target = draftWidgets.find((widget) => widget.id === widgetId);
+      if (!target) return;
+      if (!window.confirm(`Remove ${target.label} from the next session?`)) return;
+
+      setDraftWidgets((current) => current.filter((widget) => widget.id !== widgetId));
+    },
+    [draftWidgets],
+  );
+
+  const handleSaveWidget = useCallback(
+    async (nextConfig: HudWidget["config"]) => {
+      if (!editingWidget) return;
+      setDraftWidgets((current) =>
+        current.map((widget) => (widget.id === editingWidget.id ? { ...widget, config: nextConfig } : widget)),
+      );
+      setEditingWidgetId(null);
+    },
+    [editingWidget],
+  );
+
+  const handleStart = useCallback(async () => {
+    try {
+      await updateGameWidgets.mutateAsync({ chatId, widgets: draftWidgets });
+      onStartSession();
+    } catch {
+      toast.error("Failed to save widget carry-over changes.");
+    }
+  }, [chatId, draftWidgets, onStartSession, updateGameWidgets]);
+
+  const interactionsLocked = updateGameWidgets.isPending || isStartingSession;
+
+  return (
+    <>
+      <Modal
+        open={open}
+        onClose={interactionsLocked ? () => {} : onClose}
+        title="Prepare Next Session Widgets"
+        width="max-w-2xl"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--muted-foreground)]">
+            Review which custom widgets should carry into the next session. You can rename stat-block fields, add or
+            remove them, and drop widgets you no longer want before the next session starts.
+          </p>
+
+          {draftWidgets.length === 0 ? (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--accent)]/30 px-4 py-3 text-sm text-[var(--muted-foreground)]">
+              No custom widgets will be carried into the next session.
+            </div>
+          ) : (
+            <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
+              {draftWidgets.map((widget) => (
+                <div
+                  key={widget.id}
+                  className="flex items-start justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--accent)]/20 px-4 py-3"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      {widget.icon && <span className="text-sm">{widget.icon}</span>}
+                      <span className="truncate text-sm font-medium text-[var(--foreground)]">{widget.label}</span>
+                      <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[0.6875rem] uppercase tracking-wide text-[var(--muted-foreground)]">
+                        {formatWidgetTypeLabel(widget.type)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[var(--muted-foreground)]">{describeWidget(widget)}</p>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingWidgetId(widget.id)}
+                      disabled={interactionsLocked}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)] disabled:opacity-50"
+                    >
+                      <Pencil size={12} />
+                      <span>Edit</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveWidget(widget.id)}
+                      disabled={interactionsLocked}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--destructive)]/25 px-3 py-1.5 text-xs font-medium text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/10 disabled:opacity-50"
+                    >
+                      <Trash2 size={12} />
+                      <span>Remove</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={interactionsLocked}
+              className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleStart();
+              }}
+              disabled={interactionsLocked}
+              className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {interactionsLocked ? "Starting Session..." : "Start Next Session"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <WidgetEditorModal
+        widget={editingWidget}
+        open={!!editingWidget}
+        onClose={() => setEditingWidgetId(null)}
+        onSave={handleSaveWidget}
+        isSaving={interactionsLocked}
+        allowStructureEdit
+        description="Adjust the values that should carry forward, or reshape stat blocks for the next session."
+        saveLabel="Update Widget"
+      />
+    </>
   );
 }
 

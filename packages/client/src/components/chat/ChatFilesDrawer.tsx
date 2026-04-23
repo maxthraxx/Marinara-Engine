@@ -1,6 +1,5 @@
 // ──────────────────────────────────────────────
-// Chat: Manage Chat Files — switch between branches
-// Like SillyTavern's "Manage chat files" feature
+// Chat: Manage Chat Files — export and branch management
 // ──────────────────────────────────────────────
 import { X, Trash2, FileText, MessageSquare, Download } from "lucide-react";
 import { showConfirmDialog } from "../../lib/app-dialogs";
@@ -26,11 +25,6 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
 
   const chatFiles = (groupChats ?? []) as Chat[];
 
-  const handleSwitch = (chatId: string) => {
-    setActiveChatId(chatId);
-    onClose();
-  };
-
   const handleDelete = async (chatId: string) => {
     if (
       !(await showConfirmDialog({
@@ -43,10 +37,6 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
       return;
     }
     deleteChat.mutate(chatId);
-    if (chatId === activeChatId && chatFiles.length > 1) {
-      const next = chatFiles.find((c) => c.id !== chatId);
-      if (next) setActiveChatId(next.id);
-    }
   };
 
   if (!open) return null;
@@ -145,6 +135,9 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
           <p className="mt-2 text-center text-[0.625rem] text-[var(--muted-foreground)]/60">
             {chatFiles.length} chat file{chatFiles.length !== 1 ? "s" : ""} in this group
           </p>
+          <p className="mt-1 text-center text-[0.625rem] text-[var(--muted-foreground)]/60">
+            Switch branches from the selector at the top of the chat.
+          </p>
         </div>
 
         {/* Chat files list */}
@@ -159,10 +152,11 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
               return (
                 <div
                   key={cf.id}
-                  onClick={() => handleSwitch(cf.id)}
                   className={cn(
-                    "group flex cursor-pointer items-center gap-3 rounded-xl p-2.5 transition-all",
-                    isActive ? "bg-sky-400/10 ring-1 ring-sky-400/30" : "hover:bg-[var(--accent)]",
+                    "group flex items-center gap-3 rounded-xl p-2.5 transition-all",
+                    isActive
+                      ? "bg-sky-400/10 ring-1 ring-sky-400/30"
+                      : "bg-[var(--background)]/40 hover:bg-[var(--accent)]",
                   )}
                 >
                   <div

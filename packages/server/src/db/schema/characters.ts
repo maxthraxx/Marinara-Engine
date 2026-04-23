@@ -7,6 +7,8 @@ export const characters = sqliteTable("characters", {
   id: text("id").primaryKey(),
   /** Full CharacterData V2 as JSON */
   data: text("data").notNull(),
+  /** User-only note shown under the character name for disambiguation */
+  comment: text("comment").notNull().default(""),
   avatarPath: text("avatar_path"),
   spriteFolderPath: text("sprite_folder_path"),
   createdAt: text("created_at").notNull(),
