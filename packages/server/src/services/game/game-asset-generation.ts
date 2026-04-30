@@ -13,6 +13,13 @@ import { join } from "path";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { generateImage, type ImageGenRequest } from "../image/image-generation.js";
 import { buildAssetManifest, GAME_ASSETS_DIR } from "./asset-manifest.service.js";
+import type { PromptOverridesStorage } from "../storage/prompt-overrides.storage.js";
+import {
+  loadPrompt,
+  GAME_NPC_PORTRAIT,
+  GAME_BACKGROUND,
+  GAME_SCENE_ILLUSTRATION,
+} from "../prompt-overrides/index.js";
 
 const NPC_AVATAR_DIR = join(DATA_DIR, "avatars", "npc");
 
@@ -57,24 +64,20 @@ function hasExplicitNonHumanCue(value: string): boolean {
   );
 }
 
-function buildNpcPortraitPrompt(req: NpcPortraitRequest): string {
+function npcPortraitVariables(req: NpcPortraitRequest) {
   const context = req.appearance.trim();
   const explicitNonHuman = hasExplicitNonHumanCue(`${req.npcName} ${context}`);
-  return [
-    `NPC portrait for ${req.npcName}.`,
-    context ? `Canonical visual description from the current game: ${context}.` : "",
-    explicitNonHuman
+  return {
+    npcName: req.npcName,
+    appearanceLine: context ? `Canonical visual description from the current game: ${context}.` : "",
+    nonHumanRule: explicitNonHuman
       ? "The description explicitly indicates a non-human subject. Preserve that exact species, body plan, age category, and silhouette; do not turn it into a human or kemonomimi character unless the description says humanoid."
       : "Unless the description explicitly says otherwise, depict this NPC as a human or humanoid person. Do not infer an animal species from the name, mood, speech verbs, or setting.",
-    req.artStyle ? `Art style: ${req.artStyle}.` : "",
-    explicitNonHuman
+    artStyleLine: req.artStyle ? `Art style: ${req.artStyle}.` : "",
+    compositionRule: explicitNonHuman
       ? "Use a centered avatar composition appropriate to the subject, including a creature portrait or full head-and-body crop only when that best preserves the described non-human form."
       : "Use a centered human/humanoid avatar composition: face and shoulders, readable expression, clear outfit cues.",
-    "High quality game avatar, clear readable design, no text, no UI, no watermark.",
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .slice(0, 1400);
+  };
 }
 
 // ── NPC Portrait Generation ──
@@ -92,6 +95,8 @@ export interface NpcPortraitRequest {
   imgApiKey: string;
   imgService?: string | null;
   imgComfyWorkflow?: string | undefined;
+  /** Storage for user-supplied prompt overrides. Optional — falls back to default builder when omitted. */
+  promptOverridesStorage?: PromptOverridesStorage;
 }
 
 /**
@@ -110,7 +115,11 @@ export async function generateNpcPortrait(req: NpcPortraitRequest): Promise<stri
     return `/api/avatars/npc/${req.chatId}/${slug}.png`;
   }
 
-  const prompt = buildNpcPortraitPrompt(req);
+  const vars = npcPortraitVariables(req);
+  const rawPrompt = req.promptOverridesStorage
+    ? await loadPrompt(req.promptOverridesStorage, GAME_NPC_PORTRAIT, vars)
+    : GAME_NPC_PORTRAIT.defaultBuilder(vars);
+  const prompt = rawPrompt.slice(0, 1400);
 
   try {
     const result = await generateImage(
@@ -168,6 +177,8 @@ export interface BackgroundGenRequest {
   imgApiKey: string;
   imgService?: string | null;
   imgComfyWorkflow?: string | undefined;
+  /** Storage for user-supplied prompt overrides. Optional — falls back to default builder when omitted. */
+  promptOverridesStorage?: PromptOverridesStorage;
 }
 
 export interface SceneIllustrationGenRequest {
@@ -187,6 +198,8 @@ export interface SceneIllustrationGenRequest {
   imgApiKey: string;
   imgService?: string | null;
   imgComfyWorkflow?: string | undefined;
+  /** Storage for user-supplied prompt overrides. Optional — falls back to default builder when omitted. */
+  promptOverridesStorage?: PromptOverridesStorage;
 }
 
 /**
@@ -211,11 +224,14 @@ export async function generateBackground(req: BackgroundGenRequest): Promise<str
   }
 
   const styleHint = [req.artStyle, req.genre, req.setting].filter(Boolean).join(", ");
-  const prompt =
-    `${req.sceneDescription}. ${styleHint ? `Style: ${styleHint}.` : ""} Wide-angle landscape, detailed environment, no characters, no text, no UI, game background art, high quality`.slice(
-      0,
-      1000,
-    );
+  const backgroundVars = {
+    sceneDescription: req.sceneDescription,
+    styleLine: styleHint ? `Style: ${styleHint}.` : "",
+  };
+  const rawBackgroundPrompt = req.promptOverridesStorage
+    ? await loadPrompt(req.promptOverridesStorage, GAME_BACKGROUND, backgroundVars)
+    : GAME_BACKGROUND.defaultBuilder(backgroundVars);
+  const prompt = rawBackgroundPrompt.slice(0, 1000);
 
   try {
     const result = await generateImage(
@@ -255,28 +271,22 @@ export async function generateSceneIllustration(req: SceneIllustrationGenRequest
   const tag = `backgrounds:illustrations:${slug}`;
 
   const styleHint = [req.artStyle, req.genre, req.setting].filter(Boolean).join(", ");
-  const characterHint = req.characters?.length ? `Characters: ${req.characters.join(", ")}.` : "";
-  const referenceHint = req.referenceImages?.length
-    ? "Reference handling: attached character reference images are available. Use them to match faces, hair, build, colors, and distinctive features for the referenced characters."
-    : "";
-  const descriptionHint = req.characterDescriptions?.length
-    ? `Appearance notes for visible characters without an attached reference image:\n- ${req.characterDescriptions.join("\n- ")}`
-    : "";
-  const prompt = [
-    "Image type: polished visual novel CG illustration replacing the game background for one important scene.",
-    "Camera / POV: first-person view from the player protagonist's eyes. Do not show the protagonist except hands or arms when the moment explicitly requires them.",
-    `Scene moment: ${req.prompt}`,
-    req.reason ? `Narrative purpose: ${req.reason}.` : "",
-    characterHint,
-    referenceHint,
-    descriptionHint,
-    styleHint ? `Art direction: ${styleHint}.` : "",
-    "Composition: cinematic 16:9 visual novel CG, emotionally specific staging, clear focal point, high-quality finished illustration.",
-    "Avoid: text, UI, captions, speech bubbles, watermarks, and unrelated characters.",
-  ]
-    .filter(Boolean)
-    .join("\n")
-    .slice(0, 2200);
+  const sceneIllustrationVars = {
+    scenePrompt: req.prompt,
+    narrativePurposeLine: req.reason ? `Narrative purpose: ${req.reason}.` : "",
+    charactersLine: req.characters?.length ? `Characters: ${req.characters.join(", ")}.` : "",
+    referenceHandlingLine: req.referenceImages?.length
+      ? "Reference handling: attached character reference images are available. Use them to match faces, hair, build, colors, and distinctive features for the referenced characters."
+      : "",
+    appearanceNotesBlock: req.characterDescriptions?.length
+      ? `Appearance notes for visible characters without an attached reference image:\n- ${req.characterDescriptions.join("\n- ")}`
+      : "",
+    artDirectionLine: styleHint ? `Art direction: ${styleHint}.` : "",
+  };
+  const rawIllustrationPrompt = req.promptOverridesStorage
+    ? await loadPrompt(req.promptOverridesStorage, GAME_SCENE_ILLUSTRATION, sceneIllustrationVars)
+    : GAME_SCENE_ILLUSTRATION.defaultBuilder(sceneIllustrationVars);
+  const prompt = rawIllustrationPrompt.slice(0, 2200);
 
   try {
     const result = await generateImage(
