@@ -16,6 +16,10 @@ import {
   useCreateLorebookEntry,
   useDeleteLorebook,
   useReorderLorebookEntries,
+  useLorebookFolders,
+  useCreateLorebookFolder,
+  useUpdateLorebookEntry,
+  useReorderLorebookFolders,
 } from "../../hooks/use-lorebooks";
 import { useCharacters, usePersonas } from "../../hooks/use-characters";
 import { useConnections } from "../../hooks/use-connections";
@@ -44,13 +48,44 @@ import {
   Check,
   Tag,
   Wand2,
+  FolderPlus,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { api } from "../../lib/api-client";
-import type { Lorebook, LorebookEntry, LorebookCategory } from "@marinara-engine/shared";
+import type { Lorebook, LorebookEntry, LorebookFolder, LorebookCategory } from "@marinara-engine/shared";
 import { LorebookEntryRow } from "./LorebookEntryRow";
+import { LorebookFolderRow } from "./LorebookFolderRow";
 import { estimateTokens } from "./LorebookFormFields";
+
+// ──────────────────────────────────────────────
+// Folder collapse state lives in localStorage — purely a UI preference, not
+// worth a server round-trip on every toggle. Keyed per-lorebook so collapse
+// state is independent across books.
+// ──────────────────────────────────────────────
+const FOLDER_COLLAPSE_KEY_PREFIX = "lorebook-folder-collapsed:";
+
+function readCollapsedFolderIds(lorebookId: string | null): Set<string> {
+  if (!lorebookId || typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(`${FOLDER_COLLAPSE_KEY_PREFIX}${lorebookId}`);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return new Set(parsed.filter((id): id is string => typeof id === "string"));
+    return new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function writeCollapsedFolderIds(lorebookId: string, ids: Set<string>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`${FOLDER_COLLAPSE_KEY_PREFIX}${lorebookId}`, JSON.stringify(Array.from(ids)));
+  } catch {
+    /* localStorage unavailable / quota exceeded — silently degrade */
+  }
+}
 
 // ── Types ──
 const TABS = [
@@ -84,15 +119,20 @@ export function LorebookEditor() {
   const closeDetail = useUIStore((s) => s.closeLorebookDetail);
   const { data: rawLorebook, isLoading } = useLorebook(lorebookId);
   const { data: rawEntries } = useLorebookEntries(lorebookId);
+  const { data: rawFolders } = useLorebookFolders(lorebookId);
   const { data: rawCharacters } = useCharacters();
   const { data: rawPersonas } = usePersonas();
   const updateLorebook = useUpdateLorebook();
   const deleteLorebook = useDeleteLorebook();
   const createEntry = useCreateLorebookEntry();
+  const updateEntry = useUpdateLorebookEntry();
   const reorderEntries = useReorderLorebookEntries();
+  const createFolder = useCreateLorebookFolder();
+  const reorderFolders = useReorderLorebookFolders();
 
   const lorebook = rawLorebook as Lorebook | undefined;
   const entries = useMemo(() => (rawEntries ?? []) as LorebookEntry[], [rawEntries]);
+  const folders = useMemo(() => (rawFolders ?? []) as LorebookFolder[], [rawFolders]);
   const characters = useMemo(() => {
     if (!rawCharacters) return [] as Array<{ id: string; name: string }>;
     return (rawCharacters as Array<{ id: string; data: string | Record<string, unknown> }>).map((c) => {
@@ -127,6 +167,40 @@ export function LorebookEditor() {
   const [draggingEntryIdx, setDraggingEntryIdx] = useState<number | null>(null);
   const [entryDragReadyIdx, setEntryDragReadyIdx] = useState<number | null>(null);
   const [entryDropIdx, setEntryDropIdx] = useState<number | null>(null);
+
+  // ── Folder UI state ──
+  // Collapse state: persisted in localStorage, keyed per-lorebook. Loaded
+  // synchronously on mount so the initial render reflects the user's prior
+  // preference instead of a flash-of-everything-expanded.
+  const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(() => readCollapsedFolderIds(lorebookId));
+  // When the user opens a different lorebook, reload its collapse state.
+  useEffect(() => {
+    setCollapsedFolderIds(readCollapsedFolderIds(lorebookId));
+  }, [lorebookId]);
+  const toggleFolderCollapsed = useCallback(
+    (folderId: string) => {
+      if (!lorebookId) return;
+      setCollapsedFolderIds((prev) => {
+        const next = new Set<string>(prev);
+        if (next.has(folderId)) next.delete(folderId);
+        else next.add(folderId);
+        writeCollapsedFolderIds(lorebookId, next);
+        return next;
+      });
+    },
+    [lorebookId],
+  );
+
+  // Cross-container drag-and-drop state. The "container" is null for the root
+  // group or a folder.id for entries inside a folder. We track the source
+  // container so a drop can detect a cross-container move and update the
+  // entry's folderId before reordering.
+  const [dragSourceContainer, setDragSourceContainer] = useState<string | null | undefined>(undefined);
+  const [dropTargetContainer, setDropTargetContainer] = useState<string | null | undefined>(undefined);
+  // Folder reorder uses its own pair so it doesn't entangle with entry DnD.
+  const [draggingFolderIdx, setDraggingFolderIdx] = useState<number | null>(null);
+  const [folderDragReadyIdx, setFolderDragReadyIdx] = useState<number | null>(null);
+  const [folderDropIdx, setFolderDropIdx] = useState<number | null>(null);
 
   // ── Form state for lorebook overview ──
   const [formName, setFormName] = useState("");
@@ -165,7 +239,8 @@ export function LorebookEditor() {
     loadedLorebookIdRef.current = lorebook.id;
   }, [lorebook, lorebookDirty]);
 
-  // Filtered + sorted entries
+  // Filtered + sorted entries (flat list — used when search is active or
+  // a non-Order sort is selected, both of which suppress folder grouping).
   const filteredEntries = useMemo(() => {
     let result = entries;
     if (entrySearch) {
@@ -195,8 +270,31 @@ export function LorebookEditor() {
         return [...result].sort((a, b) => a.order - b.order);
     }
   }, [entries, entrySearch, entrySort]);
+
+  // Folder grouping is only meaningful when the user is sorting by Order with
+  // no search — any other state would put entries out of their containers
+  // (e.g. "Name A→Z" interleaves entries from different folders).
+  const showFolderGrouping = entrySort === "order" && entrySearch.trim().length === 0;
+
+  /** Entries for a given container (null = root, string = folder.id), sorted by Order. */
+  const entriesByContainer = useMemo(() => {
+    const map = new Map<string | null, LorebookEntry[]>();
+    map.set(null, []);
+    for (const f of folders) map.set(f.id, []);
+    for (const e of entries) {
+      const key = e.folderId ?? null;
+      const list = map.get(key);
+      // If an entry's folderId points to a deleted folder, fall back to root.
+      if (list) list.push(e);
+      else map.get(null)!.push(e);
+    }
+    for (const list of map.values()) list.sort((a, b) => a.order - b.order);
+    return map;
+  }, [entries, folders]);
+
   const canReorderEntries =
-    entrySort === "order" && entrySearch.trim().length === 0 && filteredEntries.length > 1 && !reorderEntries.isPending;
+    showFolderGrouping && entries.length > 1 && !reorderEntries.isPending;
+  const canReorderFolders = showFolderGrouping && folders.length > 1 && !reorderFolders.isPending;
 
   // ── Handlers ──
   const markLorebookDirty = useCallback(() => setLorebookDirty(true), []);
@@ -213,6 +311,14 @@ export function LorebookEditor() {
     setDraggingEntryIdx(null);
     setEntryDragReadyIdx(null);
     setEntryDropIdx(null);
+    setDragSourceContainer(undefined);
+    setDropTargetContainer(undefined);
+  }, []);
+
+  const resetFolderDragState = useCallback(() => {
+    setDraggingFolderIdx(null);
+    setFolderDragReadyIdx(null);
+    setFolderDropIdx(null);
   }, []);
 
   const calcEntryDropIdx = useCallback((cardIdx: number, e: ReactDragEvent<HTMLDivElement>) => {
@@ -221,38 +327,72 @@ export function LorebookEditor() {
     return e.clientY < midY ? cardIdx : cardIdx + 1;
   }, []);
 
+  // Drag start on an entry inside a specific container. We capture the
+  // source container so commitEntryDrop can detect a cross-container move.
   const handleEntryDragStart = useCallback(
-    (idx: number, e: ReactDragEvent<HTMLDivElement>) => {
+    (containerId: string | null, idxInContainer: number, entryId: string, e: ReactDragEvent<HTMLDivElement>) => {
       if (!canReorderEntries) {
         e.preventDefault();
         return;
       }
-      setDraggingEntryIdx(idx);
+      setDraggingEntryIdx(idxInContainer);
+      setDragSourceContainer(containerId);
       e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", filteredEntries[idx]?.id ?? String(idx));
+      e.dataTransfer.setData("text/plain", entryId);
     },
-    [canReorderEntries, filteredEntries],
+    [canReorderEntries],
   );
 
   const handleEntryDragOver = useCallback(
-    (idx: number, e: ReactDragEvent<HTMLDivElement>) => {
+    (containerId: string | null, idxInContainer: number, e: ReactDragEvent<HTMLDivElement>) => {
       if (!canReorderEntries || draggingEntryIdx === null) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-      setEntryDropIdx(calcEntryDropIdx(idx, e));
+      setEntryDropIdx(calcEntryDropIdx(idxInContainer, e));
+      setDropTargetContainer(containerId);
     },
     [calcEntryDropIdx, canReorderEntries, draggingEntryIdx],
   );
 
-  const handleEntryListDragOver = useCallback(
+  // Dropping on a folder header drops the entry at the top of that folder.
+  const handleFolderHeaderDragOver = useCallback(
+    (folderId: string, e: ReactDragEvent<HTMLDivElement>) => {
+      // If we're dragging an entry, this becomes a cross-container drop target.
+      if (draggingEntryIdx !== null) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setDropTargetContainer(folderId);
+        setEntryDropIdx(0);
+      }
+    },
+    [draggingEntryIdx],
+  );
+
+  // Empty folder → still need to accept drops to land an entry inside.
+  const handleFolderBodyDragOver = useCallback(
+    (folderId: string, e: ReactDragEvent<HTMLDivElement>) => {
+      if (!canReorderEntries || draggingEntryIdx === null) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDropTargetContainer(folderId);
+      // If hovering empty folder body, drop at end.
+      const containerEntries = entriesByContainer.get(folderId) ?? [];
+      setEntryDropIdx(containerEntries.length);
+    },
+    [canReorderEntries, draggingEntryIdx, entriesByContainer],
+  );
+
+  const handleRootListDragOver = useCallback(
     (e: ReactDragEvent<HTMLDivElement>) => {
       if (!canReorderEntries || draggingEntryIdx === null) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
 
       const container = entryListRef.current;
-      if (!container || filteredEntries.length === 0) {
-        setEntryDropIdx(filteredEntries.length);
+      const rootEntries = entriesByContainer.get(null) ?? [];
+      if (!container || rootEntries.length === 0) {
+        setDropTargetContainer(null);
+        setEntryDropIdx(rootEntries.length);
         return;
       }
 
@@ -262,16 +402,18 @@ export function LorebookEditor() {
 
       const firstRect = firstCard.getBoundingClientRect();
       if (e.clientY < firstRect.top) {
+        setDropTargetContainer(null);
         setEntryDropIdx(0);
         return;
       }
 
       const lastRect = lastCard.getBoundingClientRect();
       if (e.clientY > lastRect.bottom) {
-        setEntryDropIdx(filteredEntries.length);
+        setDropTargetContainer(null);
+        setEntryDropIdx(rootEntries.length);
       }
     },
-    [canReorderEntries, draggingEntryIdx, filteredEntries.length],
+    [canReorderEntries, draggingEntryIdx, entriesByContainer],
   );
 
   const commitEntryDrop = useCallback(
@@ -279,29 +421,108 @@ export function LorebookEditor() {
       e.preventDefault();
       const sourceIdx = draggingEntryIdx;
       const targetIdx = entryDropIdx;
+      const sourceContainer = dragSourceContainer;
+      const targetContainer = dropTargetContainer;
       resetEntryDragState();
-      if (!lorebookId || !canReorderEntries || sourceIdx === null || targetIdx === null) return;
+      if (
+        !lorebookId ||
+        !canReorderEntries ||
+        sourceIdx === null ||
+        targetIdx === null ||
+        sourceContainer === undefined ||
+        targetContainer === undefined
+      ) {
+        return;
+      }
 
-      let insertAt = targetIdx;
-      if (sourceIdx < insertAt) insertAt--;
-      if (sourceIdx === insertAt) return;
+      const sourceList = (entriesByContainer.get(sourceContainer) ?? []).slice();
+      const moved = sourceList[sourceIdx];
+      if (!moved) return;
 
-      const entryIds = filteredEntries.map((entry) => entry.id);
-      const [movedEntryId] = entryIds.splice(sourceIdx, 1);
-      if (!movedEntryId) return;
-      entryIds.splice(insertAt, 0, movedEntryId);
-      reorderEntries.mutate({ lorebookId, entryIds });
+      // Same-container reorder — preserves the existing reorder semantic.
+      if (sourceContainer === targetContainer) {
+        let insertAt = targetIdx;
+        if (sourceIdx < insertAt) insertAt--;
+        if (sourceIdx === insertAt) return;
+        const ids = sourceList.map((entry) => entry.id);
+        ids.splice(sourceIdx, 1);
+        ids.splice(insertAt, 0, moved.id);
+        reorderEntries.mutate({ lorebookId, entryIds: ids, folderId: sourceContainer });
+        return;
+      }
+
+      // Cross-container move. Only update folderId — leave the entry's Order
+      // untouched. The entry will slot into its sorted position in the new
+      // container based on its existing Order value, and the user can change
+      // Order explicitly via the inline editor if they want to reposition it.
+      // (Within-container drags renumber Order because the drag *is* how you
+      // change Order in that case; cross-container drags express folder
+      // membership only.)
+      updateEntry.mutate({ lorebookId, entryId: moved.id, folderId: targetContainer });
     },
     [
       canReorderEntries,
       draggingEntryIdx,
+      dragSourceContainer,
+      dropTargetContainer,
+      entriesByContainer,
       entryDropIdx,
-      filteredEntries,
       lorebookId,
       reorderEntries,
       resetEntryDragState,
+      updateEntry,
     ],
   );
+
+  // ── Folder reorder DnD ──
+  const handleFolderDragStart = useCallback(
+    (idx: number, folderId: string, e: ReactDragEvent<HTMLDivElement>) => {
+      if (!canReorderFolders) {
+        e.preventDefault();
+        return;
+      }
+      setDraggingFolderIdx(idx);
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", folderId);
+    },
+    [canReorderFolders],
+  );
+
+  const handleFolderDragOverHeader = useCallback(
+    (idx: number, e: ReactDragEvent<HTMLDivElement>) => {
+      if (!canReorderFolders || draggingFolderIdx === null) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const rect = e.currentTarget.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      setFolderDropIdx(e.clientY < midY ? idx : idx + 1);
+    },
+    [canReorderFolders, draggingFolderIdx],
+  );
+
+  const commitFolderDrop = useCallback(
+    (e: ReactDragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const sourceIdx = draggingFolderIdx;
+      const targetIdx = folderDropIdx;
+      resetFolderDragState();
+      if (!lorebookId || !canReorderFolders || sourceIdx === null || targetIdx === null) return;
+      let insertAt = targetIdx;
+      if (sourceIdx < insertAt) insertAt--;
+      if (sourceIdx === insertAt) return;
+      const ids = folders.map((f) => f.id);
+      const [moved] = ids.splice(sourceIdx, 1);
+      if (!moved) return;
+      ids.splice(insertAt, 0, moved);
+      reorderFolders.mutate({ lorebookId, folderIds: ids });
+    },
+    [canReorderFolders, draggingFolderIdx, folderDropIdx, folders, lorebookId, reorderFolders, resetFolderDragState],
+  );
+
+  const handleAddFolder = useCallback(async () => {
+    if (!lorebookId) return;
+    await createFolder.mutateAsync({ lorebookId, name: "New Folder", enabled: true });
+  }, [lorebookId, createFolder]);
 
   const handleSaveLorebook = useCallback(async () => {
     if (!lorebookId) return;
@@ -800,9 +1021,12 @@ export function LorebookEditor() {
 
             {activeTab === "entries" && (
               <div className="space-y-3">
-                {/* Search + Sort + Add */}
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
+                {/* Search + Sort + Add — flex-wrap so the row collapses
+                    gracefully on narrow viewports. Search keeps a 12rem
+                    (~192px) flex-basis so it stays usable; the buttons tile
+                    onto the next row instead of being clipped at ~400px. */}
+                <div className="flex flex-wrap items-stretch gap-2">
+                  <div className="relative min-w-0 flex-[1_1_12rem]">
                     <Search
                       size="0.8125rem"
                       className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
@@ -815,7 +1039,7 @@ export function LorebookEditor() {
                       className="w-full rounded-xl bg-[var(--secondary)] py-2.5 pl-8 pr-3 text-xs ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                     />
                   </div>
-                  <div className="relative">
+                  <div className="relative shrink-0">
                     <ArrowUpDown
                       size="0.8125rem"
                       className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
@@ -833,8 +1057,16 @@ export function LorebookEditor() {
                     </select>
                   </div>
                   <button
+                    onClick={handleAddFolder}
+                    className="flex shrink-0 items-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+                    title="Create a new folder to group entries"
+                  >
+                    <FolderPlus size="0.8125rem" />
+                    Add Folder
+                  </button>
+                  <button
                     onClick={handleAddEntry}
-                    className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 px-4 py-2.5 text-xs font-medium text-white shadow-md transition-all hover:shadow-lg active:scale-[0.98]"
+                    className="flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 px-4 py-2.5 text-xs font-medium text-white shadow-md transition-all hover:shadow-lg active:scale-[0.98]"
                   >
                     <Plus size="0.8125rem" />
                     Add Entry
@@ -842,77 +1074,318 @@ export function LorebookEditor() {
                 </div>
 
                 {/* Total tokens summary */}
-                {filteredEntries.length > 0 && (
+                {entries.length > 0 && (
                   <div className="flex items-center gap-3 text-[0.6875rem] text-[var(--muted-foreground)]">
-                    <span>{filteredEntries.length} entries</span>
+                    <span>
+                      {entries.length} {entries.length === 1 ? "entry" : "entries"}
+                    </span>
+                    {folders.length > 0 && (
+                      <>
+                        <span>•</span>
+                        <span>
+                          {folders.length} {folders.length === 1 ? "folder" : "folders"}
+                        </span>
+                      </>
+                    )}
                     <span>•</span>
                     <span className="flex items-center gap-1">
                       <Hash size="0.625rem" />
-                      {filteredEntries.reduce((sum, e) => sum + estimateTokens(e.content), 0).toLocaleString()} tokens
-                      (est.)
+                      {entries.reduce((sum, e) => sum + estimateTokens(e.content), 0).toLocaleString()} tokens (est.)
                     </span>
+                    {!showFolderGrouping && folders.length > 0 && (
+                      <span className="ml-auto italic">Folder view paused (clear search and sort by Order)</span>
+                    )}
                   </div>
                 )}
 
-                {/* Entry list */}
-                {filteredEntries.length === 0 && (
+                {/* Empty state */}
+                {entries.length === 0 && folders.length === 0 && (
                   <div className="flex flex-col items-center gap-2 py-8 text-center">
                     <FileText size="1.5rem" className="text-[var(--muted-foreground)]" />
                     <p className="text-xs text-[var(--muted-foreground)]">
-                      {entrySearch ? "No entries match your search" : "No entries yet — add one to get started"}
+                      No entries yet — add one to get started
                     </p>
                   </div>
                 )}
 
-                {filteredEntries.length > 0 && lorebookId && (
-                  <div
-                    ref={entryListRef}
-                    className="space-y-1.5"
-                    onDragOver={handleEntryListDragOver}
-                    onDrop={commitEntryDrop}
-                  >
-                    {filteredEntries.map((entry, idx) => {
-                      const showDropBefore =
-                        entryDropIdx === idx &&
-                        draggingEntryIdx !== null &&
-                        draggingEntryIdx !== idx &&
-                        draggingEntryIdx !== idx - 1;
-                      const showDropAfter =
-                        idx === filteredEntries.length - 1 &&
-                        entryDropIdx === filteredEntries.length &&
-                        draggingEntryIdx !== null &&
-                        draggingEntryIdx !== idx;
+                {/* Entries — folder-grouped view (default sort, no search) */}
+                {lorebookId && showFolderGrouping && (entries.length > 0 || folders.length > 0) && (
+                  <div className="space-y-3">
+                    {/* Folder block */}
+                    {folders.length > 0 && (
+                      <div className="space-y-1.5">
+                        {folders.map((folder, fIdx) => {
+                          const folderEntries = entriesByContainer.get(folder.id) ?? [];
+                          const isCollapsed = collapsedFolderIds.has(folder.id);
+                          const showFolderDropBefore =
+                            folderDropIdx === fIdx &&
+                            draggingFolderIdx !== null &&
+                            draggingFolderIdx !== fIdx &&
+                            draggingFolderIdx !== fIdx - 1;
+                          const showFolderDropAfter =
+                            fIdx === folders.length - 1 &&
+                            folderDropIdx === folders.length &&
+                            draggingFolderIdx !== null &&
+                            draggingFolderIdx !== fIdx;
+                          return (
+                            <div key={folder.id} className="space-y-1">
+                              {showFolderDropBefore && (
+                                <div className="mx-2 mb-1 h-0.5 rounded-full bg-amber-400" />
+                              )}
+                              {/*
+                                When an entry from a different container is being
+                                dragged toward this folder, paint a faint amber ring
+                                around the header to mirror the root drop-zone hint.
+                                The ring goes ON the wrapper div above the folder row
+                                because LorebookFolderRow already manages its own ring
+                                state for collapse/dragging visuals.
+                              */}
+                              <LorebookFolderRow
+                                folder={folder}
+                                lorebookId={lorebookId}
+                                entryCount={folderEntries.length}
+                                isCollapsed={isCollapsed}
+                                onToggleCollapse={() => toggleFolderCollapsed(folder.id)}
+                                draggable={canReorderFolders}
+                                isDragging={draggingFolderIdx === fIdx}
+                                isDragReady={folderDragReadyIdx === fIdx}
+                                onDragHandleMouseDown={() => {
+                                  if (canReorderFolders) setFolderDragReadyIdx(fIdx);
+                                }}
+                                onDragHandleMouseUp={() => setFolderDragReadyIdx(null)}
+                                onDragStart={(e) => handleFolderDragStart(fIdx, folder.id, e)}
+                                onDragOver={(e) => {
+                                  e.stopPropagation();
+                                  // Two roles for the same dragOver: if the user is dragging
+                                  // an entry, this header is a cross-container drop target;
+                                  // otherwise it's a sibling for folder reorder.
+                                  if (draggingEntryIdx !== null) handleFolderHeaderDragOver(folder.id, e);
+                                  else handleFolderDragOverHeader(fIdx, e);
+                                }}
+                                onDrop={(e) => {
+                                  e.stopPropagation();
+                                  if (draggingEntryIdx !== null) commitEntryDrop(e);
+                                  else commitFolderDrop(e);
+                                }}
+                                onDragEnd={() => {
+                                  resetFolderDragState();
+                                  resetEntryDragState();
+                                }}
+                              />
+                              {!isCollapsed && (
+                                <div
+                                  className="ml-4 space-y-1.5 border-l-2 border-[var(--border)] pl-3"
+                                  onDragOver={(e) => handleFolderBodyDragOver(folder.id, e)}
+                                  onDrop={(e) => {
+                                    e.stopPropagation();
+                                    commitEntryDrop(e);
+                                  }}
+                                >
+                                  {folderEntries.length === 0 && (
+                                    <p className="py-2 text-[0.625rem] italic text-[var(--muted-foreground)]">
+                                      Empty — drag an entry here or pick this folder from an entry's folder selector.
+                                    </p>
+                                  )}
+                                  {folderEntries.map((entry, eIdx) => {
+                                    const isDropTarget =
+                                      dropTargetContainer === folder.id && draggingEntryIdx !== null;
+                                    const sameContainer = dragSourceContainer === folder.id;
+                                    // Position bars only render for SAME-container drops because
+                                    // cross-container moves deliberately preserve the entry's
+                                    // existing Order (per the user's spec). Showing a bar
+                                    // between two entries during a cross-container drag would
+                                    // promise a position the move won't honor — the folder
+                                    // header's amber ring carries the "drop into this folder"
+                                    // affordance instead.
+                                    const showDropBefore =
+                                      isDropTarget &&
+                                      sameContainer &&
+                                      entryDropIdx === eIdx &&
+                                      draggingEntryIdx !== eIdx &&
+                                      draggingEntryIdx !== eIdx - 1;
+                                    const showDropAfter =
+                                      isDropTarget &&
+                                      sameContainer &&
+                                      eIdx === folderEntries.length - 1 &&
+                                      entryDropIdx === folderEntries.length &&
+                                      draggingEntryIdx !== eIdx;
+                                    return (
+                                      <div key={entry.id}>
+                                        {showDropBefore && (
+                                          <div className="mx-2 mb-1 h-0.5 rounded-full bg-amber-400" />
+                                        )}
+                                        <LorebookEntryRow
+                                          entry={entry}
+                                          lorebookId={lorebookId}
+                                          isExpanded={expandedEntryId === entry.id}
+                                          onToggleExpand={() => toggleEntryExpanded(entry.id)}
+                                          folders={folders}
+                                          draggable={canReorderEntries}
+                                          isDragging={
+                                            sameContainer && draggingEntryIdx === eIdx
+                                          }
+                                          isDragReady={
+                                            sameContainer && entryDragReadyIdx === eIdx
+                                          }
+                                          onDragHandleMouseDown={() => {
+                                            if (canReorderEntries) {
+                                              setEntryDragReadyIdx(eIdx);
+                                              setDragSourceContainer(folder.id);
+                                            }
+                                          }}
+                                          onDragHandleMouseUp={() => setEntryDragReadyIdx(null)}
+                                          onDragStart={(e) =>
+                                            handleEntryDragStart(folder.id, eIdx, entry.id, e)
+                                          }
+                                          onDragOver={(e) => {
+                                            e.stopPropagation();
+                                            handleEntryDragOver(folder.id, eIdx, e);
+                                          }}
+                                          onDrop={(e) => {
+                                            e.stopPropagation();
+                                            commitEntryDrop(e);
+                                          }}
+                                          onDragEnd={resetEntryDragState}
+                                        />
+                                        {showDropAfter && (
+                                          <div className="mx-2 mt-1 h-0.5 rounded-full bg-amber-400" />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              {showFolderDropAfter && <div className="mx-2 mt-1 h-0.5 rounded-full bg-amber-400" />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                      return (
-                        <div key={entry.id}>
-                          {showDropBefore && <div className="mx-2 mb-1 h-0.5 rounded-full bg-amber-400" />}
-                          <LorebookEntryRow
-                            entry={entry}
-                            lorebookId={lorebookId}
-                            isExpanded={expandedEntryId === entry.id}
-                            onToggleExpand={() => toggleEntryExpanded(entry.id)}
-                            draggable={canReorderEntries}
-                            isDragging={draggingEntryIdx === idx}
-                            isDragReady={entryDragReadyIdx === idx}
-                            onDragHandleMouseDown={() => {
-                              if (canReorderEntries) setEntryDragReadyIdx(idx);
-                            }}
-                            onDragHandleMouseUp={() => setEntryDragReadyIdx(null)}
-                            onDragStart={(e) => handleEntryDragStart(idx, e)}
-                            onDragOver={(e) => {
-                              e.stopPropagation();
-                              handleEntryDragOver(idx, e);
-                            }}
-                            onDrop={(e) => {
-                              e.stopPropagation();
-                              commitEntryDrop(e);
-                            }}
-                            onDragEnd={resetEntryDragState}
-                          />
-                          {showDropAfter && <div className="mx-2 mt-1 h-0.5 rounded-full bg-amber-400" />}
-                        </div>
-                      );
-                    })}
+                    {/* Root entries (entries with no folder).
+                        Always rendered when grouping is active so it acts as
+                        a permanent drop target — otherwise a user with all
+                        entries inside folders has no place to drop a folder
+                        entry to bring it back to root. */}
+                    <div
+                      ref={entryListRef}
+                      className={cn(
+                        "space-y-1.5",
+                        // Highlight the zone when an entry from another
+                        // container is being dragged toward it.
+                        draggingEntryIdx !== null &&
+                          dragSourceContainer !== null &&
+                          dropTargetContainer === null &&
+                          "rounded-xl ring-1 ring-amber-400/40 bg-amber-400/5 transition-colors",
+                      )}
+                      onDragOver={handleRootListDragOver}
+                      onDrop={commitEntryDrop}
+                    >
+                      {(entriesByContainer.get(null) ?? []).length === 0 && (
+                        <p
+                          className={cn(
+                            "py-3 text-center text-[0.625rem] italic text-[var(--muted-foreground)] transition-opacity",
+                            // Only call out the empty-root zone while the user
+                            // is actively dragging an entry from a folder; in
+                            // the steady state it would just be visual noise.
+                            draggingEntryIdx !== null && dragSourceContainer !== null
+                              ? "opacity-100"
+                              : "opacity-50",
+                          )}
+                        >
+                          {draggingEntryIdx !== null && dragSourceContainer !== null
+                            ? "Drop here to move out of the folder"
+                            : "No entries at the root level"}
+                        </p>
+                      )}
+                      {(entriesByContainer.get(null) ?? []).map((entry, idx) => {
+                          const rootList = entriesByContainer.get(null) ?? [];
+                          const isDropTarget = dropTargetContainer === null && draggingEntryIdx !== null;
+                          const sameContainer = dragSourceContainer === null;
+                          // Same rule as inside folders: only show the position bar for
+                          // same-container drops because cross-container moves preserve
+                          // Order. The amber ring on the root drop zone (added for Issue
+                          // 2) handles the cross-container affordance.
+                          const showDropBefore =
+                            isDropTarget &&
+                            sameContainer &&
+                            entryDropIdx === idx &&
+                            draggingEntryIdx !== idx &&
+                            draggingEntryIdx !== idx - 1;
+                          const showDropAfter =
+                            isDropTarget &&
+                            sameContainer &&
+                            idx === rootList.length - 1 &&
+                            entryDropIdx === rootList.length &&
+                            draggingEntryIdx !== idx;
+                          return (
+                            <div key={entry.id}>
+                              {showDropBefore && <div className="mx-2 mb-1 h-0.5 rounded-full bg-amber-400" />}
+                              <LorebookEntryRow
+                                entry={entry}
+                                lorebookId={lorebookId}
+                                isExpanded={expandedEntryId === entry.id}
+                                onToggleExpand={() => toggleEntryExpanded(entry.id)}
+                                folders={folders}
+                                draggable={canReorderEntries}
+                                isDragging={sameContainer && draggingEntryIdx === idx}
+                                isDragReady={sameContainer && entryDragReadyIdx === idx}
+                                onDragHandleMouseDown={() => {
+                                  if (canReorderEntries) {
+                                    setEntryDragReadyIdx(idx);
+                                    setDragSourceContainer(null);
+                                  }
+                                }}
+                                onDragHandleMouseUp={() => setEntryDragReadyIdx(null)}
+                                onDragStart={(e) => handleEntryDragStart(null, idx, entry.id, e)}
+                                onDragOver={(e) => {
+                                  e.stopPropagation();
+                                  handleEntryDragOver(null, idx, e);
+                                }}
+                                onDrop={(e) => {
+                                  e.stopPropagation();
+                                  commitEntryDrop(e);
+                                }}
+                                onDragEnd={resetEntryDragState}
+                              />
+                              {showDropAfter && <div className="mx-2 mt-1 h-0.5 rounded-full bg-amber-400" />}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Entries — flat view (search active or non-Order sort) */}
+                {lorebookId && !showFolderGrouping && filteredEntries.length > 0 && (
+                  <div ref={entryListRef} className="space-y-1.5">
+                    {filteredEntries.map((entry) => (
+                      <LorebookEntryRow
+                        key={entry.id}
+                        entry={entry}
+                        lorebookId={lorebookId}
+                        isExpanded={expandedEntryId === entry.id}
+                        onToggleExpand={() => toggleEntryExpanded(entry.id)}
+                        folders={folders}
+                        draggable={false}
+                        isDragging={false}
+                        isDragReady={false}
+                        onDragHandleMouseDown={() => undefined}
+                        onDragHandleMouseUp={() => undefined}
+                        onDragStart={() => undefined}
+                        onDragOver={() => undefined}
+                        onDrop={() => undefined}
+                        onDragEnd={() => undefined}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {/* Search-with-no-matches */}
+                {lorebookId && !showFolderGrouping && filteredEntries.length === 0 && entries.length > 0 && (
+                  <div className="flex flex-col items-center gap-2 py-8 text-center">
+                    <FileText size="1.5rem" className="text-[var(--muted-foreground)]" />
+                    <p className="text-xs text-[var(--muted-foreground)]">No entries match your search</p>
                   </div>
                 )}
               </div>

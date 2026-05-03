@@ -28,7 +28,7 @@ import {
 import { cn } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useUpdateLorebookEntry, useDeleteLorebookEntry } from "../../hooks/use-lorebooks";
-import type { LorebookEntry } from "@marinara-engine/shared";
+import type { LorebookEntry, LorebookFolder } from "@marinara-engine/shared";
 import {
   ExpandableTextarea,
   FieldGroup,
@@ -43,6 +43,12 @@ interface Props {
   lorebookId: string;
   isExpanded: boolean;
   onToggleExpand: () => void;
+  /**
+   * All folders in the parent lorebook. Used to populate the folder selector
+   * on the row. May be empty — when empty, the selector is hidden because
+   * "(none)" → "(none)" is meaningless.
+   */
+  folders: LorebookFolder[];
   // Drag-and-drop wiring (lifted in the parent because cross-row state).
   draggable: boolean;
   isDragging: boolean;
@@ -96,6 +102,7 @@ export function LorebookEntryRow({
   lorebookId,
   isExpanded,
   onToggleExpand,
+  folders,
   draggable,
   isDragging,
   isDragReady,
@@ -351,6 +358,17 @@ export function LorebookEntryRow({
             min={0}
             max={100}
           />
+          {folders.length > 0 && (
+            <CompactSelect
+              value={entry.folderId ?? ""}
+              onChange={(v) => patch({ folderId: v === "" ? null : v })}
+              title="Move this entry to a different folder. (none) = root level."
+              options={[
+                { value: "", label: "(none)" },
+                ...folders.map((f) => ({ value: f.id, label: f.name })),
+              ]}
+            />
+          )}
         </div>
 
         {/* Token estimate (compact) */}
