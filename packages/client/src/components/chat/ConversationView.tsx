@@ -923,6 +923,7 @@ export function ConversationView({
                 })
             : undefined
         }
+        onPeekPrompt={onPeekPrompt}
       />
     </div>
   );

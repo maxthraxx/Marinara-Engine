@@ -62,6 +62,12 @@ import { ChatCommonOverlays } from "./ChatCommonOverlays";
 
 export type { CharacterMap };
 
+const normalizeSpriteDisplayValue = (value: unknown, fallback: number, min: number, max: number): number => {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, numeric));
+};
+
 const ChatConversationSurface = lazy(async () => {
   const module = await import("./ChatConversationSurface");
   return { default: module.ChatConversationSurface };
@@ -313,6 +319,8 @@ export function ChatArea() {
   }, [chat]);
   const spriteCharacterIds: string[] = Array.isArray(chatMeta.spriteCharacterIds) ? chatMeta.spriteCharacterIds : [];
   const spritePosition: SpriteSide = chatMeta.spritePosition === "right" ? "right" : "left";
+  const spriteScale = normalizeSpriteDisplayValue(chatMeta.spriteScale, 1, 0.5, 1.75);
+  const spriteOpacity = normalizeSpriteDisplayValue(chatMeta.spriteOpacity, 1, 0.15, 1);
   const spritePlacements = useMemo(
     () => normalizeSpritePlacements(chatMeta.spritePlacements),
     [chatMeta.spritePlacements],
@@ -750,6 +758,13 @@ export function ChatArea() {
   const handleToggleConversationStart = useCallback(
     (messageId: string, current: boolean) => {
       updateMessageExtra.mutate({ messageId, extra: { isConversationStart: !current } });
+    },
+    [updateMessageExtra],
+  );
+
+  const handleToggleHiddenFromAI = useCallback(
+    (messageId: string, current: boolean) => {
+      updateMessageExtra.mutate({ messageId, extra: { hiddenFromAI: !current } });
     },
     [updateMessageExtra],
   );
@@ -1431,6 +1446,8 @@ export function ChatArea() {
           spriteCharacterIds={spriteCharacterIds}
           spriteExpressions={spriteExpressions}
           spritePlacements={spritePlacements}
+          spriteScale={spriteScale}
+          spriteOpacity={spriteOpacity}
           hasCustomSpritePlacements={hasCustomSpritePlacements}
           spriteArrangeMode={spriteArrangeMode}
           enabledAgentTypes={enabledAgentTypes}
@@ -1469,6 +1486,7 @@ export function ChatArea() {
           onEdit={handleEdit}
           onSetActiveSwipe={handleSetActiveSwipe}
           onToggleConversationStart={handleToggleConversationStart}
+          onToggleHiddenFromAI={handleToggleHiddenFromAI}
           onPeekPrompt={handlePeekPrompt}
           onBranch={isSceneChat ? undefined : handleBranch}
           onCloneSceneFromHere={isSceneChat ? handleCloneSceneFromHere : undefined}
