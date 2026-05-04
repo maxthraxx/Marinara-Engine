@@ -1,6 +1,7 @@
 import { promises as dns } from "node:dns";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { basename, extname, relative, resolve, sep } from "node:path";
+import { basename, extname, relative, resolve, sep, win32 } from "node:path";
+import { Agent } from "undici";
 import { isLoopbackIp, isPrivateNetworkIp } from "../middleware/ip-allowlist.js";
 import { CSRF_HEADER, CSRF_HEADER_VALUE } from "@marinara-engine/shared";
 
@@ -23,6 +24,7 @@ const RESERVED_IPV4_CIDRS = [
 const RESERVED_IPV6_CIDRS = ["::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "100::/64", "2001:db8::/32"];
 
 type CidrEntry = { bytes: number[]; prefixLen: number };
+type AgentOptions = ConstructorParameters<typeof Agent>[0];
 
 export interface OutboundUrlPolicy {
   allowLocal?: boolean;
@@ -34,6 +36,8 @@ export interface SafeFetchOptions extends Omit<RequestInit, "dispatcher"> {
   policy?: OutboundUrlPolicy;
   maxResponseBytes?: number;
   allowedContentTypes?: string[];
+  bufferResponse?: boolean;
+  agentOptions?: Omit<AgentOptions, "connect">;
   dispatcher?: unknown;
 }
 
@@ -42,10 +46,16 @@ export function parseBoolean(value: unknown): boolean {
 }
 
 export function assertInsideDir(rootDir: string, candidatePath: string): string {
-  const root = resolve(rootDir);
-  const candidate = resolve(candidatePath);
-  const relativePath = relative(root, candidate);
-  if (relativePath === "" || (!relativePath.startsWith("..") && !relativePath.includes(`..${sep}`))) {
+  const pathApi = /^[A-Za-z]:[\\/]|^\\\\/.test(rootDir) || /^[A-Za-z]:[\\/]|^\\\\/.test(candidatePath) ? win32 : null;
+  const root = pathApi ? pathApi.resolve(rootDir) : resolve(rootDir);
+  const candidate = pathApi ? pathApi.resolve(candidatePath) : resolve(candidatePath);
+  const relativePath = pathApi ? pathApi.relative(root, candidate) : relative(root, candidate);
+  const separator = pathApi ? pathApi.sep : sep;
+  const isAbsoluteRelativePath = pathApi ? pathApi.isAbsolute(relativePath) : false;
+  if (
+    relativePath === "" ||
+    (relativePath !== ".." && !relativePath.startsWith(`..${separator}`) && !isAbsoluteRelativePath)
+  ) {
     return candidate;
   }
   throw new Error("Path escapes the allowed directory");
@@ -172,10 +182,20 @@ function isLocalHostname(hostname: string): boolean {
   return LOCALHOST_NAMES.has(lower) || RESERVED_HOST_SUFFIXES.some((suffix) => lower.endsWith(suffix));
 }
 
-async function resolveHostname(hostname: string): Promise<string[]> {
-  if (isIpLiteral(hostname)) return [hostname];
+async function resolveHostname(hostname: string): Promise<Array<{ address: string; family: 4 | 6 }>> {
+  if (isIpLiteral(hostname)) {
+    return [{ address: hostname, family: hostname.includes(":") ? 6 : 4 }];
+  }
   const records = await dns.lookup(hostname, { all: true, verbatim: true });
-  return records.map((record) => record.address);
+  return records.flatMap((record) => (record.family === 4 || record.family === 6 ? [{ address: record.address, family: record.family }] : []));
+}
+
+async function validateResolvedAddresses(hostname: string, policy: OutboundUrlPolicy): Promise<Array<{ address: string; family: 4 | 6 }>> {
+  const addresses = await resolveHostname(hostname);
+  if (!policy.allowLocal && (addresses.length === 0 || addresses.some((record) => isReservedIp(record.address)))) {
+    throw new Error("Outbound URL resolved to a private, loopback, metadata, or reserved address");
+  }
+  return addresses;
 }
 
 export async function validateOutboundUrl(url: string | URL, policy: OutboundUrlPolicy = {}): Promise<URL> {
@@ -190,29 +210,62 @@ export async function validateOutboundUrl(url: string | URL, policy: OutboundUrl
       throw new Error("Outbound URL hostname is local or reserved");
     }
 
-    const addresses = await resolveHostname(parsed.hostname);
-    if (addresses.length === 0 || addresses.some(isReservedIp)) {
-      throw new Error("Outbound URL resolved to a private, loopback, metadata, or reserved address");
-    }
+    await validateResolvedAddresses(parsed.hostname, policy);
   }
 
   return parsed;
 }
 
-async function readCappedResponse(response: Response, maxBytes: number): Promise<Response> {
-  if (!response.body) return response;
+async function validateOutboundUrlForFetch(
+  url: string | URL,
+  policy: OutboundUrlPolicy = {},
+  agentOptions?: Omit<AgentOptions, "connect">,
+): Promise<{ url: URL; dispatcher?: Agent }> {
+  const parsed = await validateOutboundUrl(url, policy);
+  if (policy.allowLocal) return { url: parsed, dispatcher: agentOptions ? new Agent(agentOptions) : undefined };
+
+  const addresses = await validateResolvedAddresses(parsed.hostname, policy);
+  let used = false;
+  const dispatcher = new Agent({
+    ...(agentOptions ?? {}),
+    connect: {
+      lookup(_hostname, options, callback) {
+        if (used) {
+          callback(new Error("Outbound URL resolver was reused unexpectedly"), "", 4);
+          return;
+        }
+        used = true;
+        const family = options.family === 4 || options.family === 6 ? options.family : undefined;
+        const selected = addresses.find((record) => !family || record.family === family) ?? addresses[0]!;
+        if (options.all) callback(null, [selected]);
+        else callback(null, selected.address, selected.family);
+      },
+    },
+  });
+  return { url: parsed, dispatcher };
+}
+
+async function readCappedResponse(response: Response, maxBytes: number, dispatcher?: Agent): Promise<Response> {
+  if (!response.body) {
+    await dispatcher?.close().catch(() => undefined);
+    return response;
+  }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => undefined);
-      throw new Error(`Outbound response exceeded ${maxBytes} bytes`);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(`Outbound response exceeded ${maxBytes} bytes`);
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } finally {
+    await dispatcher?.close().catch(() => undefined);
   }
   return new Response(Buffer.concat(chunks), {
     status: response.status,
@@ -221,27 +274,90 @@ async function readCappedResponse(response: Response, maxBytes: number): Promise
   });
 }
 
+function capStreamingResponse(response: Response, maxBytes: number, dispatcher?: Agent): Response {
+  if (!response.body) {
+    void dispatcher?.close().catch(() => undefined);
+    return response;
+  }
+  let total = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const reader = response.body!.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            controller.close();
+            await dispatcher?.close().catch(() => undefined);
+            return;
+          }
+
+          total += value.byteLength;
+          if (total > maxBytes) {
+            await reader.cancel().catch(() => undefined);
+            await dispatcher?.close().catch(() => undefined);
+            controller.error(new Error(`Outbound response exceeded ${maxBytes} bytes`));
+            return;
+          }
+
+          controller.enqueue(value);
+        }
+      } catch (err) {
+        await dispatcher?.close().catch(() => undefined);
+        controller.error(err);
+      }
+    },
+  });
+  return new Response(stream, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 export async function safeFetch(url: string | URL, options: SafeFetchOptions = {}): Promise<Response> {
-  const { policy, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES, allowedContentTypes, ...init } = options;
-  let current = await validateOutboundUrl(url, policy);
+  const {
+    policy,
+    maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
+    allowedContentTypes,
+    bufferResponse = true,
+    agentOptions,
+    dispatcher,
+    ...init
+  } = options;
+  if (dispatcher && !policy?.allowLocal) {
+    throw new Error("Custom fetch dispatchers are only allowed for explicit local-provider requests");
+  }
+
+  let current = await validateOutboundUrlForFetch(url, policy, dispatcher ? undefined : agentOptions);
   const redirects = policy?.maxRedirects ?? MAX_REDIRECTS;
 
   for (let i = 0; i <= redirects; i += 1) {
-    const response = await fetch(current, { ...init, redirect: "manual" } as unknown as RequestInit);
+    const internalDispatcher = dispatcher ? undefined : current.dispatcher;
+    const response = await fetch(current.url, {
+      ...init,
+      redirect: "manual",
+      dispatcher: dispatcher ?? internalDispatcher,
+    } as unknown as RequestInit);
     if (response.status >= 300 && response.status < 400 && response.headers.has("location")) {
       if (i === redirects) throw new Error("Outbound request exceeded redirect limit");
-      current = await validateOutboundUrl(new URL(response.headers.get("location")!, current), policy);
+      await internalDispatcher?.close().catch(() => undefined);
+      current = await validateOutboundUrlForFetch(new URL(response.headers.get("location")!, current.url), policy, agentOptions);
       continue;
     }
 
     if (allowedContentTypes?.length) {
       const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
       if (contentType && !allowedContentTypes.some((allowed) => contentType.includes(allowed.toLowerCase()))) {
+        await internalDispatcher?.close().catch(() => undefined);
+        await response.body?.cancel().catch(() => undefined);
         throw new Error(`Outbound response content type is not allowed: ${contentType}`);
       }
     }
 
-    return readCappedResponse(response, maxResponseBytes);
+    return bufferResponse
+      ? readCappedResponse(response, maxResponseBytes, internalDispatcher)
+      : capStreamingResponse(response, maxResponseBytes, internalDispatcher);
   }
 
   throw new Error("Outbound request exceeded redirect limit");

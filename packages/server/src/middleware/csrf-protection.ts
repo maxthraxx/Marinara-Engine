@@ -28,7 +28,8 @@ function isLoopbackHostname(hostname: string): boolean {
 function requestOrigin(request: FastifyRequest): string | null {
   const host = firstHeader(request.headers.host);
   if (!host) return null;
-  const protocol = request.protocol ?? getServerProtocol();
+  const forwardedProto = firstHeader(request.headers["x-forwarded-proto"]);
+  const protocol = forwardedProto && /^https?$/i.test(forwardedProto) ? forwardedProto.toLowerCase() : (request.protocol ?? getServerProtocol());
   return normalizeOrigin(`${protocol}://${host}`);
 }
 

@@ -1,7 +1,6 @@
 // ──────────────────────────────────────────────
 // LLM Provider — Abstract Base
 // ──────────────────────────────────────────────
-import { Agent } from "undici";
 import { logger } from "../../lib/logger.js";
 import { isProviderLocalUrlsEnabled } from "../../config/runtime-config.js";
 import { safeFetch } from "../../utils/security.js";
@@ -12,7 +11,7 @@ import { safeFetch } from "../../utils/security.js";
  * long-running streaming responses to complete.
  */
 const LLM_HEADERS_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-const llmDispatcher = new Agent({ bodyTimeout: 0, headersTimeout: LLM_HEADERS_TIMEOUT });
+const llmAgentOptions = { bodyTimeout: 0, headersTimeout: LLM_HEADERS_TIMEOUT };
 
 /**
  * Drop-in replacement for `fetch()` that uses a custom undici dispatcher
@@ -21,9 +20,10 @@ const llmDispatcher = new Agent({ bodyTimeout: 0, headersTimeout: LLM_HEADERS_TI
 export function llmFetch(url: string | URL, init?: RequestInit): Promise<Response> {
   return safeFetch(url, {
     ...(init ?? {}),
-    dispatcher: llmDispatcher,
+    agentOptions: llmAgentOptions,
     policy: { allowLocal: isProviderLocalUrlsEnabled(), allowedProtocols: ["https:", "http:"] },
     maxResponseBytes: 50 * 1024 * 1024,
+    bufferResponse: false,
   });
 }
 

@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, resolve, win32 } from "node:path";
 import { tmpdir } from "node:os";
-import { assertInsideDir, isAllowedImageBuffer, validateOutboundUrl } from "../src/utils/security.js";
+import { assertInsideDir, isAllowedImageBuffer, safeFetch, validateOutboundUrl } from "../src/utils/security.js";
 
 test("assertInsideDir rejects sibling prefix escapes", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-sec-root-"));
@@ -14,6 +14,14 @@ test("assertInsideDir rejects sibling prefix escapes", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("assertInsideDir rejects Windows cross-drive escapes", () => {
+  assert.throws(() => assertInsideDir("C:\\marinara\\data", "D:\\marinara\\data\\avatars\\a.png"), /escapes/);
+  assert.equal(
+    assertInsideDir("C:\\marinara\\data", "C:\\marinara\\data\\avatars\\a.png"),
+    win32.resolve("C:\\marinara\\data\\avatars\\a.png"),
+  );
 });
 
 test("image magic byte validation rejects SVG masquerading as PNG", () => {
@@ -37,4 +45,27 @@ test("validateOutboundUrl allows explicit local-provider mode", async () => {
     allowedProtocols: ["http:", "https:"],
   });
   assert.equal(parsed.hostname, "127.0.0.1");
+});
+
+test("safeFetch can return a streaming capped response without buffering", async () => {
+  const response = await safeFetch("https://example.com/stream", {
+    bufferResponse: false,
+    policy: { allowLocal: true },
+    dispatcher: {
+      dispatch(_options: unknown, handler: { onConnect: (abort: () => void) => void; onHeaders: (status: number, headers: string[], resume: () => void) => void; onData: (chunk: Buffer) => void; onComplete: (trailers: string[]) => void }) {
+        handler.onConnect(() => undefined);
+        handler.onHeaders(200, ["content-type", "text/plain"], () => undefined);
+        setTimeout(() => {
+          handler.onData(Buffer.from("hello"));
+          handler.onComplete([]);
+        }, 20);
+        return true;
+      },
+    },
+  });
+
+  const reader = response.body?.getReader();
+  assert.ok(reader);
+  const first = await reader.read();
+  assert.equal(Buffer.from(first.value ?? []).toString("utf8"), "hello");
 });

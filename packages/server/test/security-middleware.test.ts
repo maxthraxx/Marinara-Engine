@@ -144,6 +144,28 @@ test("same-origin unsafe API requests require the CSRF header", async () =>
     }
   }));
 
+test("CSRF protection honors forwarded proto for reverse proxy HTTPS origins", async () =>
+  withEnv({}, async () => {
+    const app = await buildHookApp();
+    try {
+      const allowed = await app.inject({
+        method: "POST",
+        url: "/api/mutate",
+        remoteAddress: "127.0.0.1",
+        headers: {
+          host: "chat.example.test",
+          origin: "https://chat.example.test",
+          "x-forwarded-proto": "https",
+          "sec-fetch-site": "same-origin",
+          [CSRF_HEADER]: CSRF_HEADER_VALUE,
+        },
+      });
+      assert.equal(allowed.statusCode, 200);
+    } finally {
+      await app.close();
+    }
+  }));
+
 test("privileged gate requires ADMIN_SECRET", async () =>
   withEnv({ ADMIN_SECRET: "top-secret" }, async () => {
     const app = await buildHookApp();

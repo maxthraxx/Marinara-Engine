@@ -105,12 +105,14 @@ export async function avatarsRoutes(app: FastifyInstance) {
     if (!existsSync(npcDir)) mkdirSync(npcDir, { recursive: true });
 
     const imageBuffer = Buffer.from(match[1]!, "base64");
-    if (!isAllowedImageBuffer(imageBuffer, ".png")) {
+    const image = isAllowedImageBuffer(imageBuffer, ".png");
+    if (!image) {
       return reply.status(400).send({ error: "Unsupported or invalid avatar image" });
     }
-    const filePath = assertInsideDir(npcDir, join(npcDir, `${safeName}.png`));
+    const filename = `${safeName}.${image.ext}`;
+    const filePath = assertInsideDir(npcDir, join(npcDir, filename));
     writeFileSync(filePath, imageBuffer);
 
-    return reply.send({ avatarPath: `/api/avatars/npc/${chatId}/${safeName}.png?v=${Date.now()}` });
+    return reply.send({ avatarPath: `/api/avatars/npc/${chatId}/${filename}?v=${Date.now()}` });
   });
 }

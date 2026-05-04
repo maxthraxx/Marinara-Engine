@@ -13,7 +13,7 @@ function isSameOriginApi(input: RequestInfo | URL): boolean {
 }
 
 function mergeHeaders(init?: RequestInit): Headers {
-  return new Headers(init?.headers ?? (init?.body !== undefined ? { "Content-Type": "application/json" } : undefined));
+  return new Headers(init?.headers);
 }
 
 export function installCsrfFetchShim() {
