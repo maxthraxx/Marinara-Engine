@@ -18,15 +18,15 @@
 !define APP_URL "https://github.com/Pasta-Devs/Marinara-Engine"
 !define REPO_URL "https://github.com/Pasta-Devs/Marinara-Engine.git"
 !define DEFAULT_DIR "$LOCALAPPDATA\MarinaraEngine"
-!define PNPM_VERSION "10.30.3"
+!define PNPM_VERSION "10.33.2"
 
 ; ── Prerequisite download URLs ──
 ; Pin to known-good versions so the installer is deterministic and doesn't
 ; need PowerShell/GitHub API calls (a major AV false-positive trigger).
-!define GIT_DOWNLOAD_URL "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.1/Git-2.47.1-64-bit.exe"
-!define NODE_DOWNLOAD_URL "https://nodejs.org/dist/v22.14.0/node-v22.14.0-x64.msi"
-!define GIT_SHA256 "25527923debc06515b3016f2d6bca0820656e8281a23be2f43bfb658bd5dda70"
-!define NODE_SHA256 "2c0cc97ec64c1e4111362e1e32e0547fd870e4d9c79ec844c117da583f21b386"
+!define GIT_DOWNLOAD_URL "https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/Git-2.54.0-64-bit.exe"
+!define NODE_DOWNLOAD_URL "https://nodejs.org/dist/v24.15.0/node-v24.15.0-x64.msi"
+!define GIT_SHA256 "2b96e7854f0520f0f6b709c21041d9801b1be44d5e1a0d9fa621b2fbc40f1983"
+!define NODE_SHA256 "feffb8e5cb5ac47f793666636d496ef3e975be82c84c4da5d20e6aa8fa4eb806"
 !define RELEASE_TAG "v1.5.7"
 !define RELEASE_COMMIT "05b25eb50c509c303dafa2c34e6b2ff0ffd308bd"
 
@@ -195,8 +195,21 @@ Please restart your computer and run this installer again."
   nsExec::ExecToStack 'where node'
   Pop $NODE_OK
   Pop $1
+  ${If} $NODE_OK == 0
+    nsExec::ExecToStack 'cmd /c node -p "process.versions.node.match(/^\d+/)[0]"'
+    Pop $NODE_OK
+    Pop $1
+    ${If} $NODE_OK != 0
+      DetailPrint "Node.js was found but its version could not be checked."
+    ${ElseIf} $1 < 24
+      DetailPrint "Node.js $1 found — Node.js 24 LTS or newer is required."
+      StrCpy $NODE_OK 1
+    ${Else}
+      StrCpy $NODE_OK 0
+    ${EndIf}
+  ${EndIf}
   ${If} $NODE_OK != 0
-    DetailPrint "Node.js not found — attempting automatic install..."
+    DetailPrint "Node.js 24 LTS or newer not found — attempting automatic install..."
     DetailPrint "Downloading Node.js LTS (this may take a minute)..."
     nsExec::ExecToLog 'cmd /c powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri ""${NODE_DOWNLOAD_URL}"" -OutFile ""$TEMP\node-install.msi"" -UseBasicParsing"'
     Pop $0
@@ -206,7 +219,7 @@ Node.js could not be downloaded automatically.$\r$\n$\r$\n\
 Would you like to open the Node.js download page to install it manually?" IDYES openNode IDNO abortNode
       openNode:
         ExecShell "open" "https://nodejs.org/en/download"
-        MessageBox MB_OK "Please install Node.js 20+, then run this installer again."
+        MessageBox MB_OK "Please install Node.js 24 LTS or newer, then run this installer again."
         Abort
       abortNode:
         Abort "Installation cancelled — Node.js is required."

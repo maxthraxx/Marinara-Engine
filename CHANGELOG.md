@@ -46,6 +46,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Optional speech-to-text microphone buttons can be enabled for Conversation, Roleplay, and Game input fields.
 - Character imports now ask before extracting embedded character-card lorebooks into standalone Marinara lorebooks.
 - Home Assistant HACS integration that syncs Marinara custom tools and a Home Assistant agent for smart-home control.
+- Updated the supported toolchain to Node.js 24 LTS and pnpm 10.33.2 across launchers, installers, Docker images, docs, and CI, plus refreshed dependencies within their compatible ranges.
 
 ### Security
 
@@ -66,6 +67,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Removed the persistent SQLite database as the default live storage path, reducing release-to-release migration failures.
 - File-backed migration now merges every known legacy database location and performs a one-time repair for snapshots that missed chats during early v1.5.7 testing.
 - On mobile Roleplay, the branch quick-switcher now lives inside the three-dot toolbar menu, so it no longer overlaps the Agents' controls.
+- Settings Debug Mode now prints prompt, scene-analysis, party-turn, and game asset debug logs even when `LOG_LEVEL` is not set to `debug`.
 - Switching chats doesn't stop the generation of the previously triggered one.
 - Cross-conversations confusions addressed.
 - {{user}} and {{char}} macros now work in all modes.
@@ -91,6 +93,10 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fresh installs no longer install the old `better-sqlite3` or `sql.js` SQLite fallback packages.
 - Browser-tab character imports now preserve embedded Chub lorebooks as linked Marinara lorebooks.
 - OpenRouter Claude reasoning is requested with OpenRouter's unified `reasoning` payload again, restoring thinking capture for Sonnet/Opus reasoning models.
+- Sprite sheet prompts now more explicitly require complete slicable grids for expression and full-body pose generation.
+- Loopback LLM provider URLs are allowed by default again, so local model servers on `127.0.0.1`, `::1`, or `localhost` do not require the broad private-network URL opt-in.
+- Restored the animated Marinara logo on the home screen while keeping the static logo as the inactive-page fallback.
+- Tightened the home screen spacing so the logo, FAQ, credits, and special thanks fit more comfortably on desktop and mobile.
 - Various minor UI bugs.
 
 ## [1.5.6]

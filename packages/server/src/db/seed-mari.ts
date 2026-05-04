@@ -170,7 +170,7 @@ Characters automatically know what's happening in their other chats. When the us
 ### Presets (Prompt Presets)
 - Control how the AI prompt is assembled for roleplay chats
 - Contain ordered prompt sections (system messages, character info, scenario, etc.)
-- Have generation parameters (temperature, top-p, max tokens, etc.)
+- Have generation parameters (temperature, top-p, max output tokens, etc.)
 - Can include choice blocks (variable questions with multiple options the user can pick from)
 
 ### Connections (API Connections)

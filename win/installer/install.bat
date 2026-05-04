@@ -7,10 +7,10 @@ color 0A
 :: -- Safety net: if anything goes catastrophically wrong, the window stays open --
 :: -- This label is jumped to on fatal errors --
 set "INSTALL_ERROR="
-set "NODE_DOWNLOAD_URL=https://nodejs.org/dist/v22.14.0/node-v22.14.0-x64.msi"
-set "NODE_SHA256=2c0cc97ec64c1e4111362e1e32e0547fd870e4d9c79ec844c117da583f21b386"
-set "GIT_DOWNLOAD_URL=https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.1/Git-2.47.1-64-bit.exe"
-set "GIT_SHA256=25527923debc06515b3016f2d6bca0820656e8281a23be2f43bfb658bd5dda70"
+set "NODE_DOWNLOAD_URL=https://nodejs.org/dist/v24.15.0/node-v24.15.0-x64.msi"
+set "NODE_SHA256=feffb8e5cb5ac47f793666636d496ef3e975be82c84c4da5d20e6aa8fa4eb806"
+set "GIT_DOWNLOAD_URL=https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/Git-2.54.0-64-bit.exe"
+set "GIT_SHA256=2b96e7854f0520f0f6b709c21041d9801b1be44d5e1a0d9fa621b2fbc40f1983"
 set "RELEASE_TAG=v1.5.7"
 set "RELEASE_COMMIT=05b25eb50c509c303dafa2c34e6b2ff0ffd308bd"
 
@@ -42,11 +42,11 @@ if errorlevel 1 goto :install_node
 for /f "tokens=1 delims=." %%a in ('node -v') do set "NODE_RAW=%%a"
 set "NODE_MAJOR=!NODE_RAW:v=!"
 if not defined NODE_MAJOR goto :install_node
-if !NODE_MAJOR! LSS 20 goto :install_node
+if !NODE_MAJOR! LSS 24 goto :install_node
 goto :node_ok
 
 :install_node
-echo  [..] Node.js 20+ not found - downloading installer...
+echo  [..] Node.js 24 LTS or newer not found - downloading installer...
 set "NODE_MSI=%TEMP%\node-lts-install.msi"
 powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri ""%NODE_DOWNLOAD_URL%"" -OutFile ""%NODE_MSI%"" -UseBasicParsing } catch { exit 1 }"
 if errorlevel 1 (
@@ -84,8 +84,8 @@ echo  [OK] Node.js installed successfully
 echo  [OK] Node.js found:
 node -v
 
-set "PNPM_VERSION=10.30.3"
-for /f "usebackq delims=" %%i in (`node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).packageManager?.split('@')[1] || '10.30.3'"`) do set "PNPM_VERSION=%%i"
+set "PNPM_VERSION=10.33.2"
+for /f "usebackq delims=" %%i in (`node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).packageManager?.split('@')[1] || '10.33.2'"`) do set "PNPM_VERSION=%%i"
 set "PNPM_RUNNER=pnpm"
 set "CURRENT_PNPM_VERSION="
 

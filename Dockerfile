@@ -3,7 +3,7 @@
 # ──────────────────────────────────────────────
 
 # ── Stage 1: Build ──
-FROM node:22-slim AS builder
+FROM node:24-slim AS builder
 ARG BUILD_COMMIT
 WORKDIR /app
 
@@ -39,7 +39,7 @@ RUN if [ -n "$BUILD_COMMIT" ]; then \
     fi
 
 # ── Stage 2: Production ──
-FROM node:22-slim AS production
+FROM node:24-slim AS production
 WORKDIR /app
 
 # llama-server dynamically links these at runtime

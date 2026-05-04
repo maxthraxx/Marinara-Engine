@@ -6,7 +6,7 @@ import { randomUUID } from "crypto";
 import { existsSync, readFileSync } from "fs";
 import { extname, join } from "path";
 import { z } from "zod";
-import { logger } from "../lib/logger.js";
+import { logger, logDebugOverride } from "../lib/logger.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
@@ -368,6 +368,7 @@ const setupSchema = z.object({
   connectionId: z.string().optional(),
   preferences: z.string().max(5000).default(""),
   streaming: z.boolean().optional().default(true),
+  debugMode: z.boolean().optional().default(false),
 });
 
 const gameStartSchema = z.object({
@@ -2313,7 +2314,12 @@ export async function gameRoutes(app: FastifyInstance) {
   // ── POST /game/setup ──
   app.post("/setup", async (req, reply) => {
     logger.info("[game/setup] Received request");
-    const { chatId, connectionId, preferences, streaming } = setupSchema.parse(req.body);
+    const { chatId, connectionId, preferences, streaming, debugMode } = setupSchema.parse(req.body);
+    const requestDebug = debugMode === true;
+    const debugLogsEnabled = requestDebug || logger.isLevelEnabled("debug");
+    const debugLog = (message: string, ...args: any[]) => {
+      logDebugOverride(requestDebug, message, ...args);
+    };
     const chats = createChatsStorage(app.db);
     const connections = createConnectionsStorage(app.db);
     const characters = createCharactersStorage(app.db);
@@ -2471,11 +2477,13 @@ export async function gameRoutes(app: FastifyInstance) {
       },
     ];
 
-    logger.debug("[game/setup] === PROMPT BEING SENT ===");
-    for (const msg of messages) {
-      logger.debug("[game/setup] [%s] (%d chars):\n%s", msg.role, msg.content.length, msg.content);
+    if (debugLogsEnabled) {
+      debugLog("[game/setup] === PROMPT BEING SENT ===");
+      for (const msg of messages) {
+        debugLog("[game/setup] [%s] (%d chars):\n%s", msg.role, msg.content.length, msg.content);
+      }
+      debugLog("[game/setup] === END PROMPT ===");
     }
-    logger.debug("[game/setup] === END PROMPT ===");
 
     const setupOptions = gameGenOptions(
       conn.model,
@@ -2490,7 +2498,7 @@ export async function gameRoutes(app: FastifyInstance) {
                 return (chunk: string) => {
                   if (!chunk || sawFirstToken) return;
                   sawFirstToken = true;
-                  logger.debug("[game/setup] First streamed token received after %d ms", Date.now() - setupStartTime);
+                  debugLog("[game/setup] First streamed token received after %d ms", Date.now() - setupStartTime);
                 };
               })(),
             }
@@ -2498,26 +2506,30 @@ export async function gameRoutes(app: FastifyInstance) {
       },
       setupGenerationParameters,
     );
-    logger.debug(
-      "[game/setup] Sending to provider=%s model=%s baseUrl=%s options=%s",
-      conn.provider,
-      conn.model,
-      baseUrl,
-      JSON.stringify(setupOptions),
-    );
+    if (debugLogsEnabled) {
+      debugLog(
+        "[game/setup] Sending to provider=%s model=%s baseUrl=%s options=%s",
+        conn.provider,
+        conn.model,
+        baseUrl,
+        JSON.stringify(setupOptions),
+      );
+    }
 
     const result = await provider.chatComplete(messages, setupOptions);
     const setupExtraction = extractLeadingThinkingBlocks(result.content ?? "");
     const responseText = setupExtraction.content;
 
-    logger.debug("[game/setup] Response length: %d chars", responseText.length);
-    logger.debug("[game/setup] Full response:\n%s", responseText);
-    if (setupExtraction.thinking) {
-      logger.debug(
-        "[game/setup] Thinking tokens (%d chars):\n%s",
-        setupExtraction.thinking.length,
-        setupExtraction.thinking,
-      );
+    if (debugLogsEnabled) {
+      debugLog("[game/setup] Response length: %d chars", responseText.length);
+      debugLog("[game/setup] Full response:\n%s", responseText);
+      if (setupExtraction.thinking) {
+        debugLog(
+          "[game/setup] Thinking tokens (%d chars):\n%s",
+          setupExtraction.thinking.length,
+          setupExtraction.thinking,
+        );
+      }
     }
 
     let setupData: Record<string, unknown> = {};
@@ -4901,16 +4913,21 @@ export async function gameRoutes(app: FastifyInstance) {
     );
     const partyTurnExtraction = extractLeadingThinkingBlocks(result.content || "");
     const raw = partyTurnExtraction.content;
+    const requestDebug = input.debugMode === true;
+    const debugOverrideEnabled = requestDebug || isDebugAgentsEnabled();
+    const debugLogsEnabled = debugOverrideEnabled || logger.isLevelEnabled("debug");
+    const debugLog = (message: string, ...args: any[]) => {
+      logDebugOverride(debugOverrideEnabled, message, ...args);
+    };
     if (partyTurnExtraction.thinking) {
-      logger.debug(
+      debugLog(
         "[game/party-turn] Thinking tokens (%d chars):\n%s",
         partyTurnExtraction.thinking.length,
         partyTurnExtraction.thinking,
       );
     }
-    const debugLogsEnabled = input.debugMode || isDebugAgentsEnabled();
     if (debugLogsEnabled) {
-      logger.debug("[party-turn/raw] chatId=%s model=%s chars=%d\n%s", input.chatId, conn.model ?? "", raw.length, raw);
+      debugLog("[party-turn/raw] chatId=%s model=%s chars=%d\n%s", input.chatId, conn.model ?? "", raw.length, raw);
     }
 
     // Extract and apply reputation tags from party response
@@ -4985,9 +5002,10 @@ export async function gameRoutes(app: FastifyInstance) {
   app.post("/scene-wrap", async (req) => {
     const input = sceneWrapSchema.parse(req.body);
     const requestDebug = input.debugMode === true;
-    const debugLogsEnabled = requestDebug || isDebugAgentsEnabled() || logger.isLevelEnabled("debug");
+    const debugOverrideEnabled = requestDebug || isDebugAgentsEnabled();
+    const debugLogsEnabled = debugOverrideEnabled || logger.isLevelEnabled("debug");
     const debugLog = (message: string, ...args: any[]) => {
-      logger.debug(message, ...args);
+      logDebugOverride(debugOverrideEnabled, message, ...args);
     };
     const chats = createChatsStorage(app.db);
     const connections = createConnectionsStorage(app.db);
@@ -5714,9 +5732,10 @@ export async function gameRoutes(app: FastifyInstance) {
   app.post("/generate-assets", async (req) => {
     const input = generateAssetsSchema.parse(req.body);
     const requestDebug = input.debugMode === true;
-    const debugLogsEnabled = requestDebug || isDebugAgentsEnabled() || logger.isLevelEnabled("debug");
+    const debugOverrideEnabled = requestDebug || isDebugAgentsEnabled();
+    const debugLogsEnabled = debugOverrideEnabled || logger.isLevelEnabled("debug");
     const debugLog = (message: string, ...args: any[]) => {
-      logger.debug(message, ...args);
+      logDebugOverride(debugOverrideEnabled, message, ...args);
     };
     const chats = createChatsStorage(app.db);
     const connections = createConnectionsStorage(app.db);

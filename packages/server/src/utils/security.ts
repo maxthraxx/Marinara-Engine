@@ -28,6 +28,7 @@ type AgentOptions = ConstructorParameters<typeof Agent>[0];
 
 export interface OutboundUrlPolicy {
   allowLocal?: boolean;
+  allowLoopback?: boolean;
   allowedProtocols?: string[];
   maxRedirects?: number;
 }
@@ -196,23 +197,40 @@ function isReservedIp(ip: string): boolean {
   return RESERVED_CIDRS.some((cidr) => matchesCidr(bytes, cidr));
 }
 
+function normalizeHostnameForAddress(hostname: string): string {
+  const trimmed = hostname.trim();
+  const bracketMatch = trimmed.match(/^\[(.*)]$/);
+  return bracketMatch?.[1] ?? trimmed;
+}
+
 function isIpLiteral(hostname: string): boolean {
-  return Boolean(ipToBytes(hostname));
+  return Boolean(ipToBytes(normalizeHostnameForAddress(hostname)));
 }
 
 function isLocalHostname(hostname: string): boolean {
-  const lower = hostname.replace(/\.$/, "").toLowerCase();
+  const lower = normalizeHostnameForAddress(hostname).replace(/\.$/, "").toLowerCase();
   return LOCALHOST_NAMES.has(lower) || RESERVED_HOST_SUFFIXES.some((suffix) => lower.endsWith(suffix));
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = normalizeHostnameForAddress(hostname).replace(/\.$/, "").toLowerCase();
+  return LOCALHOST_NAMES.has(normalized) || isLoopbackIp(normalized);
+}
+
 async function resolveHostname(hostname: string): Promise<Array<{ address: string; family: 4 | 6 }>> {
-  if (isIpLiteral(hostname)) {
-    return [{ address: hostname, family: hostname.includes(":") ? 6 : 4 }];
+  const normalized = normalizeHostnameForAddress(hostname);
+  if (isIpLiteral(normalized)) {
+    return [{ address: normalized, family: normalized.includes(":") ? 6 : 4 }];
   }
-  const records = await dns.lookup(hostname, { all: true, verbatim: true });
+  const records = await dns.lookup(normalized, { all: true, verbatim: true });
   return records.flatMap((record) =>
     record.family === 4 || record.family === 6 ? [{ address: record.address, family: record.family }] : [],
   );
+}
+
+function isBlockedResolvedAddress(address: string, policy: OutboundUrlPolicy): boolean {
+  if (!isReservedIp(address)) return false;
+  return !(policy.allowLoopback && isLoopbackIp(address));
 }
 
 async function validateResolvedAddresses(
@@ -220,7 +238,10 @@ async function validateResolvedAddresses(
   policy: OutboundUrlPolicy,
 ): Promise<Array<{ address: string; family: 4 | 6 }>> {
   const addresses = await resolveHostname(hostname);
-  if (!policy.allowLocal && (addresses.length === 0 || addresses.some((record) => isReservedIp(record.address)))) {
+  if (
+    !policy.allowLocal &&
+    (addresses.length === 0 || addresses.some((record) => isBlockedResolvedAddress(record.address, policy)))
+  ) {
     throw new Error("Outbound URL resolved to a private, loopback, metadata, or reserved address");
   }
   return addresses;
@@ -234,7 +255,7 @@ export async function validateOutboundUrl(url: string | URL, policy: OutboundUrl
   }
 
   if (!policy.allowLocal) {
-    if (isLocalHostname(parsed.hostname)) {
+    if (isLocalHostname(parsed.hostname) && !(policy.allowLoopback && isLoopbackHostname(parsed.hostname))) {
       throw new Error("Outbound URL hostname is local or reserved");
     }
 

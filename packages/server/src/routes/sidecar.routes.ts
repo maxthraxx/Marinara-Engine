@@ -4,7 +4,7 @@
 // ──────────────────────────────────────────────
 
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
-import { logger } from "../lib/logger.js";
+import { logger, logDebugOverride } from "../lib/logger.js";
 import { z } from "zod";
 import { sidecarModelService } from "../services/sidecar/sidecar-model.service.js";
 import { mlxRuntimeService } from "../services/sidecar/mlx-runtime.service.js";
@@ -272,7 +272,7 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
     const requestDebug = body.debugMode === true;
     const debugLogsEnabled = requestDebug || logger.isLevelEnabled("debug");
     const debugLog = (message: string, ...args: any[]) => {
-      logger.debug(message, ...args);
+      logDebugOverride(requestDebug, message, ...args);
     };
     const available = await isInferenceAvailable();
     if (!available) {

@@ -20,7 +20,7 @@ export interface Lorebook {
   category: LorebookCategory;
   /** Default scan depth for entries that don't override */
   scanDepth: number;
-  /** Max tokens allocated to this lorebook */
+  /** Max output tokens allocated to this lorebook */
   tokenBudget: number;
   recursiveScanning: boolean;
   /** Maximum recursion depth for recursive scanning (default 3) */

@@ -21,7 +21,7 @@ export function llmFetch(url: string | URL, init?: RequestInit): Promise<Respons
   return safeFetch(url, {
     ...(init ?? {}),
     agentOptions: llmAgentOptions,
-    policy: { allowLocal: isProviderLocalUrlsEnabled(), allowedProtocols: ["https:", "http:"] },
+    policy: { allowLocal: isProviderLocalUrlsEnabled(), allowLoopback: true, allowedProtocols: ["https:", "http:"] },
     maxResponseBytes: 50 * 1024 * 1024,
     bufferResponse: false,
   });
@@ -500,7 +500,7 @@ export abstract class BaseLLMProvider {
     return tokens;
   }
 
-  /** Returns the connection-level max tokens override, if set. */
+  /** Returns the connection-level max output tokens override, if set. */
   public get maxTokensOverrideValue(): number | null {
     return this.maxTokensOverride ?? null;
   }

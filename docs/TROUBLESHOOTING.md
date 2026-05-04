@@ -12,7 +12,7 @@ If you see an error like `EPERM: operation not permitted, open 'C:\Program Files
 
 1. **Run as Administrator** — Right-click your terminal (CMD or PowerShell), select "Run as administrator", then run `start.bat` again.
 2. **Install pnpm manually** — Run `npm install -g pnpm`, then run `start.bat` again.
-3. **Update corepack** — Run `npm install -g corepack`, `corepack enable`, and `corepack prepare pnpm@10.30.3 --activate` in an Administrator terminal.
+3. **Update corepack** — Run `npm install -g corepack`, `corepack enable`, and `corepack prepare pnpm@10.33.2 --activate` in an Administrator terminal.
 
 ---
 

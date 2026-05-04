@@ -1,6 +1,6 @@
 # Generation Parameters
 
-Marinara's chat modes (Conversation, Roleplay, Visual Novel, Game) all use a shared set of generation parameters per LLM connection. These control how the model samples responses — temperature, top-p, max tokens, and so on — and live in each connection's settings under **Settings → Connections → edit a connection → Generation Parameters**.
+Marinara's chat modes (Conversation, Roleplay, Visual Novel, Game) all use a shared set of generation parameters per LLM connection. These control how the model samples responses — temperature, top-p, max output tokens, and so on — and live in each connection's settings under **Settings → Connections → edit a connection → Generation Parameters**.
 
 This is the canonical reference. Mode-specific guides reference this doc rather than repeating the table.
 
@@ -19,20 +19,20 @@ Generation parameters are **layered**. The effective parameters for a chat at ru
 
 What every new preset starts from:
 
-| Parameter          | Default  | Notes                                                                                                                                |
-| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `temperature`      | `1`      | Higher = more variety; lower = more deterministic. See Claude notes below.                                                           |
+| Parameter          | Default  | Notes                                                                                                                                  |
+| ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `temperature`      | `1`      | Higher = more variety; lower = more deterministic. See Claude notes below.                                                             |
 | `maxTokens`        | `4096`   | Cap on response length. Game Mode world-gen in particular benefits from `10000` or higher because the structured JSON output is large. |
-| `topP`             | `1`      | See Claude notes below.                                                                                                              |
-| `topK`             | `0`      | Disabled; most providers ignore it anyway.                                                                                           |
-| `minP`             | `0`      | Disabled.                                                                                                                            |
-| `frequencyPenalty` | `0`      |                                                                                                                                      |
-| `presencePenalty`  | `0`      |                                                                                                                                      |
-| `reasoningEffort`  | `null`   | When set, used by reasoning-capable models (Claude with extended thinking, OpenAI o-series). `null` = provider default.              |
-| `verbosity`        | `null`   | When set, used by GPT-5-family models. `null` = provider default.                                                                    |
-| `assistantPrefill` | `""`     | Optional text to prefill into the assistant's response. Most users leave empty.                                                      |
-| `customParameters` | `{}`     | Provider-specific overrides for parameters Marinara doesn't expose by default.                                                       |
-| `maxContext`       | `128000` | Max context window in tokens. Connections typically override this with their actual model's context window.                          |
+| `topP`             | `1`      | See Claude notes below.                                                                                                                |
+| `topK`             | `0`      | Disabled; most providers ignore it anyway.                                                                                             |
+| `minP`             | `0`      | Disabled.                                                                                                                              |
+| `frequencyPenalty` | `0`      |                                                                                                                                        |
+| `presencePenalty`  | `0`      |                                                                                                                                        |
+| `reasoningEffort`  | `null`   | When set, used by reasoning-capable models (Claude with extended thinking, OpenAI o-series). `null` = provider default.                |
+| `verbosity`        | `null`   | When set, used by GPT-5-family models. `null` = provider default.                                                                      |
+| `assistantPrefill` | `""`     | Optional text to prefill into the assistant's response. Most users leave empty.                                                        |
+| `customParameters` | `{}`     | Provider-specific overrides for parameters Marinara doesn't expose by default.                                                         |
+| `maxContext`       | `128000` | Max context window in tokens. Connections typically override this with their actual model's context window.                            |
 
 ### Wizard customization starting points
 

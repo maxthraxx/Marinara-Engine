@@ -2201,7 +2201,7 @@ export function BotBrowserView() {
                             />
                           </div>
                           <div className="flex items-center gap-2">
-                            <label className="w-24 text-xs text-[var(--muted-foreground)]">Max Tokens</label>
+                            <label className="w-24 text-xs text-[var(--muted-foreground)]">Max Output Tokens</label>
                             <input
                               type="number"
                               value={maxTokens}

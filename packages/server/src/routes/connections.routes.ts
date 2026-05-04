@@ -132,7 +132,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
 
       const res = await safeFetch(testUrl, {
         headers,
-        policy: { allowLocal: isProviderLocalUrlsEnabled(), allowedProtocols: ["https:", "http:"] },
+        policy: {
+          allowLocal: isProviderLocalUrlsEnabled(),
+          allowLoopback: true,
+          allowedProtocols: ["https:", "http:"],
+        },
         maxResponseBytes: 2 * 1024 * 1024,
       });
       const latencyMs = Date.now() - start;
@@ -207,7 +211,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
       // ComfyUI: fetch checkpoints from object_info
       if (conn.provider === "image_generation" && imageSource === "comfyui") {
         const res = await safeFetch(`${baseUrl}/object_info/CheckpointLoaderSimple`, {
-          policy: { allowLocal: isProviderLocalUrlsEnabled(), allowedProtocols: ["https:", "http:"] },
+          policy: {
+            allowLocal: isProviderLocalUrlsEnabled(),
+            allowLoopback: true,
+            allowedProtocols: ["https:", "http:"],
+          },
           maxResponseBytes: 5 * 1024 * 1024,
         });
         if (!res.ok) {
@@ -223,7 +231,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
       // AUTOMATIC1111 / SD Web UI: fetch models from /sdapi/v1/sd-models
       if (conn.provider === "image_generation" && imageSource === "automatic1111") {
         const res = await safeFetch(`${baseUrl}/sdapi/v1/sd-models`, {
-          policy: { allowLocal: isProviderLocalUrlsEnabled(), allowedProtocols: ["https:", "http:"] },
+          policy: {
+            allowLocal: isProviderLocalUrlsEnabled(),
+            allowLoopback: true,
+            allowedProtocols: ["https:", "http:"],
+          },
           maxResponseBytes: 5 * 1024 * 1024,
         });
         if (!res.ok) {
@@ -240,7 +252,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
       if (conn.provider === "image_generation" && lowerBase.includes("nano-gpt.com")) {
         const res = await safeFetch(`${baseUrl}/image-models`, {
           headers,
-          policy: { allowLocal: isProviderLocalUrlsEnabled(), allowedProtocols: ["https:", "http:"] },
+          policy: {
+            allowLocal: isProviderLocalUrlsEnabled(),
+            allowLoopback: true,
+            allowedProtocols: ["https:", "http:"],
+          },
           maxResponseBytes: 5 * 1024 * 1024,
         });
         if (!res.ok) {
@@ -269,7 +285,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
 
       const res = await safeFetch(modelsUrl, {
         headers,
-        policy: { allowLocal: isProviderLocalUrlsEnabled(), allowedProtocols: ["https:", "http:"] },
+        policy: {
+          allowLocal: isProviderLocalUrlsEnabled(),
+          allowLoopback: true,
+          allowedProtocols: ["https:", "http:"],
+        },
         maxResponseBytes: 5 * 1024 * 1024,
       });
       if (!res.ok) {

@@ -111,7 +111,7 @@ import {
   wrapFields,
   type SimpleMessage,
 } from "./generate/generate-route-utils.js";
-import { logger } from "../lib/logger.js";
+import { logger, logDebugOverride } from "../lib/logger.js";
 import {
   buildHistoricalLorebookKeeperContext,
   getLorebookKeeperAutomaticPendingCount,
@@ -486,11 +486,7 @@ export async function generateRoutes(app: FastifyInstance) {
     const input = generateRequestSchema.parse(req.body);
     const requestDebug = input.debugMode === true;
     const debugLog = (message: string, ...args: any[]) => {
-      if (requestDebug && !isDebug) {
-        logger.info(message, ...args);
-        return;
-      }
-      logger.debug(message, ...args);
+      logDebugOverride(requestDebug, message, ...args);
     };
 
     // Resolve the chat
@@ -5558,14 +5554,14 @@ export async function generateRoutes(app: FastifyInstance) {
           const durationMs = Date.now() - genStartTime;
 
           if (input.debugMode && chatMode === "game") {
-            logger.debug(
+            debugLog(
               "[generate/game/raw] chatId=%s characterId=%s chars=%d BEGIN",
               input.chatId,
               targetCharId ?? "gm",
               fullResponse.length,
             );
-            logger.debug("[generate/game/raw] %s", fullResponse);
-            logger.debug("[generate/game/raw] chatId=%s characterId=%s END", input.chatId, targetCharId ?? "gm");
+            debugLog("[generate/game/raw] %s", fullResponse);
+            debugLog("[generate/game/raw] chatId=%s characterId=%s END", input.chatId, targetCharId ?? "gm");
           }
 
           // Some models inline reasoning blocks instead of using provider-native

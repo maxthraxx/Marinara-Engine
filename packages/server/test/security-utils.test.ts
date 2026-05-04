@@ -53,6 +53,7 @@ test("AVIF validation requires an AVIF-compatible ftyp brand", () => {
 test("validateOutboundUrl rejects local/private/metadata destinations", async () => {
   await assert.rejects(() => validateOutboundUrl("http://127.0.0.1:7860", { allowedProtocols: ["http:", "https:"] }));
   await assert.rejects(() => validateOutboundUrl("http://localhost:7860", { allowedProtocols: ["http:", "https:"] }));
+  await assert.rejects(() => validateOutboundUrl("http://[::1]:7860", { allowedProtocols: ["http:", "https:"] }));
   await assert.rejects(() => validateOutboundUrl("http://10.0.0.1", { allowedProtocols: ["http:", "https:"] }));
   await assert.rejects(() => validateOutboundUrl("http://192.168.1.1", { allowedProtocols: ["http:", "https:"] }));
   await assert.rejects(() => validateOutboundUrl("http://169.254.169.254", { allowedProtocols: ["http:", "https:"] }));
@@ -64,6 +65,16 @@ test("validateOutboundUrl allows explicit local-provider mode", async () => {
     allowedProtocols: ["http:", "https:"],
   });
   assert.equal(parsed.hostname, "127.0.0.1");
+});
+
+test("validateOutboundUrl allows loopback-only provider mode", async () => {
+  const policy = { allowLoopback: true, allowedProtocols: ["http:", "https:"] };
+  assert.equal((await validateOutboundUrl("http://127.0.0.1:8188", policy)).hostname, "127.0.0.1");
+  assert.equal((await validateOutboundUrl("http://localhost:8188", policy)).hostname, "localhost");
+  assert.equal((await validateOutboundUrl("http://[::1]:8188", policy)).hostname, "[::1]");
+  await assert.rejects(() => validateOutboundUrl("http://10.0.0.1:8188", policy));
+  await assert.rejects(() => validateOutboundUrl("http://169.254.169.254", policy));
+  await assert.rejects(() => validateOutboundUrl("http://example.localhost:8188", policy));
 });
 
 test("validateOutboundUrl allows public IPv4 destinations", async () => {

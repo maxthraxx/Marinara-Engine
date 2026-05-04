@@ -22,7 +22,7 @@ const GITHUB_RELEASE_BY_TAG_API = (tag: string) => `${GITHUB_API_BASE}/releases/
 const UPDATE_REMOTE = "origin";
 const UPDATE_BRANCH = "main";
 const UPDATE_REF = `${UPDATE_REMOTE}/${UPDATE_BRANCH}`;
-const DEFAULT_PNPM_VERSION = "10.30.3";
+const DEFAULT_PNPM_VERSION = "10.33.2";
 
 // ── Cached release info (15-min TTL) ──
 let cachedRelease: {
