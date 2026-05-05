@@ -111,8 +111,74 @@ test("CSRF protection blocks cross-site unsafe API requests", async () =>
     }
   }));
 
-test("same-origin unsafe API requests require the CSRF header", async () =>
+test("same-origin unsafe API requests allow stale clients without the CSRF header", async () =>
   withEnv({}, async () => {
+    const app = await buildHookApp();
+    try {
+      const staleClient = await app.inject({
+        method: "POST",
+        url: "/api/mutate",
+        remoteAddress: "127.0.0.1",
+        headers: {
+          host: "127.0.0.1:7860",
+          origin: "http://127.0.0.1:7860",
+          "sec-fetch-site": "same-origin",
+        },
+      });
+      assert.equal(staleClient.statusCode, 200);
+
+      const allowed = await app.inject({
+        method: "POST",
+        url: "/api/mutate",
+        remoteAddress: "127.0.0.1",
+        headers: {
+          host: "127.0.0.1:7860",
+          origin: "http://127.0.0.1:7860",
+          "sec-fetch-site": "same-origin",
+          [CSRF_HEADER]: CSRF_HEADER_VALUE,
+        },
+      });
+      assert.equal(allowed.statusCode, 200);
+    } finally {
+      await app.close();
+    }
+  }));
+
+test("same-site unsafe API requests still require the CSRF header", async () =>
+  withEnv({ CSRF_TRUSTED_ORIGINS: "http://app.example.test" }, async () => {
+    const app = await buildHookApp();
+    try {
+      const missing = await app.inject({
+        method: "POST",
+        url: "/api/mutate",
+        remoteAddress: "127.0.0.1",
+        headers: {
+          host: "app.example.test",
+          origin: "http://app.example.test",
+          "sec-fetch-site": "same-site",
+        },
+      });
+      assert.equal(missing.statusCode, 403);
+
+      const allowed = await app.inject({
+        method: "POST",
+        url: "/api/mutate",
+        remoteAddress: "127.0.0.1",
+        headers: {
+          host: "app.example.test",
+          origin: "http://app.example.test",
+          "sec-fetch-site": "same-site",
+          [CSRF_HEADER]: CSRF_HEADER_VALUE,
+        },
+      });
+      assert.equal(allowed.statusCode, 200);
+    } finally {
+      await app.close();
+    }
+  }));
+
+test("trusted cross-origin unsafe API requests without fetch metadata require the CSRF header", async () =>
+  withEnv({ CSRF_TRUSTED_ORIGINS: "https://trusted.example.test" }, async () => {
     const app = await buildHookApp();
     try {
       const missing = await app.inject({
@@ -121,8 +187,7 @@ test("same-origin unsafe API requests require the CSRF header", async () =>
         remoteAddress: "127.0.0.1",
         headers: {
           host: "127.0.0.1:7860",
-          origin: "http://127.0.0.1:7860",
-          "sec-fetch-site": "same-origin",
+          origin: "https://trusted.example.test",
         },
       });
       assert.equal(missing.statusCode, 403);
@@ -133,8 +198,7 @@ test("same-origin unsafe API requests require the CSRF header", async () =>
         remoteAddress: "127.0.0.1",
         headers: {
           host: "127.0.0.1:7860",
-          origin: "http://127.0.0.1:7860",
-          "sec-fetch-site": "same-origin",
+          origin: "https://trusted.example.test",
           [CSRF_HEADER]: CSRF_HEADER_VALUE,
         },
       });
