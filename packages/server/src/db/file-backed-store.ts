@@ -98,6 +98,7 @@ export type FileNativeDB = {
   insert: (table: Table) => InsertBuilder;
   update: (table: Table) => UpdateSetBuilder;
   delete: (table: Table) => DeleteBuilder;
+  transaction: <T>(fn: (tx: FileNativeDB) => Promise<T> | T) => Promise<T>;
   run: () => Promise<void>;
   all: <T = unknown>() => Promise<T[]>;
   _fileStore: FileNativeStoreController;
@@ -736,6 +737,23 @@ class FileTableStore {
     return this.tables.get(getMeta(table).name) ?? [];
   }
 
+  async transaction<T>(fn: (tx: FileNativeDB) => Promise<T> | T, tx: FileNativeDB): Promise<T> {
+    const tableSnapshot = new Map<string, Row[]>(
+      Array.from(this.tables, ([table, rows]) => [table, rows.map((row) => ({ ...row }))]),
+    );
+    const dirtySnapshot = this.dirty;
+    const dirtyTablesSnapshot = new Set(this.dirtyTables);
+
+    try {
+      return await fn(tx);
+    } catch (err) {
+      this.tables = tableSnapshot;
+      this.dirty = dirtySnapshot;
+      this.dirtyTables = dirtyTablesSnapshot;
+      throw err;
+    }
+  }
+
   select(projection?: Projection): SelectFromBuilder {
     return {
       from: (table) => new SelectQuery(this, getMeta(table), projection),
@@ -1198,13 +1216,16 @@ export async function createFileNativeDB(legacyDbPaths: string[] = []): Promise<
     close: () => store.close(),
   };
 
-  return {
+  let db: FileNativeDB;
+  db = {
     select: (projection) => store.select(projection),
     insert: (table) => store.insert(table),
     update: (table) => store.update(table),
     delete: (table) => store.delete(table),
+    transaction: (fn) => store.transaction(fn, db),
     run: () => store.run(),
     all: <T = unknown>() => store.all<T>(),
     _fileStore: controller,
   };
+  return db;
 }
