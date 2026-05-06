@@ -4908,11 +4908,15 @@ export async function gameRoutes(app: FastifyInstance) {
 
     const nextMeta = markNpcsMetAtCurrentLocation(withActiveGameMapMeta(meta, updatedMap));
     const hydratedMeta = await buildHydratedGameMeta(chatId, nextMeta, { explicitLocation });
-    // syncGameMapMetaPartyPosition matches by label, so an unusual label collision could
-    // still land on a different node. Re-apply the exact chosen position to defend against
-    // that and keep the response identical to what the client clicked.
-    const hydratedActiveMap = (hydratedMeta.gameMap as GameMap | null) ?? updatedMap;
-    const finalMap: GameMap = { ...hydratedActiveMap, partyPosition: position };
+    // syncGameMapMetaPartyPosition matches by label across all maps, so a label collision
+    // could leave hydratedMeta.gameMap pointing at a different map than the one the client
+    // clicked within. Anchor finalMap to the hydrated copy of the target map (falling back
+    // to updatedMap) and re-apply the exact chosen position so the response stays consistent
+    // with the user's click.
+    const hydratedMaps = getGameMapsFromMeta(hydratedMeta);
+    const hydratedTargetMap =
+      hydratedMaps.find((entry, index) => getGameMapId(entry, index) === targetMapId) ?? updatedMap;
+    const finalMap: GameMap = { ...hydratedTargetMap, partyPosition: position };
     const finalMeta = withActiveGameMapMeta(hydratedMeta, finalMap);
     await chats.updateMetadata(chatId, finalMeta);
 
