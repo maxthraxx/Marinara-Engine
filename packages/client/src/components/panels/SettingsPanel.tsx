@@ -5,11 +5,16 @@ import {
   APP_LANGUAGE_OPTIONS,
   useUIStore,
   type GameDialogueDisplayMode,
-  type InstalledExtension,
   type RoleplayAvatarStyle,
   type VisualTheme,
 } from "../../stores/ui.store";
-import { cn, generateClientId } from "../../lib/utils";
+import { cn } from "../../lib/utils";
+import {
+  useExtensions,
+  useCreateExtension,
+  useDeleteExtension,
+  useUpdateExtension,
+} from "../../hooks/use-extensions";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ADMIN_SECRET_STORAGE_KEY, api, getAdminSecretHeader } from "../../lib/api-client";
 import { forceRefreshSpa } from "@/lib/browser-runtime";
@@ -326,10 +331,6 @@ function GeneralSettings() {
   const setTrimIncompleteModelOutput = useUIStore((s) => s.setTrimIncompleteModelOutput);
   const speechToTextEnabled = useUIStore((s) => s.speechToTextEnabled);
   const setSpeechToTextEnabled = useUIStore((s) => s.setSpeechToTextEnabled);
-  const intuitiveSwipeNavigation = useUIStore((s) => s.intuitiveSwipeNavigation);
-  const setIntuitiveSwipeNavigation = useUIStore((s) => s.setIntuitiveSwipeNavigation);
-  const intuitiveSwipeRerollLatest = useUIStore((s) => s.intuitiveSwipeRerollLatest);
-  const setIntuitiveSwipeRerollLatest = useUIStore((s) => s.setIntuitiveSwipeRerollLatest);
   const rescanGameAssets = useGameAssetStore((s) => s.rescanAssets);
   const assetFileRef = useRef<HTMLInputElement>(null);
   const [assetCategory, setAssetCategory] = useState<GameAssetCategoryId>("backgrounds");
@@ -604,22 +605,6 @@ function GeneralSettings() {
         onChange={setSpeechToTextEnabled}
         help="When on, chat input bars show a microphone button for browser dictation. Handy still works independently by pasting into the focused input field."
       />
-
-      <ToggleSetting
-        label="Intuitive swipe navigation"
-        checked={intuitiveSwipeNavigation}
-        onChange={setIntuitiveSwipeNavigation}
-        help="In Conversation and Roleplay modes, use Left/Right Arrow on desktop or horizontal touch swipes on mobile to move between alternate generations on the latest assistant message."
-      />
-
-      <div className={cn("pl-5 transition-opacity", intuitiveSwipeNavigation ? "" : "pointer-events-none opacity-45")}>
-        <ToggleSetting
-          label="Reroll past the newest swipe"
-          checked={intuitiveSwipeRerollLatest}
-          onChange={setIntuitiveSwipeRerollLatest}
-          help="When intuitive swipes are enabled, pressing Right Arrow or swiping left on the newest swipe of the latest assistant message creates a new reroll."
-        />
-      </div>
 
       <div className="rounded-xl bg-[var(--secondary)]/50 p-4 ring-1 ring-[var(--border)]">
         <div className="mb-3 flex flex-col gap-1">
@@ -2066,10 +2051,10 @@ const CSS_TEMPLATE = `/* ══════════════════�
 `;
 
 function ExtensionsSettings() {
-  const extensions = useUIStore((s) => s.installedExtensions);
-  const addExtension = useUIStore((s) => s.addExtension);
-  const removeExtension = useUIStore((s) => s.removeExtension);
-  const toggleExtension = useUIStore((s) => s.toggleExtension);
+  const { data: extensions = [] } = useExtensions();
+  const createExtension = useCreateExtension();
+  const updateExtension = useUpdateExtension();
+  const deleteExtension = useDeleteExtension();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleImportExtension = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2077,41 +2062,39 @@ function ExtensionsSettings() {
     if (!file) return;
     try {
       const text = await file.text();
+      const installedAt = new Date().toISOString();
 
       if (file.name.endsWith(".json")) {
         const parsed = JSON.parse(text);
-        const ext: InstalledExtension = {
-          id: generateClientId(),
-          name: parsed.name ?? file.name.replace(/\.json$/, ""),
+        const name = parsed.name ?? file.name.replace(/\.json$/, "");
+        await createExtension.mutateAsync({
+          name,
           description: parsed.description ?? "",
-          css: parsed.css ?? undefined,
-          js: parsed.js ?? undefined,
+          css: parsed.css ?? null,
+          js: parsed.js ?? null,
           enabled: true,
-          installedAt: new Date().toISOString(),
-        };
-        addExtension(ext);
-        toast.success(`Extension "${ext.name}" installed`);
+          installedAt,
+        });
+        toast.success(`Extension "${name}" installed`);
       } else if (file.name.endsWith(".js")) {
-        const ext: InstalledExtension = {
-          id: generateClientId(),
-          name: file.name.replace(/\.js$/, ""),
+        const name = file.name.replace(/\.js$/, "");
+        await createExtension.mutateAsync({
+          name,
           description: "JS extension imported from file",
           js: text,
           enabled: true,
-          installedAt: new Date().toISOString(),
-        };
-        addExtension(ext);
-        toast.success(`Extension "${ext.name}" installed`);
+          installedAt,
+        });
+        toast.success(`Extension "${name}" installed`);
       } else if (file.name.endsWith(".css")) {
-        const ext: InstalledExtension = {
-          id: generateClientId(),
-          name: file.name.replace(/\.css$/, ""),
+        const name = file.name.replace(/\.css$/, "");
+        await createExtension.mutateAsync({
+          name,
           description: "CSS extension imported from file",
           css: text,
           enabled: true,
-          installedAt: new Date().toISOString(),
-        };
-        addExtension(ext);
+          installedAt,
+        });
       } else {
         toast.error("Only .json and .css extension files are supported.");
       }
@@ -2152,7 +2135,7 @@ function ExtensionsSettings() {
             )}
           >
             <button
-              onClick={() => toggleExtension(ext.id)}
+              onClick={() => updateExtension.mutate({ id: ext.id, enabled: !ext.enabled })}
               className={cn(
                 "rounded p-0.5 transition-colors",
                 ext.enabled
@@ -2170,7 +2153,7 @@ function ExtensionsSettings() {
               )}
             </div>
             <button
-              onClick={() => removeExtension(ext.id)}
+              onClick={() => deleteExtension.mutate(ext.id)}
               className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
               title="Remove extension"
             >

@@ -3,8 +3,8 @@
 // CSS and enabled extension CSS/JS into the DOM
 // ──────────────────────────────────────────────
 import { useEffect } from "react";
-import { useUIStore } from "../../stores/ui.store";
 import { useThemes } from "../../hooks/use-themes";
+import { useExtensions } from "../../hooks/use-extensions";
 
 type ExtensionGlobal = typeof globalThis & {
   __marinaraExtensionApis?: Map<string, unknown>;
@@ -41,7 +41,7 @@ function buildExtensionModuleSource(apiKey: string, extensionName: string, js: s
 }
 
 export function CustomThemeInjector() {
-  const installedExtensions = useUIStore((s) => s.installedExtensions);
+  const { data: installedExtensions = [] } = useExtensions();
   const { data: syncedThemes = [] } = useThemes();
   const activeTheme = syncedThemes.find((theme) => theme.isActive) ?? null;
 
@@ -163,8 +163,18 @@ export function CustomThemeInjector() {
           },
 
           // Fetch from Marinara API
+          // Deny extensions from calling sensitive endpoints. Without this,
+          // a malicious extension could `apiFetch("/extensions", { method: "POST", ... })`
+          // to re-install itself after the user deletes it, or hit `/admin/*`
+          // privileged routes.
           apiFetch: async (path: string, options?: RequestInit) => {
-            const res = await fetch(`/api${path}`, {
+            const normalized = path.startsWith("/") ? path : `/${path}`;
+            if (normalized.startsWith("/extensions") || normalized.startsWith("/admin")) {
+              const message = `apiFetch denied: extensions cannot reach ${normalized}`;
+              console.warn(`[Extension:${ext.name}] ${message}`);
+              return Promise.reject(new Error(message));
+            }
+            const res = await fetch(`/api${normalized}`, {
               headers: { "Content-Type": "application/json" },
               ...options,
             });
