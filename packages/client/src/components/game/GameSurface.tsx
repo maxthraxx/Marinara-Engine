@@ -2753,6 +2753,35 @@ export function GameSurface({
     gameState,
   ]);
 
+  // ── Self-heal stale "user" persona name in restored combat state ──
+  // Snapshots written before the encounter prompt was taught about chat-scoped personas
+  // have the player combatant's name baked in as the literal fallback string "user" /
+  // "User" (because `buildPersonaContext` returned that). Once persona resolution is
+  // fixed, fresh snapshots are correct, but in-flight battles loaded from old metadata
+  // keep showing the wrong name until corrected. Detect that signature and rename the
+  // combatant in place — the existing persist effect then writes the corrected snapshot
+  // back, so this only runs once per stale battle.
+  useEffect(() => {
+    if (!combatParty || !personaInfo?.name) return;
+    let changed = false;
+    const corrected = combatParty.map((combatant) => {
+      if (
+        combatant.side === "player" &&
+        combatant.id.startsWith("generated-party-") &&
+        /^user$/i.test(combatant.name)
+      ) {
+        changed = true;
+        return {
+          ...combatant,
+          name: personaInfo.name,
+          sprite: combatant.sprite ?? personaInfo.avatarUrl ?? combatant.sprite,
+        };
+      }
+      return combatant;
+    });
+    if (changed) setCombatParty(corrected);
+  }, [combatParty, personaInfo?.name, personaInfo?.avatarUrl]);
+
   // ── Persist narration segment index (localStorage for instant reads + server for durability) ──
   const segmentStorageKey = `narration-idx:${activeChatId}`;
   const segmentPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
