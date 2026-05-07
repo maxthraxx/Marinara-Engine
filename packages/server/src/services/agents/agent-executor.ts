@@ -728,6 +728,12 @@ function buildAgentMessages(
   // ── 2. Chat history as proper multi-turn messages ──
   // Slice to this agent's own contextSize (the shared pool may be larger)
   const recent = context.recentMessages.slice(-contextSize);
+  // Text-output agents (director, prose-guardian) evaluate pacing/writing
+  // quality and do NOT need raw committed tracker JSON. Including it makes
+  // the input look like `[assistant] roleplay + <committed_tracker_state>{...}`
+  // — a pattern small/fine-tuned models mimic into their response, leaking
+  // roleplay and tracker JSON that gets injected into the main prompt.
+  const skipTrackerAppend = isTextOutputAgentType(agentType);
   if (recent.length > 0) {
     // Only attach committed tracker state to the last 3 assistant messages to save tokens
     const assistantIndices: number[] = [];
@@ -743,8 +749,9 @@ function buildAgentMessages(
       const role: "user" | "assistant" = msg.role === "assistant" ? "assistant" : "user";
       let content = stripHtmlTags(msg.content).slice(0, 2000);
 
-      // Append committed tracker data only to the last 3 assistant messages
-      if (msg.gameState && trackerEligible.has(msgIdx)) {
+      // Append committed tracker data only to the last 3 assistant messages,
+      // and only for agents whose output is structured (not text agents — see above).
+      if (!skipTrackerAppend && msg.gameState && trackerEligible.has(msgIdx)) {
         const gs = msg.gameState;
         const trackerSummary: Record<string, unknown> = {};
         if (gs.date || gs.time || gs.location || gs.weather || gs.temperature) {
@@ -1116,6 +1123,20 @@ function agentResponseIsJson(config: Pick<AgentExecConfig, "type" | "settings">)
   return JSON_AGENTS.has(config.type) || !TEXT_RESULT_TYPES.has(resultType);
 }
 
+/**
+ * Whether a built-in agent type's primary output is plain text (director note,
+ * writing directives, etc.) rather than structured JSON. Used to suppress
+ * inputs/outputs that text agents may pattern-mimic into their response.
+ *
+ * Returns false for unknown types (custom agents, "__batch__"): the safe
+ * default keeps full context; tracker-leak sanitization runs on the output side.
+ */
+function isTextOutputAgentType(agentType: string): boolean {
+  const resultType = AGENT_RESULT_TYPE_MAP[agentType];
+  if (!resultType) return false;
+  return TEXT_RESULT_TYPES.has(resultType);
+}
+
 /** Agents that return structured JSON. */
 const JSON_AGENTS = new Set([
   "world-state",
@@ -1141,6 +1162,40 @@ const JSON_AGENTS = new Set([
 ]);
 
 /**
+ * Strip leaked synthetic tags from a text agent's response and, for the
+ * Narrative Director, extract only the canonical "[Director's note: ...]"
+ * payload its prompt mandates.
+ *
+ * Background: when a text agent (director, prose-guardian) is shown chat
+ * history that ends in `<committed_tracker_state>{...}</committed_tracker_state>`,
+ * smaller models will continue the pattern and emit roleplay + tracker JSON
+ * before/around their intended directive. That leaked content gets injected
+ * into the main prompt as a system block, then converted to a user message
+ * by `prepareProviderMessages`, causing the main AI to respond to the leak.
+ */
+function sanitizeTextAgentResponse(agentType: string, text: string): string {
+  const cleaned = text
+    .replace(/<committed_tracker_state>[\s\S]*?<\/committed_tracker_state>/gi, "")
+    .replace(/<assistant_response>[\s\S]*?<\/assistant_response>/gi, "")
+    .trim();
+
+  // Director output is locked to "[Director's note: ...]" by its prompt.
+  // Anything outside that bracket is leakage — extract the last note (most
+  // likely the model's "final" intent) and discard the rest. If no bracketed
+  // note is present at all, the response is fully off-format; drop it so the
+  // pipeline injects nothing rather than hallucinated roleplay.
+  if (agentType === "director") {
+    const noteMatches = cleaned.match(/\[Director(?:'|’)s note:[^\]]*\]/gi);
+    if (noteMatches && noteMatches.length > 0) {
+      return noteMatches[noteMatches.length - 1]!.trim();
+    }
+    return "";
+  }
+
+  return cleaned;
+}
+
+/**
  * Parse the raw LLM response into a typed result.
  */
 function parseAgentResponse(
@@ -1162,8 +1217,9 @@ function parseAgentResponse(
     }
   }
 
-  // Text-based agents (prose-guardian, director)
-  return { type: resultType, data: { text: responseText } };
+  // Text-based agents (prose-guardian, director). Sanitize before injection so
+  // leaked tracker/roleplay content can't reach the main prompt.
+  return { type: resultType, data: { text: sanitizeTextAgentResponse(config.type, responseText) } };
 }
 
 /** Extract JSON from a response that may contain markdown fences. */
