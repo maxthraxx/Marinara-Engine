@@ -1117,6 +1117,16 @@ export function GameCombatUI({
   // (Mechanics / Cues / Log / Party) replace inline panels that don't fit on small screens.
   const isMobile = useIsCombatMobile();
   const [openDrawer, setOpenDrawer] = useState<MobileDrawerKind>(null);
+  // Keyboard parity for tablets / external keyboards: Escape dismisses the drawer
+  // (matches the existing close button + backdrop tap behavior).
+  useEffect(() => {
+    if (!openDrawer) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenDrawer(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openDrawer]);
 
   // ── Render ──
 
@@ -1501,6 +1511,10 @@ export function GameCombatUI({
                       setSelectedAction(null);
                       setSelectedItemName(null);
                       setCustomInstruction("");
+                    }
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      submitCustomInstruction();
                     }
                   }}
                   className="min-h-20 w-full resize-none rounded-lg border border-violet-300/20 bg-violet-500/10 px-2.5 py-2 text-sm leading-relaxed text-white/85 outline-none transition-colors placeholder:text-white/35 focus:border-violet-300/45"

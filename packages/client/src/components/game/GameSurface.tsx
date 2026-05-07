@@ -2663,11 +2663,15 @@ export function GameSurface({
   // Without this, refreshing during a fight drops the user back into prose narration even
   // though gameActiveState is still "combat", because the live party/enemy snapshot only
   // lived in component-local React state.
-  const combatRestoredRef = useRef(false);
+  // Scoped per-chat so switching to another chat in the same mounted GameSurface still
+  // gets a chance to restore that chat's snapshot — a single boolean would permanently
+  // skip restore after the first chat opened.
+  const combatRestoredChatIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (combatRestoredRef.current || isMessagesLoading) return;
+    if (isMessagesLoading) return;
+    if (combatRestoredChatIdRef.current === activeChatId) return;
     const snapshot = chatMeta.gameCombatState as GameCombatStateSnapshot | null | undefined;
-    combatRestoredRef.current = true;
+    combatRestoredChatIdRef.current = activeChatId;
     if (!snapshot || !snapshot.party?.length || !snapshot.enemies?.length) return;
     if (chatMeta.gameActiveState !== "combat") {
       // Stale snapshot — combat ended but the metadata write didn't land. Clear it.
@@ -2688,8 +2692,27 @@ export function GameSurface({
   // The snapshot doesn't include per-round transient state (animations, log entries) —
   // those reset on restore and combat resumes from the start of the round.
   const combatPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest snapshot stored in a ref so the cleanup path can flush it synchronously
+  // when the effect re-runs (chat switch / unmount) — without this, a refresh inside
+  // the 800 ms debounce window would silently drop the most recent state.
+  const combatPendingSnapshotRef = useRef<{ chatId: string; snapshot: GameCombatStateSnapshot } | null>(null);
+  // Shared helper used by combat-end + return-to-pre-combat-turn so both paths reliably
+  // wipe the persisted snapshot, even if the exploration-state PATCH is still in flight
+  // when the user refreshes.
+  const clearCombatSnapshot = useCallback(
+    (chatId: string | null) => {
+      if (!chatId) return;
+      if (combatPersistTimer.current) {
+        clearTimeout(combatPersistTimer.current);
+        combatPersistTimer.current = null;
+      }
+      combatPendingSnapshotRef.current = null;
+      api.patch(`/chats/${chatId}/metadata`, { gameCombatState: null }).catch(() => {});
+    },
+    [],
+  );
   useEffect(() => {
-    if (!combatRestoredRef.current) return;
+    if (combatRestoredChatIdRef.current !== activeChatId) return;
     if (!combatParty || !combatEnemies || gameState !== "combat") return;
     if (combatPersistTimer.current) clearTimeout(combatPersistTimer.current);
     const snapshot: GameCombatStateSnapshot = {
@@ -2700,11 +2723,24 @@ export function GameSurface({
       dialogueCues: combatDialogueCues,
       startMessageId: combatStartMessageId,
     };
+    combatPendingSnapshotRef.current = { chatId: activeChatId, snapshot };
     combatPersistTimer.current = setTimeout(() => {
       api.patch(`/chats/${activeChatId}/metadata`, { gameCombatState: snapshot }).catch(() => {});
+      combatPendingSnapshotRef.current = null;
+      combatPersistTimer.current = null;
     }, 800);
     return () => {
-      if (combatPersistTimer.current) clearTimeout(combatPersistTimer.current);
+      if (combatPersistTimer.current) {
+        clearTimeout(combatPersistTimer.current);
+        combatPersistTimer.current = null;
+      }
+      // Flush the latest pending snapshot synchronously so an unmount or chat switch
+      // during the 800 ms debounce window doesn't lose the most recent combat state.
+      const pending = combatPendingSnapshotRef.current;
+      if (pending) {
+        api.patch(`/chats/${pending.chatId}/metadata`, { gameCombatState: pending.snapshot }).catch(() => {});
+        combatPendingSnapshotRef.current = null;
+      }
     };
   }, [
     activeChatId,
@@ -5662,9 +5698,10 @@ export function GameSurface({
     useGameModeStore.getState().setGameState("exploration");
     if (activeChatId) {
       transitionGameState.mutate({ chatId: activeChatId, newState: "exploration" });
+      clearCombatSnapshot(activeChatId);
     }
     onDeleteMessage(latestAssistantMsg.id);
-  }, [activeChatId, latestAssistantMsg?.id, onDeleteMessage, transitionGameState]);
+  }, [activeChatId, clearCombatSnapshot, latestAssistantMsg?.id, onDeleteMessage, transitionGameState]);
 
   const handleCombatantsChange = useCallback((nextParty: Combatant[], nextEnemies: Combatant[]) => {
     setCombatParty(nextParty);
@@ -5694,8 +5731,7 @@ export function GameSurface({
         transitionGameState.mutate({ chatId: activeChatId, newState: "exploration" });
         // Clear the persisted combat snapshot so a future page refresh doesn't try to
         // re-enter the fight that just ended.
-        if (combatPersistTimer.current) clearTimeout(combatPersistTimer.current);
-        api.patch(`/chats/${activeChatId}/metadata`, { gameCombatState: null }).catch(() => {});
+        clearCombatSnapshot(activeChatId);
       }
 
       // Build a compact, model-friendly recap so the GM can narrate the aftermath.
@@ -5766,7 +5802,7 @@ export function GameSurface({
         })
         .catch(() => {});
     },
-    [sendMessage, activeChatId, transitionGameState],
+    [sendMessage, activeChatId, clearCombatSnapshot, transitionGameState],
   );
 
   // Toggle audio mute
