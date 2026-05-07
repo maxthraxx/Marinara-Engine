@@ -5074,6 +5074,8 @@ function ImpersonateSettingsContent({
   const setPromptTemplate = useUIStore((s) => s.setImpersonatePromptTemplate);
   const showQuickButton = useUIStore((s) => s.impersonateShowQuickButton);
   const setShowQuickButton = useUIStore((s) => s.setImpersonateShowQuickButton);
+  const cyoaChoices = useUIStore((s) => s.impersonateCyoaChoices);
+  const setCyoaChoices = useUIStore((s) => s.setImpersonateCyoaChoices);
   const presetId = useUIStore((s) => s.impersonatePresetId);
   const setPresetId = useUIStore((s) => s.setImpersonatePresetId);
   const connectionId = useUIStore((s) => s.impersonateConnectionId);
@@ -5197,6 +5199,21 @@ function ImpersonateSettingsContent({
             />
             <span onClick={(e) => e.preventDefault()}>
               <HelpTooltip text="When enabled, the agent pipeline (trackers, lorebook routers, etc.) is suppressed during impersonate so generations stay fast and don't trigger world-state mutations." />
+            </span>
+          </span>
+        </label>
+
+        <label className="order-5 flex min-h-[2.875rem] min-w-0 items-center justify-between gap-2 rounded-lg bg-[var(--secondary)]/25 px-2.5 py-1.5 text-xs font-semibold ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/40 sm:col-span-2">
+          <span className="min-w-0">Use CYOA as direction</span>
+          <span className="flex shrink-0 items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={cyoaChoices}
+              onChange={(e) => setCyoaChoices(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+            />
+            <span onClick={(e) => e.preventDefault()}>
+              <HelpTooltip text="When enabled, clicking a CYOA option uses it as the direction for an impersonate generation instead of sending the option as a normal user message." />
             </span>
           </span>
         </label>

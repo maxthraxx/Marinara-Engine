@@ -279,6 +279,8 @@ interface UIState {
   impersonatePromptTemplate: string;
   /** Show a quick /impersonate button in the chat input toolbar. Persisted. */
   impersonateShowQuickButton: boolean;
+  /** When true, CYOA choices generate impersonate requests instead of normal user messages. Persisted. */
+  impersonateCyoaChoices: boolean;
   /** Override preset used when impersonating (null = use chat default). Persisted. */
   impersonatePresetId: string | null;
   /** Override connection used when impersonating (null = use chat default). Persisted. */
@@ -386,6 +388,7 @@ interface UIState {
   // Impersonate settings actions
   setImpersonatePromptTemplate: (v: string) => void;
   setImpersonateShowQuickButton: (v: boolean) => void;
+  setImpersonateCyoaChoices: (v: boolean) => void;
   setImpersonatePresetId: (id: string | null) => void;
   setImpersonateConnectionId: (id: string | null) => void;
   setImpersonateBlockAgents: (v: boolean) => void;
@@ -480,6 +483,7 @@ export function pickSyncedSettings(state: UIState) {
     scheduleGenerationPreferences: state.scheduleGenerationPreferences,
     impersonatePromptTemplate: state.impersonatePromptTemplate,
     impersonateShowQuickButton: state.impersonateShowQuickButton,
+    impersonateCyoaChoices: state.impersonateCyoaChoices,
     impersonatePresetId: state.impersonatePresetId,
     impersonateConnectionId: state.impersonateConnectionId,
     impersonateBlockAgents: state.impersonateBlockAgents,
@@ -588,6 +592,7 @@ export const useUIStore = create<UIState>()(
       // Impersonate settings defaults
       impersonatePromptTemplate: "",
       impersonateShowQuickButton: false,
+      impersonateCyoaChoices: false,
       impersonatePresetId: null,
       impersonateConnectionId: null,
       impersonateBlockAgents: false,
@@ -866,6 +871,7 @@ export const useUIStore = create<UIState>()(
       setHudPosition: (v) => set({ hudPosition: v }),
       setImpersonatePromptTemplate: (v) => set({ impersonatePromptTemplate: v }),
       setImpersonateShowQuickButton: (v) => set({ impersonateShowQuickButton: v }),
+      setImpersonateCyoaChoices: (v) => set({ impersonateCyoaChoices: v }),
       setImpersonatePresetId: (id) => set({ impersonatePresetId: id }),
       setImpersonateConnectionId: (id) => set({ impersonateConnectionId: id }),
       setImpersonateBlockAgents: (v) => set({ impersonateBlockAgents: v }),
@@ -895,7 +901,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 18,
+      version: 19,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1070,6 +1076,10 @@ export const useUIStore = create<UIState>()(
             persisted.hasMigratedExtensionsToServer = false;
           }
         }
+        // v18 -> v19: let CYOA choices opt into impersonate generation.
+        if (version <= 18) {
+          if (persisted.impersonateCyoaChoices === undefined) persisted.impersonateCyoaChoices = false;
+        }
         return persisted;
       },
       partialize: (state) => ({
@@ -1143,6 +1153,7 @@ export const useUIStore = create<UIState>()(
         scheduleGenerationPreferences: state.scheduleGenerationPreferences,
         impersonatePromptTemplate: state.impersonatePromptTemplate,
         impersonateShowQuickButton: state.impersonateShowQuickButton,
+        impersonateCyoaChoices: state.impersonateCyoaChoices,
         impersonatePresetId: state.impersonatePresetId,
         impersonateConnectionId: state.impersonateConnectionId,
         impersonateBlockAgents: state.impersonateBlockAgents,
