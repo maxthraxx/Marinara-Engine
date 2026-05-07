@@ -1684,15 +1684,16 @@ export function GameSurface({
   // still render party overlay boxes. Never set by a new-turn pipeline — the GM
   // now voices party members inline via the `[Name] [main] ...` format.
   const [partyChatMessageId, setPartyChatMessageId] = useState<string | null>(null);
-  const [narrationDone, setNarrationDone] = useState(false);
-  // Tags `narrationDone` to a specific assistant message ID. Used to defeat the stale-state race
-  // where a freshly-arrived assistant message hasn't yet had time to push narrationDone=false
-  // through the typewriter, so encounter-trigger gates would otherwise see narrationDone=true
-  // left over from the previous turn and open combat before the player can read the prose.
-  const narrationDoneMsgIdRef = useRef<string | null>(null);
+  // The active assistant message ID whose typewriter is currently complete, or null if
+  // either no message is finished typing or it's the *previous* turn's completion.
+  // We track the message ID rather than a boolean so a stale completion from the
+  // previous turn cannot unlock interactions on the new turn — the derived
+  // `narrationDone` flag below recomputes each render against the latest assistant
+  // message, so encounter gates, choice rendering, map movement, inventory, etc. all
+  // get the same scope-correct view of completion.
+  const [narrationDoneMsgId, setNarrationDoneMsgId] = useState<string | null>(null);
   const handleNarrationComplete = useCallback((complete: boolean, messageId: string | null) => {
-    narrationDoneMsgIdRef.current = complete ? messageId : null;
-    setNarrationDone(complete);
+    setNarrationDoneMsgId(complete ? messageId : null);
   }, []);
   const [directionsPlaying, setDirectionsPlaying] = useState(false);
   const [pendingSegmentEffects, setPendingSegmentEffects] = useState<SceneSegmentEffect[]>([]);
@@ -1915,7 +1916,7 @@ export function GameSurface({
     setCombatParty(null);
     setCombatEnemies(null);
     setCombatSpriteSuggestion(null);
-    setNarrationDone(false);
+    setNarrationDoneMsgId(null);
     lastProcessedMsgRef.current = null;
     // Reset inventory/readables for the new chat
     setInventoryItems((chatMeta.gameInventory as Array<{ name: string; quantity: number }>) ?? []);
@@ -2367,6 +2368,11 @@ export function GameSurface({
   const latestAssistantMsgRef = useRef(latestAssistantMsg);
   latestAssistantMsgRef.current = latestAssistantMsg;
 
+  // Derived per-render: completion is only "done" for the *current* assistant message.
+  // A stale completion ID from the previous turn falls through to false because
+  // `latestAssistantMsg.id` has already advanced.
+  const narrationDone = narrationDoneMsgId !== null && narrationDoneMsgId === latestAssistantMsg?.id;
+
   const latestNarrationText = useMemo(
     () => (latestAssistantMsg?.content ? parseGmTags(latestAssistantMsg.content).cleanContent.trim() : ""),
     [latestAssistantMsg?.content],
@@ -2736,9 +2742,14 @@ export function GameSurface({
       }
       // Flush the latest pending snapshot synchronously so an unmount or chat switch
       // during the 800 ms debounce window doesn't lose the most recent combat state.
+      // `keepalive` lets the request survive a hard refresh / tab close — without it,
+      // browsers will cancel an in-flight PATCH the moment the page begins unloading,
+      // which is exactly the scenario this feature is meant to protect.
       const pending = combatPendingSnapshotRef.current;
       if (pending) {
-        api.patch(`/chats/${pending.chatId}/metadata`, { gameCombatState: pending.snapshot }).catch(() => {});
+        api
+          .patch(`/chats/${pending.chatId}/metadata`, { gameCombatState: pending.snapshot }, { keepalive: true })
+          .catch(() => {});
         combatPendingSnapshotRef.current = null;
       }
     };
@@ -2932,7 +2943,7 @@ export function GameSurface({
 
     console.warn("[scene-process] FIRING for message:", msg.id, "| assets:", !!assets);
     lastProcessedMsgRef.current = msg.id;
-    setNarrationDone(false);
+    setNarrationDoneMsgId(null);
     setSceneAnalysisFailed(false);
     setPartyDialogue([]);
     setPartyChatMessageId(null);
@@ -3744,7 +3755,7 @@ export function GameSurface({
     setPendingInventorySegmentUpdates([]);
     appliedSegmentsRef.current = new Set();
     appliedInventorySegmentsRef.current = new Set();
-    setNarrationDone(false);
+    setNarrationDoneMsgId(null);
     sceneReadyMsgIdRef.current = "__retry_turn__";
     setSceneReadyTick((tick) => tick + 1);
     lastProcessedMsgRef.current = null;
@@ -4618,9 +4629,7 @@ export function GameSurface({
     if (queuedEncounter.messageId !== latestAssistantMsg.id) return;
     if (pendingEncounter || combatUiActive) return;
     if (isStreaming || scenePreparing || pendingAssetGeneration || directionsPlaying) return;
-    // narrationDone left over from the previous turn must not unblock combat for a new message.
-    const narrationDoneForCurrent = narrationDone && narrationDoneMsgIdRef.current === latestAssistantMsg.id;
-    if (latestNarrationText && !narrationDoneForCurrent) return;
+    if (latestNarrationText && !narrationDone) return;
 
     useGameModeStore.getState().setGameState("combat");
     transitionGameState.mutate({ chatId: activeChatId, newState: "combat" });
@@ -4647,8 +4656,7 @@ export function GameSurface({
     if (queuedCombatGeneration.messageId !== latestAssistantMsg.id) return;
     if (pendingEncounter || combatUiActive || combatGenerationPending) return;
     if (isStreaming || scenePreparing || pendingAssetGeneration || directionsPlaying) return;
-    const narrationDoneForCurrent = narrationDone && narrationDoneMsgIdRef.current === latestAssistantMsg.id;
-    if (latestNarrationText && !narrationDoneForCurrent) return;
+    if (latestNarrationText && !narrationDone) return;
 
     setCombatGenerationPending(true);
     api
@@ -4733,8 +4741,7 @@ export function GameSurface({
     if (queuedQte.messageId !== latestAssistantMsg.id) return;
     if (activeQte) return;
     if (isStreaming || scenePreparing || pendingAssetGeneration || directionsPlaying) return;
-    const narrationDoneForCurrent = narrationDone && narrationDoneMsgIdRef.current === latestAssistantMsg.id;
-    if (latestNarrationText && !narrationDoneForCurrent) return;
+    if (latestNarrationText && !narrationDone) return;
 
     setActiveQte(queuedQte.qte);
     setQueuedQte(null);
