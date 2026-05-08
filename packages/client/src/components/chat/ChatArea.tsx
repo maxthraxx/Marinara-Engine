@@ -434,10 +434,17 @@ export function ChatArea() {
   // only set on truthy values, leaving the global chatBackground stale when
   // switching to a chat whose metadata has been cleared, which made a removed
   // background re-appear after a chat switch round-trip.
+  const restoredChatBackgroundRef = useRef<{ chatId: string | null; url: string | null; isSyncing: boolean }>({
+    chatId: null,
+    url: null,
+    isSyncing: false,
+  });
   useEffect(() => {
     if (!chat?.id) return;
     const bg = chatMeta.background as string | null | undefined;
-    useUIStore.getState().setChatBackground(bg ? `/api/backgrounds/file/${encodeURIComponent(bg)}` : null);
+    const restoredUrl = bg ? `/api/backgrounds/file/${encodeURIComponent(bg)}` : null;
+    restoredChatBackgroundRef.current = { chatId: chat.id, url: restoredUrl, isSyncing: true };
+    useUIStore.getState().setChatBackground(restoredUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat?.id]);
 
@@ -452,6 +459,14 @@ export function ChatArea() {
   useEffect(() => {
     if (!chat?.id) return;
     const savedFilename = (chatMeta.background as string | null | undefined) ?? null;
+    const restoredBackground = restoredChatBackgroundRef.current;
+
+    if (restoredBackground.isSyncing && (restoredBackground.chatId !== chat.id || chatBackground !== restoredBackground.url)) {
+      return;
+    }
+    if (restoredBackground.isSyncing) {
+      restoredBackground.isSyncing = false;
+    }
 
     if (!chatBackground) {
       if (savedFilename === null) return;
