@@ -5628,6 +5628,7 @@ export function GameSurface({
   );
 
   const handleGenerateMap = useCallback(() => {
+    if (isStreaming || !sessionInteractive) return;
     const locationType = gameSnapshot?.location?.trim() || "current location";
     const context = [
       `Location: ${gameSnapshot?.location ?? "Unknown"}`,
@@ -5650,7 +5651,9 @@ export function GameSurface({
     gameSnapshot?.time,
     gameSnapshot?.weather,
     generateMap,
+    isStreaming,
     latestNarrationText,
+    sessionInteractive,
   ]);
 
   const isSameMapPosition = useCallback(
@@ -6868,6 +6871,7 @@ export function GameSurface({
                       onMove={handleMapMove}
                       selectedPosition={viewedMapIsActive ? (pendingMapMove?.position ?? null) : null}
                       onGenerateMap={handleGenerateMap}
+                      generateMapDisabled={isStreaming || !sessionInteractive}
                       disabled={isStreaming || !narrationDone || !sessionInteractive}
                       gameState={gameState}
                       timeOfDay={gameSnapshot?.time ?? metaTime ?? null}
@@ -6886,6 +6890,7 @@ export function GameSurface({
                       onMove={handleMapMove}
                       selectedPosition={viewedMapIsActive ? (pendingMapMove?.position ?? null) : null}
                       onGenerateMap={handleGenerateMap}
+                      generateMapDisabled={isStreaming || !sessionInteractive}
                       disabled={isStreaming || !narrationDone || !sessionInteractive}
                       gameState={gameState}
                       timeOfDay={gameSnapshot?.time ?? metaTime ?? null}

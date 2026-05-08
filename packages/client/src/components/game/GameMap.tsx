@@ -374,6 +374,7 @@ interface GameMapProps {
   onMove: (position: { x: number; y: number } | string) => void;
   selectedPosition?: { x: number; y: number } | string | null;
   onGenerateMap?: () => void;
+  generateMapDisabled?: boolean;
   /** Disable interactive elements (e.g. during narration playback) */
   disabled?: boolean;
   /** Current game state — shown as icon left of the location name */
@@ -429,6 +430,7 @@ export function GameMapPanel({
   onMove,
   selectedPosition,
   onGenerateMap,
+  generateMapDisabled,
   disabled,
   gameState,
   timeOfDay,
@@ -571,7 +573,7 @@ export function GameMapPanel({
             showPartyPosition={activeMap}
             zoom={mapZoom}
             topLeftAction={
-              onGenerateMap ? <MapGenerateButton onGenerateMap={onGenerateMap} disabled={disabled} /> : null
+              onGenerateMap ? <MapGenerateButton onGenerateMap={onGenerateMap} disabled={generateMapDisabled} /> : null
             }
             topRightAction={zoomControls}
           />
@@ -584,7 +586,7 @@ export function GameMapPanel({
             showPartyPosition={activeMap}
             zoom={mapZoom}
             topLeftAction={
-              onGenerateMap ? <MapGenerateButton onGenerateMap={onGenerateMap} disabled={disabled} /> : null
+              onGenerateMap ? <MapGenerateButton onGenerateMap={onGenerateMap} disabled={generateMapDisabled} /> : null
             }
             topRightAction={zoomControls}
           />
@@ -604,6 +606,7 @@ interface MobileMapButtonProps {
   onMove: (position: { x: number; y: number } | string) => void;
   selectedPosition?: { x: number; y: number } | string | null;
   onGenerateMap?: () => void;
+  generateMapDisabled?: boolean;
   disabled?: boolean;
   gameState?: GameActiveState;
   timeOfDay?: string | null;
@@ -621,6 +624,7 @@ export function MobileMapButton({
   onMove,
   selectedPosition,
   onGenerateMap,
+  generateMapDisabled,
   disabled,
   gameState,
   timeOfDay,
@@ -798,7 +802,7 @@ export function MobileMapButton({
                     onGenerateMap ? (
                       <MapGenerateButton
                         onGenerateMap={onGenerateMap}
-                        disabled={disabled}
+                        disabled={generateMapDisabled}
                         onAfterGenerate={() => {
                           setOpen(false);
                           setSelectedNode(null);
@@ -824,7 +828,7 @@ export function MobileMapButton({
                     onGenerateMap ? (
                       <MapGenerateButton
                         onGenerateMap={onGenerateMap}
-                        disabled={disabled}
+                        disabled={generateMapDisabled}
                         onAfterGenerate={() => {
                           setOpen(false);
                           setSelectedNode(null);
