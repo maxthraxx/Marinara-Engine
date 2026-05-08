@@ -30,9 +30,11 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
 
-# Install all dependencies (including dev for building)
+# Install all dependencies needed for building, skipping optional local-model
+# packages so onnxruntime-node cannot run its GPU postinstall in Lite builds.
 RUN --mount=type=cache,target=/app/.pnpm-store \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile --no-optional --ignore-scripts && \
+    pnpm rebuild esbuild
 
 # Copy source code
 COPY tsconfig.base.json ./
@@ -62,21 +64,9 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
 
-# Install production deps only, then strip non-core native modules.
+# Install production deps only without optional local-model packages.
 RUN --mount=type=cache,target=/app/.pnpm-store \
-    pnpm install --frozen-lockfile --prod && \
-    # ── Remove onnxruntime (native + WASM) ──
-    rm -rf /app/node_modules/.pnpm/onnxruntime-node@* \
-           /app/node_modules/.pnpm/onnxruntime-web@* \
-           /app/node_modules/.pnpm/onnxruntime-common@* \
-           /app/node_modules/onnxruntime-node \
-           /app/node_modules/onnxruntime-web \
-           /app/node_modules/onnxruntime-common && \
-    # ── Remove @huggingface/transformers (embedding model runtime) ──
-    rm -rf /app/node_modules/.pnpm/@huggingface+transformers@* \
-           /app/node_modules/@huggingface && \
-    # ── Sweep leftover native addons ──
-    find /app/node_modules/.pnpm -name '*.node' -path '*onnxruntime*' -delete 2>/dev/null; true
+    pnpm install --frozen-lockfile --prod --no-optional --ignore-scripts
 
 # Archive node_modules preserving pnpm symlinks — Docker COPY
 # dereferences them which would break module resolution.
