@@ -4838,30 +4838,37 @@ export function GameSurface({
         // any failure the emoji-fallback renderer in GameCombatUI takes over
         // and we proceed without retrying.
         if (chatMeta.enableSpriteGeneration && combatants.enemies.length > 0) {
+          // Build two lookups for the LLM's portrait prompts:
+          //   - by lowercased name (handles reordering, the schema's documented contract)
+          //   - by index (recovers the prompt when the LLM emits subtly different names
+          //     but keeps the array aligned with `enemies[]`, which is the common case)
+          // Try name first, then index — neither alone covers both failure modes.
           const enemyPromptByName = new Map<string, string>();
-          for (const ep of visuals?.enemyImagePrompts ?? []) {
-            if (ep?.name && ep?.prompt) enemyPromptByName.set(ep.name, ep.prompt);
-          }
-          const descriptionByName = new Map<string, string>();
-          for (const rawEnemy of response.combatState.enemies ?? []) {
-            if (rawEnemy?.name && rawEnemy.description) {
-              descriptionByName.set(rawEnemy.name, rawEnemy.description);
-            }
-          }
+          const enemyPromptByIndex = new Map<number, string>();
+          (visuals?.enemyImagePrompts ?? []).forEach((ep, idx) => {
+            if (!ep?.prompt) return;
+            enemyPromptByIndex.set(idx, ep.prompt);
+            if (ep.name) enemyPromptByName.set(ep.name.toLowerCase(), ep.prompt);
+          });
 
-          // Dedupe by enemy name so e.g. three "Goblin"s share one portrait.
+          // Dedupe by enemy name (case-insensitive) so e.g. three "Goblin"s share one portrait.
           const seen = new Set<string>();
           const npcsNeedingAvatars: Array<{ name: string; description: string }> = [];
-          for (const enemy of combatants.enemies) {
-            if (!enemy.name || seen.has(enemy.name)) continue;
-            seen.add(enemy.name);
+          combatants.enemies.forEach((enemy, index) => {
+            const name = enemy.name?.trim();
+            if (!name) return;
+            const dedupeKey = name.toLowerCase();
+            if (seen.has(dedupeKey)) return;
+            seen.add(dedupeKey);
+            const rawEnemy = response.combatState.enemies?.[index];
             const description = (
-              enemyPromptByName.get(enemy.name) ||
-              descriptionByName.get(enemy.name) ||
-              enemy.name
+              enemyPromptByName.get(dedupeKey) ||
+              enemyPromptByIndex.get(index) ||
+              rawEnemy?.description ||
+              name
             ).slice(0, 1000);
-            npcsNeedingAvatars.push({ name: enemy.name, description });
-          }
+            npcsNeedingAvatars.push({ name, description });
+          });
 
           if (npcsNeedingAvatars.length > 0) {
             try {
