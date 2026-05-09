@@ -329,8 +329,8 @@ export function ChatSettingsDrawer({
       const reasons: LorebookActiveReason[] = [];
       const isPinned = pinnedIds.has(lorebook.id);
 
-      if (isPinned) reasons.push("Chat");
       if (lorebook.enabled !== false) {
+        if (isPinned) reasons.push("Chat");
         if (lorebook.isGlobal) reasons.push("Global");
         if (
           lorebook.characterIds?.some((id) => chatCharIds.includes(id)) ||
