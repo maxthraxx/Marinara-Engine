@@ -118,8 +118,16 @@ async function hydrateLorebookRows(db: DB, rows: LorebookRow[]) {
   if (rows.length === 0) return [];
   const bookIds = rows.map((row) => row.id);
   const [characterRows, personaRows] = await Promise.all([
-    db.select().from(lorebookCharacterLinks).where(inArray(lorebookCharacterLinks.lorebookId, bookIds)),
-    db.select().from(lorebookPersonaLinks).where(inArray(lorebookPersonaLinks.lorebookId, bookIds)),
+    db
+      .select()
+      .from(lorebookCharacterLinks)
+      .where(inArray(lorebookCharacterLinks.lorebookId, bookIds))
+      .orderBy(asc(lorebookCharacterLinks.lorebookId), asc(lorebookCharacterLinks.characterId)),
+    db
+      .select()
+      .from(lorebookPersonaLinks)
+      .where(inArray(lorebookPersonaLinks.lorebookId, bookIds))
+      .orderBy(asc(lorebookPersonaLinks.lorebookId), asc(lorebookPersonaLinks.personaId)),
   ]);
   const characterIdsByBook = new Map<string, string[]>();
   for (const link of characterRows) {
