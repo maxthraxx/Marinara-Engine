@@ -263,7 +263,7 @@ function passesActivationGate(
   if (!passesContextualActivationGate(entry, filterContext, gameState)) return false;
   if (!ignoreTiming && !checkTiming(entry, timingState)) return false;
   if (entry.probability !== null && entry.probability < 100) {
-    if (Math.random() * 100 > entry.probability) return false;
+    if (Math.random() * 100 >= entry.probability) return false;
   }
   return true;
 }
