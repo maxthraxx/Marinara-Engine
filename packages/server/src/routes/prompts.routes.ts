@@ -358,6 +358,9 @@ export async function promptsRoutes(app: FastifyInstance) {
           : undefined,
       lorebookTokenBudget:
         typeof chatMeta.lorebookTokenBudget === "number" ? chatMeta.lorebookTokenBudget : undefined,
+      generationTriggers: Array.isArray(chatMeta.generationTriggers)
+        ? (chatMeta.generationTriggers as string[])
+        : undefined,
       previewOnly: true,
     };
 
