@@ -118,7 +118,7 @@ const CREATE_TABLES: string[] = [
     updated_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS lorebook_character_links (
-    id TEXT NOT KEY NOT NULL,
+    id TEXT PRIMARY KEY NOT NULL,
     lorebook_id TEXT NOT NULL REFERENCES lorebooks(id) ON DELETE CASCADE,
     character_id TEXT NOT NULL,
     created_at TEXT NOT NULL
