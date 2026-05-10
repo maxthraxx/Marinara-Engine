@@ -683,7 +683,7 @@ export function buildGmFormatReminder(
       : []),
     `- Keep each character's vocabulary, grammar, and cadence distinct, shaped by personality and mood.`,
     `- Pace the plot without rushing it, allowing character moments between developments.`,
-    `- ZERO TOLERANCE FOR AI SLOP IN YOUR WRITING! Absolutely NO: "doesn't X, doesn't Y", "not X, not Y," "jaw working," "mechanical precision," "ozone," "somewhere," "outside," and other overused patterns like repeated negations in your evocative prose. Replace them with creative detail, human cadence, and consequential action. Describe what does happen instead of what doesn't.`,
+    `- ZERO TOLERANCE FOR AI SLOP IN YOUR WRITING! Absolutely NO: "doesn't X, doesn't Y", "not X, not Y," "jaw working," "mechanical precision," "ozone," "somewhere," "outside," and other overused patterns like repeated negations in your evocative prose. Replace them with creative detail, human cadence, and affirmative form. Describe what does happen instead of what doesn't.`,
     `- Default expressions: neutral, happy, sad, angry, surprised, scared, disgusted, thinking, laughing, crying, blushing, smirk, embarrassed, determined, confused, sleepy.`,
     ...(customSpriteLines.length
       ? [

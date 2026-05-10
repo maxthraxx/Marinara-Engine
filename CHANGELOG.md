@@ -2,6 +2,14 @@
 
 This file is the release-notes source of truth for Marinara Engine. Reuse these entries when publishing GitHub Releases for tags in the `vX.Y.Z` format.
 
+## [Unreleased]
+
+### Fixed
+
+- Restored message number display in Conversation chats when the setting is enabled.
+- Fixed Docker images missing the optional background remover installer script, and added the Python venv runtime needed by the regular image installer.
+- Fixed Game mode image prompt review so prompt review modals can appear during first-start asset generation instead of suppressing the review flow.
+
 ## [1.5.9]
 
 ### Added

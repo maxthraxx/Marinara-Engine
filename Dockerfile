@@ -47,6 +47,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libssl3 \
       libgomp1 \
       libvulkan1 \
+      python3 \
+      python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy workspace config
@@ -70,6 +72,7 @@ COPY --from=builder /app/packages/shared/dist packages/shared/dist
 COPY --from=builder /app/packages/server/dist packages/server/dist
 COPY --from=builder /app/packages/client/dist packages/client/dist
 COPY scripts/docker-entrypoint.mjs /usr/local/bin/marinara-docker-entrypoint.mjs
+COPY scripts/install-backgroundremover.mjs scripts/install-backgroundremover.mjs
 
 # Ensure /app/data exists for runtime use (file storage, uploads, generated assets)
 RUN mkdir -p /app/data && \

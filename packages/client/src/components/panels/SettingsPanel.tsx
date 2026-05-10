@@ -3151,7 +3151,7 @@ function AdvancedSettings() {
         label="Show message numbers"
         checked={showMessageNumbers}
         onChange={setShowMessageNumbers}
-        help="Displays a message number below each avatar in roleplay chats."
+        help="Displays message numbers in roleplay and conversation chats."
       />
       <ToggleSetting
         label="Guide generations with chat input"

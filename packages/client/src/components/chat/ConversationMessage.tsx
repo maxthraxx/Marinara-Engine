@@ -253,7 +253,7 @@ interface ConversationMessageProps {
   onEditClick?: () => void;
   /** Character IDs that actually belong to this chat. Speaker-name rendering is scoped to these IDs. */
   chatCharacterIds?: string[];
-  /** 1-based ordinal position in the message list. Shown under avatar when actions visible. */
+  /** 1-based ordinal position in the message list. Shown under avatar when actions or message numbers are visible. */
   messageIndex?: number;
   messageOrderIndex?: number;
   multiSelectMode?: boolean;
@@ -294,6 +294,7 @@ export const ConversationMessage = memo(function ConversationMessage({
   const hasInput = useChatStore((s) => s.currentInput.trim().length > 0);
   const guideGenerations = useUIStore((s) => s.guideGenerations);
   const chatFontSize = useUIStore((s) => s.chatFontSize);
+  const showMessageNumbers = useUIStore((s) => s.showMessageNumbers);
   const messageTextStyle = useMemo<CSSProperties>(() => ({ fontSize: `${chatFontSize}px` }), [chatFontSize]);
   const isGuided = guideGenerations && hasInput;
   const regenerateButtonTitle = isGuided ? "Regenerate (guided)" : "Regenerate";
@@ -696,7 +697,7 @@ export const ConversationMessage = memo(function ConversationMessage({
                             </div>
                           )}
                         </div>
-                        {isFirst && (showActions || forceShowActions) && messageIndex != null && (
+                        {isFirst && (showActions || forceShowActions || showMessageNumbers) && messageIndex != null && (
                           <span className="mt-0.5 block text-center text-[0.5rem] font-medium text-[var(--muted-foreground)] select-none">
                             #{messageIndex}
                           </span>
@@ -951,7 +952,7 @@ export const ConversationMessage = memo(function ConversationMessage({
                 </div>
               )}
             </div>
-            {(showActions || forceShowActions) && messageIndex != null && (
+            {(showActions || forceShowActions || showMessageNumbers) && messageIndex != null && (
               <span className="mt-0.5 block text-center text-[0.5rem] font-medium text-[var(--muted-foreground)] select-none">
                 #{messageIndex}
               </span>

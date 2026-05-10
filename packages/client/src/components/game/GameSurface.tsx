@@ -4006,11 +4006,11 @@ export function GameSurface({
         setAssetGenerationBlocksScene(blocksScene);
         setAssetGenerationFailed(false);
 
-        // During first-start setup, slow image stacks and prompt review should never hold
-        // the Continue button hostage. Let the scene open, then install assets when ready.
+        // During first-start setup, image work should never hold the Continue button hostage.
+        // Prompt review can still open, then assets install whenever the user sends them.
         if (!blocksScene) markSceneReady();
 
-        runGameAssetGeneration(assetPayload, { allowPromptReview: blocksScene })
+        runGameAssetGeneration(assetPayload, { allowPromptReview: true })
           .then(async (res) => {
             if (res) {
               await applyGeneratedAssets(res);
@@ -7004,9 +7004,12 @@ export function GameSurface({
   // indicator instead of flashing the setup/start screens.
   if (isMessagesLoading && !needsCreation && sessionStatus !== "setup" && !isSetupActive) {
     return (
-      <div className="flex h-full items-center justify-center bg-[var(--background)] dark:bg-black/80">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-[var(--muted)]/40 border-t-[var(--foreground)]/70 dark:border-white/20 dark:border-t-white/70" />
-      </div>
+      <>
+        <div className="flex h-full items-center justify-center bg-[var(--background)] dark:bg-black/80">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-[var(--muted)]/40 border-t-[var(--foreground)]/70 dark:border-white/20 dark:border-t-white/70" />
+        </div>
+        {imagePromptReviewModal}
+      </>
     );
   }
 
@@ -7061,6 +7064,7 @@ export function GameSurface({
           onClose={() => setJsonRepairRequest(null)}
           onApplied={handleJsonRepairApplied}
         />
+        {imagePromptReviewModal}
       </>
     );
   }

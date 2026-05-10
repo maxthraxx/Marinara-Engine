@@ -103,6 +103,7 @@ COPY --from=builder /app/packages/shared/dist packages/shared/dist
 COPY --from=builder /app/packages/server/dist packages/server/dist
 COPY --from=builder /app/packages/client/dist packages/client/dist
 COPY scripts/docker-entrypoint.mjs /usr/local/bin/marinara-docker-entrypoint.mjs
+COPY scripts/install-backgroundremover.mjs scripts/install-backgroundremover.mjs
 
 # Ensure data directory exists
 RUN mkdir -p /app/data && \
