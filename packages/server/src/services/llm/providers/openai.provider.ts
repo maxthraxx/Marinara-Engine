@@ -740,10 +740,11 @@ export class OpenAIProvider extends BaseLLMProvider {
 
     if (!effectiveStream) {
       const json = await OpenAIProvider.parseJsonBody<{
-        choices: Array<{ message: Record<string, unknown> & { content: string | unknown[] } }>;
+        choices: Array<{ message: Record<string, unknown> & { content: string | unknown[] | null; refusal?: string } }>;
         usage?: ChatCompletionsUsagePayload;
       }>(response, "OpenAI chat() non-stream response");
       const msg = json.choices[0]?.message;
+      const refusal = typeof msg?.refusal === "string" && msg.refusal ? msg.refusal : "";
       const reasoningMetadata = OpenAIProvider.extractReasoningMetadata(msg);
       OpenAIProvider.emitChatCompletionsReasoning(options, reasoningMetadata);
       const reasoning = OpenAIProvider.extractReasoning(msg);
@@ -754,9 +755,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       const blocks = OpenAIProvider.extractContentBlocks(msg?.content);
       if (blocks) {
         if (!reasoning && blocks.thinking && options.onThinking) options.onThinking(blocks.thinking);
-        yield blocks.text;
+        yield blocks.text || refusal;
       } else {
-        yield (msg?.content as string) ?? "";
+        yield (typeof msg?.content === "string" ? msg.content : "") || refusal;
       }
       return OpenAIProvider.extractChatCompletionsUsage(json.usage);
     }
@@ -822,6 +823,8 @@ export class OpenAIProvider extends BaseLLMProvider {
               if (blocks.text) yield blocks.text;
             } else if (delta?.content) {
               yield delta.content as string;
+            } else if (typeof delta?.refusal === "string" && delta.refusal) {
+              yield delta.refusal;
             }
           } catch {
             // Skip malformed JSON lines
@@ -962,6 +965,10 @@ export class OpenAIProvider extends BaseLLMProvider {
       } else {
         resolvedContent = (choice?.message?.content as string) ?? null;
       }
+      // Fall back to refusal text so the user sees why the model declined
+      if (!resolvedContent && typeof choice?.message?.refusal === "string" && choice.message.refusal) {
+        resolvedContent = choice.message.refusal;
+      }
       const usage = OpenAIProvider.extractChatCompletionsUsage(json.usage);
       return {
         content: resolvedContent,
@@ -1051,6 +1058,9 @@ export class OpenAIProvider extends BaseLLMProvider {
           } else if (delta?.content) {
             content += delta.content as string;
             options.onToken?.(delta.content as string);
+          } else if (typeof delta?.refusal === "string" && delta.refusal) {
+            content += delta.refusal;
+            options.onToken?.(delta.refusal);
           }
 
           // Accumulate tool call deltas
@@ -1379,6 +1389,7 @@ export class OpenAIProvider extends BaseLLMProvider {
     const decoder = new TextDecoder();
     let buffer = "";
     let streamUsage: LLMUsage | undefined;
+    let yieldedAny = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1414,7 +1425,10 @@ export class OpenAIProvider extends BaseLLMProvider {
           switch (eventType) {
             case "response.output_text.delta": {
               const delta = parsed.delta as string | undefined;
-              if (delta) yield delta;
+              if (delta) {
+                yieldedAny = true;
+                yield delta;
+              }
               break;
             }
             case "response.reasoning_summary_text.delta": {
@@ -1425,7 +1439,10 @@ export class OpenAIProvider extends BaseLLMProvider {
             case "response.refusal.delta": {
               // Treat refusals as regular text so the user sees the message
               const delta = parsed.delta as string | undefined;
-              if (delta) yield delta;
+              if (delta) {
+                yieldedAny = true;
+                yield delta;
+              }
               break;
             }
             case "response.completed": {
@@ -1434,7 +1451,29 @@ export class OpenAIProvider extends BaseLLMProvider {
               if (resp) {
                 streamUsage = this.extractResponsesUsage(resp);
                 this.emitEncryptedReasoning(resp, options);
+                // If no text was streamed (e.g. refusal or content only in the
+                // completed payload), extract it as a last-resort fallback.
+                if (!yieldedAny) {
+                  const fallback = this.extractResponsesText(resp);
+                  if (fallback) {
+                    yieldedAny = true;
+                    yield fallback;
+                  }
+                }
               }
+              break;
+            }
+            case "response.failed": {
+              const resp = parsed.response as Record<string, unknown> | undefined;
+              const error = resp?.error as Record<string, unknown> | undefined;
+              const msg = (error?.message as string) ?? "unknown error";
+              logger.error(new Error(msg), "[OpenAI Responses] Stream ended with response.failed");
+              break;
+            }
+            case "response.incomplete": {
+              const resp = parsed.response as Record<string, unknown> | undefined;
+              const reason = (resp?.incomplete_details as Record<string, unknown>)?.reason ?? "unknown";
+              logger.warn("[OpenAI Responses] Stream ended with response.incomplete (reason=%s)", reason);
               break;
             }
             // Ignore other event types (response.created, response.in_progress, etc.)
@@ -1586,6 +1625,15 @@ export class OpenAIProvider extends BaseLLMProvider {
               break;
             }
 
+            case "response.refusal.delta": {
+              const delta = parsed.delta as string | undefined;
+              if (delta) {
+                content += delta;
+                options.onToken?.(delta);
+              }
+              break;
+            }
+
             case "response.reasoning_summary_text.delta": {
               const delta = parsed.delta as string | undefined;
               if (delta && options.onThinking) options.onThinking(delta);
@@ -1654,7 +1702,30 @@ export class OpenAIProvider extends BaseLLMProvider {
                 this.emitEncryptedReasoning(resp, options);
                 const status = resp.status as string | undefined;
                 if (status === "incomplete") finishReason = "length";
+                // Fallback: extract text/refusal from the completed response
+                // if nothing was streamed (e.g. model returned only in payload)
+                if (!content) {
+                  const fallback = this.extractResponsesText(resp);
+                  if (fallback) {
+                    content = fallback;
+                    options.onToken?.(fallback);
+                  }
+                }
               }
+              break;
+            }
+            case "response.failed": {
+              const resp = parsed.response as Record<string, unknown> | undefined;
+              const error = resp?.error as Record<string, unknown> | undefined;
+              const msg = (error?.message as string) ?? "unknown error";
+              logger.error(new Error(msg), "[OpenAI Responses] chatCompleteResponses stream failed");
+              break;
+            }
+            case "response.incomplete": {
+              const resp = parsed.response as Record<string, unknown> | undefined;
+              const reason = (resp?.incomplete_details as Record<string, unknown>)?.reason ?? "unknown";
+              logger.warn("[OpenAI Responses] chatCompleteResponses stream incomplete (reason=%s)", reason);
+              finishReason = "length";
               break;
             }
           }
@@ -1685,7 +1756,11 @@ export class OpenAIProvider extends BaseLLMProvider {
 
     // Otherwise walk the output items
     const output = json.output as Array<Record<string, unknown>> | undefined;
-    if (!output) return "";
+    if (!output) {
+      // Fall back to top-level refusal field
+      if (typeof json.refusal === "string" && json.refusal) return json.refusal;
+      return "";
+    }
 
     let text = "";
     for (const item of output) {
@@ -1695,10 +1770,16 @@ export class OpenAIProvider extends BaseLLMProvider {
           for (const part of content) {
             if (part.type === "output_text" && typeof part.text === "string") {
               text += part.text;
+            } else if (part.type === "refusal" && typeof part.refusal === "string") {
+              text += part.refusal;
             }
           }
         }
       }
+    }
+    // Fall back to top-level refusal if no text was found in output items
+    if (!text && typeof json.refusal === "string" && json.refusal) {
+      text = json.refusal;
     }
     return text;
   }
