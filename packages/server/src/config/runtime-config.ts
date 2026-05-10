@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import { logger as sharedLogger } from "../lib/logger.js";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,8 @@ const __dirname = dirname(__filename);
 
 const SERVER_ROOT = resolve(__dirname, "../..");
 const MONOREPO_ROOT = resolve(__dirname, "../../../..");
+const STARTUP_DATA_DIR = process.env.DATA_DIR;
+const DEFAULT_DOCKER_DATA_DIR = "/app/data";
 const DEFAULT_PORT = 7860;
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_DATA_DIR = resolve(SERVER_ROOT, "data");
@@ -23,7 +25,21 @@ let envLoaded = false;
 let envFileKeys = new Set<string>();
 
 export function getEnvFilePath() {
-  return resolve(MONOREPO_ROOT, ".env");
+  const explicit = normalizeEnvValue(process.env.MARINARA_ENV_FILE);
+  if (explicit) return resolveFromRepoRoot(explicit);
+
+  const repoEnvPath = resolve(MONOREPO_ROOT, ".env");
+  if (!isDockerRuntime()) return repoEnvPath;
+
+  const dataEnvPath = resolve(
+    resolveFromServerRoot(normalizeEnvValue(STARTUP_DATA_DIR) ?? DEFAULT_DOCKER_DATA_DIR),
+    ".env",
+  );
+  if (existsSync(repoEnvPath) && !existsSync(dataEnvPath)) {
+    return repoEnvPath;
+  }
+
+  return dataEnvPath;
 }
 
 const EMPTY_ENV_HEADER = `# Marinara Engine - runtime configuration.
@@ -33,7 +49,7 @@ const EMPTY_ENV_HEADER = `# Marinara Engine - runtime configuration.
 `;
 
 /**
- * Create an empty .env at the repo root if one doesn't exist yet so users
+ * Create an empty .env at the runtime config path if one doesn't exist so users
  * can find the file without having to copy .env.example first. The write
  * is best-effort: read-only filesystems (some Docker images, locked-down
  * installs) silently fall back to "no .env" mode, which dotenv handles
@@ -42,6 +58,7 @@ const EMPTY_ENV_HEADER = `# Marinara Engine - runtime configuration.
 function ensureEnvFileExists(envPath: string) {
   if (existsSync(envPath)) return;
   try {
+    mkdirSync(dirname(envPath), { recursive: true });
     // 'wx' = exclusive create. Race-safe across concurrent startups: a second
     // process that loses the race gets EEXIST, which we ignore.
     writeFileSync(envPath, EMPTY_ENV_HEADER, { flag: "wx" });
@@ -162,6 +179,14 @@ function isDisabledFlag(value: string | undefined | null) {
 
 function isEnabledFlag(value: string | undefined | null) {
   return ["1", "true", "yes", "on"].includes((value ?? "").trim().toLowerCase());
+}
+
+function isDockerRuntime() {
+  return (
+    isEnabledFlag(process.env.MARINARA_DOCKER) ||
+    normalizeEnvValue(process.env.MARINARA_DOCKER_USER) !== null ||
+    normalizeEnvValue(process.env.MARINARA_DOCKER_GROUP) !== null
+  );
 }
 
 function parseCsv(value: string | undefined | null): string[] {

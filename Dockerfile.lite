@@ -112,9 +112,11 @@ RUN mkdir -p /app/data && \
 # Runtime feature flag
 ENV MARINARA_LITE=true
 ENV DATA_DIR=/app/data
+ENV FILE_STORAGE_DIR=/app/data/storage
 ENV PORT=7860
 ENV HOST=0.0.0.0
 ENV NODE_ENV=production
+ENV MARINARA_DOCKER=true
 ENV MARINARA_DOCKER_USER=nonroot
 ENV MARINARA_DOCKER_GROUP=nonroot
 

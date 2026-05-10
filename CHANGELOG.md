@@ -8,7 +8,9 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 - Restored message number display in Conversation chats when the setting is enabled.
 - Fixed Docker images missing the optional background remover installer script, and added the Python venv runtime needed by the regular image installer.
+- Fixed fresh Docker installs so runtime `.env` creation and file-native storage stay inside the persistent `/app/data` volume.
 - Fixed Game mode image prompt review so prompt review modals can appear during first-start asset generation instead of suppressing the review flow.
+- Fixed Linux NVIDIA local-runtime setup in Docker by falling back to the official Vulkan/CPU llama.cpp builds when Linux CUDA release assets are unavailable.
 
 ## [1.5.9]
 

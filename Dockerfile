@@ -80,6 +80,7 @@ RUN mkdir -p /app/data && \
 
 # Point the server at /app/data regardless of working directory
 ENV DATA_DIR=/app/data
+ENV FILE_STORAGE_DIR=/app/data/storage
 
 # File-native storage + user uploads live in /app/data at runtime.
 # Mount a volume here for persistence.
@@ -89,6 +90,7 @@ VOLUME /app/data
 ENV PORT=7860
 ENV HOST=0.0.0.0
 ENV NODE_ENV=production
+ENV MARINARA_DOCKER=true
 ENV MARINARA_DOCKER_USER=node
 ENV MARINARA_DOCKER_GROUP=node
 EXPOSE 7860

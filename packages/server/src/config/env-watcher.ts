@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // .env hot-reload watcher
 // ──────────────────────────────────────────────
-// Polls the monorepo-root .env file and re-applies changes to process.env
+// Polls the active runtime .env file and re-applies changes to process.env
 // without requiring a server restart. Most security middleware (basic-auth,
 // IP allowlist, CSRF, admin secret, etc.) reads via getter functions in
 // runtime-config.ts, so updates take effect on the next request.
@@ -33,6 +33,7 @@ const RESTART_REQUIRED_KEYS = new Set<string>([
   "FILE_STORAGE_DIR",
   "DATABASE_URL",
   "DATABASE_DRIVER",
+  "MARINARA_ENV_FILE",
   "ENCRYPTION_KEY",
   "TZ",
   "AUTO_OPEN_BROWSER",
