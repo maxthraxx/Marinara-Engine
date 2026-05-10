@@ -536,6 +536,35 @@ async function readPlaybackSnapshot(credentials: SpotifyCredentialsResult): Prom
   };
 }
 
+// When no playback session is active, /me/player returns 204 and the snapshot
+// has no device_id. Fall back to /me/player/devices so the SDK mini-player (or
+// any other idle-but-connected device) can be targeted directly — otherwise
+// /me/player/play with no device_id 404s with NO_ACTIVE_DEVICE.
+async function findAvailablePlaybackDevice(
+  credentials: SpotifyCredentialsResult,
+): Promise<{ deviceId: string; deviceName: string } | null> {
+  const res = await fetchSpotifyApi(credentials, "/me/player/devices", {
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  if (!res || !res.ok) return null;
+  const data = (await res.json().catch(() => null)) as {
+    devices?: Array<{ id?: string | null; name?: string; is_active?: boolean; is_restricted?: boolean }>;
+  } | null;
+  const devices = data?.devices ?? [];
+
+  const pick = (
+    predicate: (d: { id?: string | null; name?: string; is_active?: boolean; is_restricted?: boolean }) => boolean,
+  ) => devices.find((d) => typeof d.id === "string" && d.id && !d.is_restricted && predicate(d));
+
+  const candidate =
+    pick((d) => d.is_active === true) ??
+    pick((d) => d.name === "Marinara Engine") ??
+    pick(() => true);
+
+  if (!candidate?.id) return null;
+  return { deviceId: candidate.id, deviceName: candidate.name ?? "Spotify device" };
+}
+
 async function setSpotifyRepeat(
   credentials: SpotifyCredentialsResult,
   state: "off" | "track" | "context",
@@ -571,9 +600,26 @@ export async function playGameSpotifyTrack(args: {
 
   const credentials = await getCredentials(args.storage);
   const before = await readPlaybackSnapshot(credentials);
-  const query = before?.deviceId ? `?${new URLSearchParams({ device_id: before.deviceId }).toString()}` : "";
+  let targetDeviceId = before?.deviceId ?? null;
+  let targetDeviceName = before?.deviceName ?? null;
+  if (!targetDeviceId) {
+    const fallback = await findAvailablePlaybackDevice(credentials);
+    if (fallback) {
+      targetDeviceId = fallback.deviceId;
+      targetDeviceName = fallback.deviceName;
+    }
+  }
 
-  await setSpotifyRepeat(credentials, "off", before?.deviceId ?? null).catch((err) => {
+  if (!targetDeviceId) {
+    spotifyError(
+      404,
+      "No Spotify device is available. Enable the Spotify mini player in Settings, or open Spotify on another device, then try again.",
+    );
+  }
+
+  const query = `?${new URLSearchParams({ device_id: targetDeviceId }).toString()}`;
+
+  await setSpotifyRepeat(credentials, "off", targetDeviceId).catch((err) => {
     logger.debug(err, "[spotify/game] Failed to clear repeat before scene track playback");
   });
 
@@ -588,10 +634,10 @@ export async function playGameSpotifyTrack(args: {
   }
 
   await wait(SPOTIFY_PLAYBACK_SETTLE_MS);
-  let repeatState = await setSpotifyRepeat(credentials, "track", before?.deviceId ?? null, 3);
+  let repeatState = await setSpotifyRepeat(credentials, "track", targetDeviceId, 3);
   let current = await readPlaybackSnapshot(credentials);
   if (current?.trackUri === args.track.uri && current.repeatState !== "track") {
-    repeatState = await setSpotifyRepeat(credentials, "track", current.deviceId ?? before?.deviceId ?? null, 3);
+    repeatState = await setSpotifyRepeat(credentials, "track", current.deviceId ?? targetDeviceId, 3);
     current = await readPlaybackSnapshot(credentials);
   }
 
@@ -599,6 +645,6 @@ export async function playGameSpotifyTrack(args: {
     success: true,
     track: args.track,
     repeatState: current?.repeatState ?? repeatState ?? null,
-    device: current?.deviceName ?? before?.deviceName ?? null,
+    device: current?.deviceName ?? targetDeviceName,
   };
 }

@@ -2824,7 +2824,7 @@ export function GameSurface({
         await queryClient.invalidateQueries({ queryKey: ["spotify", "player"] });
       } catch (error) {
         console.warn("[spotify/game] Failed to play scene track:", error);
-        toast.error("Spotify scene music failed.");
+        toast.error(error instanceof Error ? error.message : "Spotify scene music failed.");
       } finally {
         setSpotifyRetryPending(false);
       }
