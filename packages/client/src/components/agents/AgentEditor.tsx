@@ -1266,7 +1266,27 @@ export function AgentEditor() {
                           expired: false,
                           redirectUri: spotifyStatus?.redirectUri ?? null,
                         });
-                        qc.invalidateQueries({ queryKey: agentKeys.all });
+                        // Strip tokens from the cached agent row synchronously
+                        // so a Save click racing with the pending refetch can't
+                        // resurrect them via handleSave's preservation path.
+                        qc.setQueryData<AgentConfigRow[] | undefined>(agentKeys.all, (rows) =>
+                          rows?.map((row) => {
+                            if (row.id !== dbConfig.id) return row;
+                            const parsed: Record<string, unknown> =
+                              typeof row.settings === "string"
+                                ? JSON.parse(row.settings)
+                                : ((row.settings as unknown as Record<string, unknown>) ?? {});
+                            const {
+                              spotifyAccessToken: _a,
+                              spotifyRefreshToken: _b,
+                              spotifyExpiresAt: _c,
+                              spotifyScope: _d,
+                              ...rest
+                            } = parsed;
+                            return { ...row, settings: JSON.stringify(rest) };
+                          }),
+                        );
+                        await qc.invalidateQueries({ queryKey: agentKeys.all });
                       }}
                       className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/50 transition-colors hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20"
                     >
@@ -1333,7 +1353,9 @@ export function AgentEditor() {
                               setSpotifyPasteOpen(false);
                               setSpotifyPasteValue("");
                               setSpotifyPasteError(null);
-                              qc.invalidateQueries({ queryKey: agentKeys.all });
+                              // Refetch so the cached settings include the new
+                              // tokens before any subsequent handleSave runs.
+                              await qc.invalidateQueries({ queryKey: agentKeys.all });
                             }
                           } catch {
                             // keep polling
@@ -1434,7 +1456,9 @@ export function AgentEditor() {
                                 setSpotifyConnecting(false);
                                 setSpotifyPasteOpen(false);
                                 setSpotifyPasteValue("");
-                                qc.invalidateQueries({ queryKey: agentKeys.all });
+                                // Refetch so the cached settings include the
+                                // new tokens before any subsequent handleSave.
+                                await qc.invalidateQueries({ queryKey: agentKeys.all });
                               }
                             } catch (err) {
                               setSpotifyPasteError(err instanceof Error ? err.message : "Submission failed");
