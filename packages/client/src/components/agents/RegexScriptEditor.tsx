@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
-import type { RegexPlacement } from "@marinara-engine/shared";
+import { applyRegexReplacement, type RegexPlacement } from "@marinara-engine/shared";
 
 // ═══════════════════════════════════════════════
 //  Placement metadata
@@ -148,7 +148,7 @@ export function RegexScriptEditor() {
     if (!testInput || !localFindRegex || regexError) return testInput;
     try {
       const re = new RegExp(localFindRegex, localFlags);
-      let result = testInput.replace(re, localReplaceString);
+      let result = applyRegexReplacement(testInput, re, localReplaceString);
       // Apply trim strings
       for (const trim of localTrimStrings) {
         if (trim) result = result.split(trim).join("");
@@ -397,7 +397,9 @@ export function RegexScriptEditor() {
           <FieldGroup
             label="Replace With"
             icon={<Info size="0.875rem" className="text-orange-400" />}
-            help="The replacement string. Supports capture groups: $1, $2, etc. Leave empty to delete matched text."
+            help={
+              "The replacement string. Supports capture groups ($1, $2), named groups ($<name>), and case transforms like \\u$1, \\U$1\\E, \\l$1, and \\L$1\\E. Leave empty to delete matched text."
+            }
           >
             <input
               value={localReplaceString}
@@ -627,7 +629,9 @@ export function RegexScriptEditor() {
                 Scripts run in order (lowest first). Use capture groups (
                 <code className="rounded bg-[var(--secondary)] px-1">$1</code>,{" "}
                 <code className="rounded bg-[var(--secondary)] px-1">$2</code>) in the replacement to reference matched
-                groups.
+                groups. Use <code className="rounded bg-[var(--secondary)] px-1">\u$1</code> to capitalize the first
+                character of a capture, or <code className="rounded bg-[var(--secondary)] px-1">\U$1\E</code> to
+                uppercase a capture.
               </p>
               <p>
                 <strong className="text-[var(--foreground)]">Examples:</strong>
@@ -643,6 +647,10 @@ export function RegexScriptEditor() {
                 <li>
                   Censor words: <code className="rounded bg-[var(--secondary)] px-1">\\bbadword\\b</code> →{" "}
                   <code className="rounded bg-[var(--secondary)] px-1">***</code>
+                </li>
+                <li>
+                  Capitalize replacement:{" "}
+                  <code className="rounded bg-[var(--secondary)] px-1">\U$1</code>
                 </li>
               </ul>
               {dbRow && (

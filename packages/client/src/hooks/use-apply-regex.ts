@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useCallback, useMemo } from "react";
 import { useRegexScripts, type RegexScriptRow } from "./use-regex-scripts";
-import type { RegexPlacement } from "@marinara-engine/shared";
+import { applyRegexReplacement, type RegexPlacement } from "@marinara-engine/shared";
 
 /**
  * Parses a RegexScriptRow from DB into a usable form.
@@ -58,7 +58,7 @@ function applyScripts(
 
     try {
       const re = new RegExp(script.findRegex, script.flags);
-      result = result.replace(re, script.replaceString);
+      result = applyRegexReplacement(result, re, script.replaceString);
       // Apply trim strings
       for (const trim of script.trimStrings) {
         if (trim) result = result.split(trim).join("");

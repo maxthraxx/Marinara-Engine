@@ -70,7 +70,7 @@ function redactSensitiveValue(value: unknown): unknown {
   return redacted;
 }
 
-function formatToolPayloadForLog(payload: string, maxLength = 400): string {
+export function formatToolPayloadForLog(payload: string, maxLength = 400): string {
   const truncate = (value: string) => (value.length > maxLength ? `${value.slice(0, maxLength)}...` : value);
   const scrubSensitiveText = (value: string) =>
     value
@@ -318,6 +318,25 @@ export async function executeAgentBatch(
 ): Promise<AgentResult[]> {
   if (configs.length === 0) return [];
   const isolatedConfigs = configs.filter(shouldRunAgentIndividually);
+  if (isolatedConfigs.length === configs.length) {
+    logger.info(
+      "[agent-batch] Running %d isolated agent(s) individually: [%s]",
+      isolatedConfigs.length,
+      isolatedConfigs.map((c) => c.type).join(", "),
+    );
+    const isolatedSettled = await Promise.allSettled(
+      isolatedConfigs.map((config) => executeAgent(config, context, provider, model)),
+    );
+    return isolatedSettled.map((entry, index) =>
+      entry.status === "fulfilled"
+        ? entry.value
+        : makeError(
+            isolatedConfigs[index]!,
+            entry.reason instanceof Error ? entry.reason.message : "Agent execution failed",
+            Date.now(),
+          ),
+    );
+  }
   if (isolatedConfigs.length > 0 && isolatedConfigs.length < configs.length) {
     logger.info(
       "[agent-batch] Running %d compact agent(s) outside batch: [%s]",
@@ -593,7 +612,9 @@ function makeError(config: AgentExecConfig, error: string, startTime: number): A
 }
 
 function shouldRunAgentIndividually(config: Pick<AgentExecConfig, "type">): boolean {
-  return config.type === "expression";
+  // These agents either need compact prompts or carry large private extras that
+  // must not be merged into unrelated batched agent requests.
+  return config.type === "expression" || config.type === "lorebook-keeper";
 }
 
 function buildStandardAgentMessages(config: AgentExecConfig, template: string, context: AgentContext): ChatMessage[] {
@@ -873,19 +894,12 @@ function buildAgentMessages(
 
 /**
  * Build the lore block for the system message from the agent context.
- * Contains lorebook entries, characters, and persona.
+ * Contains character and persona context. Runtime lorebook entries are
+ * intentionally excluded to keep non-lorebook agent prompts compact.
  */
 function buildLoreBlock(context: AgentContext): string {
   const parts: string[] = [];
   parts.push(`<lore>`);
-
-  if (context.activatedLorebookEntries && context.activatedLorebookEntries.length > 0) {
-    parts.push(`<lorebook_entries>`);
-    for (const entry of context.activatedLorebookEntries) {
-      parts.push(`[${entry.tag}] ${entry.name}: ${entry.content}`);
-    }
-    parts.push(`</lorebook_entries>`);
-  }
 
   if (context.characters.length > 0) {
     parts.push(`<characters>`);
@@ -1025,7 +1039,7 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
     parts.push(`</spotify_dj_constraints>`);
   }
 
-  if (context.memory._existingLorebookEntries) {
+  if (agentTypes.includes("lorebook-keeper") && context.memory._existingLorebookEntries) {
     const rawEntries = context.memory._existingLorebookEntries as Array<
       string | { id?: string; name?: string; content?: string; keys?: string[]; locked?: boolean }
     >;

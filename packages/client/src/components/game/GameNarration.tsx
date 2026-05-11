@@ -45,6 +45,7 @@ import {
 import type { SpriteInfo } from "../../hooks/use-characters";
 import { useTranslate } from "../../hooks/use-translate";
 import { useTTSConfig } from "../../hooks/use-tts";
+import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useGameAssetStore } from "../../stores/game-asset.store";
 import { useGameModeStore } from "../../stores/game-mode.store";
 import { useUIStore } from "../../stores/ui.store";
@@ -53,7 +54,7 @@ import { animateTextHtml } from "./AnimatedText";
 import { ttsService } from "../../lib/tts-service";
 import { getOrCreateCachedTTSAudioBlob } from "../../lib/tts-audio-cache";
 import { resolveTTSVoiceForSpeaker, splitTTSChunks, ttsConfigMatchesSpeaker } from "../../lib/tts-dialogue";
-import type { PartyDialogueLine, Message, TTSConfig, GameNpc } from "@marinara-engine/shared";
+import type { PartyDialogueLine, Message, TTSConfig, GameNpc, SkillCheckResult } from "@marinara-engine/shared";
 import type { CharacterMap, PersonaInfo } from "../chat/chat-area.types";
 
 /** Build inline style for a color that may be a plain color or a CSS gradient. */
@@ -810,6 +811,19 @@ function formatSkillCheckLogContent(message: NarrationMessage): NarrationSegment
   const skillChecks = parseGmTags(message.content || "").skillChecks;
   if (skillChecks.length === 0) return [];
 
+  const formatResult = (result: SkillCheckResult): string => {
+    const label = result.criticalSuccess
+      ? "Critical success"
+      : result.criticalFailure
+        ? "Critical failure"
+        : result.success
+          ? "Success"
+          : "Failure";
+    const modifier = result.modifier === 0 ? "" : ` ${result.modifier > 0 ? "+" : ""}${result.modifier}`;
+    const rollMode = result.rollMode !== "normal" ? ` (${result.rollMode})` : "";
+    return `${result.skill} check (DC ${result.dc}): [${result.rolls.join(", ")}]${modifier}${rollMode} = ${result.total}. ${label}.`;
+  };
+
   return skillChecks.map((skillCheck, index) => {
     const result = skillCheck.resolvedResult;
     if (!result) {
@@ -820,20 +834,10 @@ function formatSkillCheckLogContent(message: NarrationMessage): NarrationSegment
       };
     }
 
-    const label = result.criticalSuccess
-      ? "Critical success"
-      : result.criticalFailure
-        ? "Critical failure"
-        : result.success
-          ? "Success"
-          : "Failure";
-    const modifier = result.modifier === 0 ? "" : ` ${result.modifier > 0 ? "+" : ""}${result.modifier}`;
-    const rollMode = result.rollMode !== "normal" ? ` (${result.rollMode})` : "";
-
     return {
       id: `${message.id}-skill-check-log-${index}`,
       type: "system",
-      content: `${result.skill} check (DC ${result.dc}): [${result.rolls.join(", ")}]${modifier}${rollMode} = ${result.total}. ${label}.`,
+      content: formatResult(result),
     };
   });
 }
@@ -899,6 +903,7 @@ export function GameNarration({
   onMaxNavOffsetChange,
 }: GameNarrationProps) {
   const { translations, translating } = useTranslate();
+  const { applyToAIOutput } = useApplyRegex();
   const [activeIndex, setActiveIndex] = useState(0);
   const [visibleChars, setVisibleChars] = useState(0);
   const [logsOpen, setLogsOpen] = useState(false);
@@ -1002,6 +1007,13 @@ export function GameNarration({
 
   const gameNpcs = useGameModeStore((s) => s.npcs);
   const sourceMessagesById = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages]);
+  const messageDepthById = useMemo(() => {
+    const byId = new Map<string, number>();
+    for (let index = messages.length - 1, depth = 0; index >= 0; index--, depth++) {
+      byId.set(messages[index]!.id, depth);
+    }
+    return byId;
+  }, [messages]);
 
   const speakerAvatarInfos = useMemo(() => {
     const byName = new Map<string, SpeakerAvatarInfo>();
@@ -1224,6 +1236,47 @@ export function GameNarration({
     [fallbackMacroCharacter, macroCharacters],
   );
 
+  const applyOutputRegexForSource = useCallback(
+    (text: string, sourceMessageId: string | null | undefined, sourceRole: Message["role"] | null | undefined) => {
+      if (sourceRole !== "assistant" && sourceRole !== "narrator") return text;
+      return applyToAIOutput(text, sourceMessageId ? messageDepthById.get(sourceMessageId) : undefined);
+    },
+    [applyToAIOutput, messageDepthById],
+  );
+
+  const prepareSegmentText = useCallback(
+    (
+      text: string,
+      speaker: string | null | undefined,
+      sourceMessageId: string | null | undefined,
+      sourceRole: Message["role"] | null | undefined,
+    ) => {
+      const regexApplied = applyOutputRegexForSource(text, sourceMessageId, sourceRole);
+      return resolveMessageMacros(regexApplied, {
+        userName: personaInfo?.name || "You",
+        persona: personaInfo,
+        primaryCharacter: resolveMacroCharacter(speaker),
+        characters: macroCharacters,
+      });
+    },
+    [applyOutputRegexForSource, macroCharacters, personaInfo, resolveMacroCharacter],
+  );
+
+  const prepareDisplaySegment = useCallback(
+    (segment: NarrationSegment): NarrationSegment => {
+      const regexSourceRole = segment.type === "system" ? "system" : segment.sourceRole;
+      const content = prepareSegmentText(segment.content, segment.speaker, segment.sourceMessageId, regexSourceRole);
+      const readableContent =
+        segment.readableContent == null
+          ? segment.readableContent
+          : prepareSegmentText(segment.readableContent, segment.speaker, segment.sourceMessageId, regexSourceRole);
+
+      if (content === segment.content && readableContent === segment.readableContent) return segment;
+      return { ...segment, content, readableContent };
+    },
+    [prepareSegmentText],
+  );
+
   // segmentOriginalIndices[i] = the unfiltered parseNarrationSegments index for segments[i],
   // or -1 for non-editable entries (player messages).
   const segmentOriginalIndices = useRef<number[]>([]);
@@ -1272,7 +1325,7 @@ export function GameNarration({
       partySegStartRef.current = -1;
       partyLogBaseCutoffRef.current = [];
       partyLogCutoffRef.current = [];
-      return result;
+      return result.map(prepareDisplaySegment);
     }
 
     // Prepend the user's action as a player dialogue segment when we're streaming or just got a response
@@ -1351,6 +1404,7 @@ export function GameNarration({
           }
           const pcMsgId = partyChatMessageId ?? null;
           const currentPartySegmentIndex = partyEditIdx;
+          const partySourceRole = pcMsgId ? (sourceMessagesById.get(pcMsgId)?.role ?? "assistant") : "assistant";
           // Remap action → plain narration
           if (line.type === "action") {
             partyEditIdx++;
@@ -1361,7 +1415,7 @@ export function GameNarration({
               content: line.content,
               sourceMessageId: pcMsgId,
               sourceSegmentIndex: currentPartySegmentIndex,
-              sourceRole: pcMsgId ? (sourceMessagesById.get(pcMsgId)?.role ?? "assistant") : null,
+              sourceRole: partySourceRole,
             });
             origIndices.push(-1);
             editInfos.push(pcMsgId ? { messageId: pcMsgId, segmentIndex: currentPartySegmentIndex } : null);
@@ -1391,7 +1445,7 @@ export function GameNarration({
             whisperTarget: line.target,
             sourceMessageId: pcMsgId,
             sourceSegmentIndex: currentPartySegmentIndex,
-            sourceRole: pcMsgId ? (sourceMessagesById.get(pcMsgId)?.role ?? "assistant") : null,
+            sourceRole: partySourceRole,
           });
           origIndices.push(-1);
           editInfos.push(pcMsgId ? { messageId: pcMsgId, segmentIndex: currentPartySegmentIndex } : null);
@@ -1424,18 +1478,10 @@ export function GameNarration({
       }
     }
 
-    // Resolve display macros on every segment's content so downstream
-    // renderers (formatNarration / animateTextHtml) receive final text.
-    const userName = personaInfo?.name || "You";
+    // Apply display regex scripts and resolve macros on every segment's content
+    // so downstream renderers (formatNarration / animateTextHtml) receive final text.
     for (let i = 0; i < result.length; i++) {
-      const seg = result[i]!;
-      const content = resolveMessageMacros(seg.content, {
-        userName,
-        persona: personaInfo,
-        primaryCharacter: resolveMacroCharacter(seg.speaker),
-        characters: macroCharacters,
-      });
-      if (content !== seg.content) result[i] = { ...seg, content };
+      result[i] = prepareDisplaySegment(result[i]!);
     }
 
     segmentOriginalIndices.current = origIndices;
@@ -1455,8 +1501,7 @@ export function GameNarration({
     partyChatInput,
     partyChatInputMessageId,
     partyChatMessageId,
-    macroCharacters,
-    resolveMacroCharacter,
+    prepareDisplaySegment,
     segmentEdits,
     segmentDeletes,
     sourceMessagesById,
@@ -1476,15 +1521,6 @@ export function GameNarration({
   const sideLineMap = useMemo(() => {
     const map = new Map<number, GameSideLine[]>();
 
-    const userName = personaInfo?.name || "You";
-    const subMacros = (text: string, speaker: string | null): string =>
-      resolveMessageMacros(text, {
-        userName,
-        persona: personaInfo,
-        primaryCharacter: resolveMacroCharacter(speaker),
-        characters: macroCharacters,
-      });
-
     // 1. Collect inline side/extra from GM narration
     if (latestAssistant) {
       const allSegs = parseNarrationSegments(latestAssistant, speakerColors);
@@ -1501,7 +1537,7 @@ export function GameNarration({
           arr.push({
             character: seg.speaker ?? "",
             type: seg.partyType,
-            content: subMacros(seg.content, seg.speaker ?? null),
+            content: prepareSegmentText(seg.content, seg.speaker ?? null, latestAssistant.id, latestAssistant.role),
             expression: seg.sprite,
             target: seg.whisperTarget,
             voiceSourceMessageId: latestAssistant.id,
@@ -1537,16 +1573,17 @@ export function GameNarration({
           continue;
         }
         if (line.type === "side" || line.type === "extra") {
+          const sourceRole = partyChatMessageId
+            ? (sourceMessagesById.get(partyChatMessageId)?.role ?? "assistant")
+            : "assistant";
           const arr = map.get(lastPartySegIdx) ?? [];
           arr.push({
             ...line,
             character: editedCharacter,
-            content: subMacros(editedContent, editedCharacter),
+            content: prepareSegmentText(editedContent, editedCharacter, partyChatMessageId, sourceRole),
             voiceSourceMessageId: partyChatMessageId,
             voiceSourceSegmentIndex: partySegmentIndex,
-            voiceSourceRole: partyChatMessageId
-              ? (sourceMessagesById.get(partyChatMessageId)?.role ?? "assistant")
-              : null,
+            voiceSourceRole: sourceRole,
           });
           map.set(lastPartySegIdx, arr);
           partySegmentIndex += 1;
@@ -1566,11 +1603,9 @@ export function GameNarration({
     return distributeSideLinesAcrossSegments(map, segments.length);
   }, [
     latestAssistant,
-    macroCharacters,
     partyDialogue,
     partyChatMessageId,
-    personaInfo,
-    resolveMacroCharacter,
+    prepareSegmentText,
     segmentDeletes,
     segmentEdits,
     segments,
@@ -1900,7 +1935,7 @@ export function GameNarration({
       const partySegs: NarrationSegment[] = [];
       const partySourceRole = partyChatMessageId
         ? (sourceMessagesById.get(partyChatMessageId)?.role ?? "assistant")
-        : null;
+        : "assistant";
 
       // Prepend the player's party-chat input
       if (partyChatInput) {
@@ -1997,7 +2032,10 @@ export function GameNarration({
       }
     }
 
-    return entries;
+    return entries.map((entry) => ({
+      ...entry,
+      segments: entry.segments.map(prepareDisplaySegment),
+    }));
   }, [
     messages,
     latestAssistant,
@@ -2010,6 +2048,7 @@ export function GameNarration({
     partyChatInputMessageId,
     partyChatMessageId,
     partyDialogue,
+    prepareDisplaySegment,
     segmentEdits,
     segmentDeletes,
     sourceMessagesById,

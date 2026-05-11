@@ -13,6 +13,7 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   resolveMacros,
   LIMITS,
+  applyRegexReplacement,
 } from "@marinara-engine/shared";
 import type {
   AgentContext,
@@ -68,7 +69,12 @@ import {
 import { executeToolCalls, type MetadataPatchInput } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent, type AgentInjection } from "../services/agents/agent-pipeline.js";
 import { DATA_DIR } from "../utils/data-dir.js";
-import { executeAgent, normalizeAgentContextSize, resolveAgentResultType } from "../services/agents/agent-executor.js";
+import {
+  executeAgent,
+  formatToolPayloadForLog,
+  normalizeAgentContextSize,
+  resolveAgentResultType,
+} from "../services/agents/agent-executor.js";
 import { buildSpriteExpressionChoices, listCharacterSprites } from "../services/game/sprite.service.js";
 import { generateChatBackground } from "../services/game/game-asset-generation.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/local-sidecar.js";
@@ -956,7 +962,7 @@ export async function generateRoutes(app: FastifyInstance) {
             if (sMaxDepth != null && messageDepth > sMaxDepth) continue;
             try {
               const re = new RegExp(script.findRegex as string, script.flags as string);
-              text = text.replace(re, script.replaceString as string);
+              text = applyRegexReplacement(text, re, script.replaceString as string);
               const trims: string[] = (() => {
                 try {
                   return JSON.parse(script.trimStrings as string);
@@ -5836,6 +5842,22 @@ export async function generateRoutes(app: FastifyInstance) {
 
               if (!result.toolCalls.length) break;
 
+              if (requestDebug || isDebug) {
+                for (const call of result.toolCalls) {
+                  const allowed = chatResolvedToolNames.has(call.function.name);
+                  const args = formatToolPayloadForLog(call.function.arguments, 1_200);
+                  debugLog("[tools] %s%s args=%s", call.function.name, allowed ? "" : " (denied)", args);
+                  if (requestDebug) {
+                    reply.raw.write(
+                      `data: ${JSON.stringify({
+                        type: "tool_call",
+                        data: { name: call.function.name, arguments: args, allowed },
+                      })}\n\n`,
+                    );
+                  }
+                }
+              }
+
               loopMessages.push({
                 role: "assistant",
                 content: result.content ?? "",
@@ -5869,6 +5891,9 @@ export async function generateRoutes(app: FastifyInstance) {
                 .filter((toolResult): toolResult is NonNullable<typeof toolResult> => toolResult != null);
 
               for (const tr of toolResults) {
+                if (requestDebug || isDebug) {
+                  debugLog("[tools] %s result=%s", tr.name, formatToolPayloadForLog(tr.result, 1_200));
+                }
                 reply.raw.write(
                   `data: ${JSON.stringify({
                     type: "tool_result",
@@ -7844,6 +7869,15 @@ export async function generateRoutes(app: FastifyInstance) {
                 const editedText = (edData.editedText as string) ?? "";
                 const changes = (edData.changes as Array<{ description: string }>) ?? [];
                 if (editedText && changes.length > 0) {
+                  const currentMessage = await chats.getMessage(messageId);
+                  if ((currentMessage?.content ?? "") !== currentResponseForRewrite) {
+                    logger.info(
+                      "[generate] Skipping %s rewrite for message %s because the message was edited during post-processing",
+                      textRewriteAgent.name || textRewriteAgent.type,
+                      messageId,
+                    );
+                    break;
+                  }
                   currentResponseForRewrite = editedText;
                   await chats.updateMessageContent(messageId, editedText);
                   reply.raw.write(

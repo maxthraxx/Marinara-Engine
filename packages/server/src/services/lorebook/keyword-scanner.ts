@@ -259,10 +259,20 @@ function passesActivationGate(
 ): boolean {
   if (!passesContextualActivationGate(entry, filterContext, gameState)) return false;
   if (!ignoreTiming && !checkTiming(entry, timingState)) return false;
-  if (entry.probability !== null && entry.probability < 100) {
-    if (Math.random() * 100 >= entry.probability) return false;
-  }
   return true;
+}
+
+function normalizeProbability(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : null;
+  if (parsed === null || !Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.min(100, parsed));
+}
+
+function passesProbabilityGate(entry: LorebookEntry, random: () => number): boolean {
+  const probability = normalizeProbability(entry.probability);
+  if (probability === null || probability >= 100) return true;
+  if (probability <= 0) return false;
+  return random() * 100 < probability;
 }
 
 function hasTimingConfig(entry: LorebookEntry): boolean {
@@ -437,6 +447,8 @@ export interface ScanOptions {
   additionalMatchingSourceText?: Partial<Record<LorebookMatchingSource, string>>;
   /** Ignore sticky/cooldown/delay runtime state for preview/debug scans. */
   ignoreTiming?: boolean;
+  /** Random source for probability gates; injectable for deterministic tests. */
+  random?: () => number;
 }
 
 /**
@@ -460,6 +472,7 @@ export function scanForActivatedEntries(
     generationTriggers = ["chat"],
     additionalMatchingSourceText = {},
     ignoreTiming = false,
+    random = Math.random,
   } = options;
   const filterContext: LorebookFilterValueContext = {
     activeCharacterIds: makeValueSet(activeCharacterIds),
@@ -473,6 +486,14 @@ export function scanForActivatedEntries(
 
   const activated: ActivatedEntry[] = [];
   const activatedIds = new Set<string>();
+  const probabilityDecisions = new Map<string, boolean>();
+  const passesEntryProbability = (entry: LorebookEntry) => {
+    const existing = probabilityDecisions.get(entry.id);
+    if (existing !== undefined) return existing;
+    const passes = passesProbabilityGate(entry, random);
+    probabilityDecisions.set(entry.id, passes);
+    return passes;
+  };
 
   for (const entry of entries) {
     const timingState = timingStates.get(entry.id);
@@ -494,6 +515,7 @@ export function scanForActivatedEntries(
     // Constant entries still activate without keywords, but they obey timing,
     // context filters, activation conditions, schedule, and probability gates.
     if (entry.constant) {
+      if (!passesEntryProbability(entry)) continue;
       activated.push({
         entry,
         matchedKeys: ["[constant]"],
@@ -531,6 +553,8 @@ export function scanForActivatedEntries(
       }
     }
 
+    if (!passesEntryProbability(entry)) continue;
+
     activated.push({
       entry,
       matchedKeys,
@@ -549,6 +573,7 @@ export function scanForActivatedEntries(
 
       const similarity = cosineSimilarity(chatEmbedding, entry.embedding);
       if (similarity >= semanticThreshold) {
+        if (!passesEntryProbability(entry)) continue;
         activated.push({
           entry,
           matchedKeys: [`[semantic:${similarity.toFixed(3)}]`],

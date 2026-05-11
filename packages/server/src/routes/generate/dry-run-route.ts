@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import {
   findKnownModel,
   LOCAL_SIDECAR_CONNECTION_ID,
+  applyRegexReplacement,
   resolveMacros,
   type APIProvider,
   type LorebookEntryTimingState,
@@ -29,6 +30,7 @@ import {
 import { mergeAdjacentMessages } from "../../services/prompt/merger.js";
 import { wrapContent } from "../../services/prompt/format-engine.js";
 import { fitMessagesToContext, type BaseLLMProvider, type ChatMessage } from "../../services/llm/base-provider.js";
+import { applyAllSegmentEdits } from "../../services/game/segment-edits.js";
 import { sendSseEvent, startSseReply } from "./sse.js";
 import {
   appendReadableAttachmentsToContent,
@@ -726,7 +728,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
           if (sMaxDepth != null && messageDepth > sMaxDepth) continue;
           try {
             const re = new RegExp(script.findRegex as string, script.flags as string);
-            text = text.replace(re, script.replaceString as string);
+            text = applyRegexReplacement(text, re, script.replaceString as string);
             const trims: string[] = (() => {
               try {
                 return JSON.parse(script.trimStrings as string);
@@ -746,6 +748,13 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     }
     for (const msg of mappedMessages) {
       msg.content = msg.content.replace(/\n([ \t]*\n){2,}/g, "\n\n");
+    }
+
+    // Game mode prompt preview must mirror real generation: segment edits/deletes
+    // made in the VN log are model-visible overlays, even though raw DB messages
+    // still contain the original GM output.
+    if (chatMode === "game") {
+      applyAllSegmentEdits(mappedMessages, chatMeta, chatMessages);
     }
 
     // Build prompt messages

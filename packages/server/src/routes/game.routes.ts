@@ -89,7 +89,13 @@ import {
   type Journal,
 } from "../services/game/journal.service.js";
 import { dedupeSessionSummaryLists } from "../services/game/session-summary-normalization.js";
-import { generationParametersSchema, resolveMacros, scoreMusic, scoreAmbient } from "@marinara-engine/shared";
+import {
+  generationParametersSchema,
+  resolveMacros,
+  scoreMusic,
+  scoreAmbient,
+  serializeResolvedSkillCheckTag,
+} from "@marinara-engine/shared";
 import { mergeCustomParameters } from "./generate/generate-route-utils.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import { isDebugAgentsEnabled } from "../config/runtime-config.js";
@@ -1389,6 +1395,8 @@ const GAME_LOREBOOK_KEEPER_MIN_OUTPUT_TOKENS = 16_384;
 const GAME_LOREBOOK_KEEPER_MAX_ENTRIES = 32;
 const SESSION_SUMMARY_TRUNCATION_MARKER = "\n\n[Middle of session transcript truncated to fit context window]\n\n";
 
+type GameTranscriptMessage = { id: string; role: string; content: string | null | undefined };
+
 function truncateSessionTranscriptMiddle(content: string, targetTokens: number): string {
   const targetChars = Math.max(
     SESSION_SUMMARY_MIN_TRANSCRIPT_CHARS,
@@ -1685,12 +1693,32 @@ function uniqueKeeperEntryName(name: string, usedNames: Set<string>): string {
   return fallback;
 }
 
-function formatGameLorebookKeeperTranscript(messages: Array<{ role: string; content: string }>): string {
-  return messages
+function applyGameSegmentEditsForPrompt(
+  messages: GameTranscriptMessage[],
+  meta: Record<string, unknown>,
+): Array<{ role: string; content: string }> {
+  const mappedMessages = messages.map((message) => ({
+    role: message.role,
+    content: message.content ?? "",
+  }));
+  applyAllSegmentEdits(mappedMessages, meta, messages);
+  return mappedMessages;
+}
+
+function isSessionConclusionMessage(content: string): boolean {
+  const trimmed = content.trim();
+  return trimmed.startsWith("**Session ") && trimmed.includes(" Concluded**");
+}
+
+function formatGameTranscript(messages: Array<{ role: string; content: string }>): string {
+  return messages.map((message) => `[${message.role}] ${message.content}`).join("\n\n");
+}
+
+function formatGameLorebookKeeperTranscript(messages: GameTranscriptMessage[], meta: Record<string, unknown>): string {
+  const promptMessages = applyGameSegmentEditsForPrompt(messages, meta)
     .filter((message) => message.role !== "system")
-    .filter((message) => !message.content.trim().startsWith("**Session "))
-    .map((message) => `[${message.role}] ${message.content}`)
-    .join("\n\n");
+    .filter((message) => !isSessionConclusionMessage(message.content));
+  return formatGameTranscript(promptMessages);
 }
 
 function formatGameLorebookKeeperError(error: unknown): string {
@@ -2003,7 +2031,7 @@ async function runGameLorebookKeeperAfterConclusion(args: {
       sessionSummary: args.sessionSummary,
       partyNames,
       existingEntries,
-      transcriptText: formatGameLorebookKeeperTranscript(messages),
+      transcriptText: formatGameLorebookKeeperTranscript(messages, meta),
     });
     const fitted = fitMessagesToContext(keeperMessages, {
       maxContext: conn.maxContext,
@@ -2558,6 +2586,31 @@ function reconcileJournal(
   return next;
 }
 
+function parseSkillCheckAttribute(body: string, key: string): string | null {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = body.match(new RegExp(`\\b${escapedKey}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s\\]]+)`, "i"));
+  return match?.[1]?.trim().replace(/^['"]|['"]$/g, "") ?? null;
+}
+
+function replaceFirstUnresolvedSkillCheckTag(
+  content: string,
+  request: { skill: string; dc: number },
+  result: ReturnType<typeof resolveSkillCheck>,
+): string {
+  let replaced = false;
+  return content.replace(/\[skill_check:\s*([^\]]+)\]/gi, (fullTag, body: string) => {
+    if (replaced || /\bresult\s*=/i.test(body)) return fullTag;
+
+    const skill = parseSkillCheckAttribute(body, "skill");
+    const dc = Number.parseInt(parseSkillCheckAttribute(body, "dc") ?? "", 10);
+    if (skill && skill.trim().toLowerCase() !== request.skill.trim().toLowerCase()) return fullTag;
+    if (Number.isFinite(dc) && dc !== request.dc) return fullTag;
+
+    replaced = true;
+    return serializeResolvedSkillCheckTag(result);
+  });
+}
+
 // ──────────────────────────────────────────────
 // Route Registration
 // ──────────────────────────────────────────────
@@ -2791,12 +2844,9 @@ export async function gameRoutes(app: FastifyInstance) {
       // count; without preprocessing, a single out-of-range value would fail
       // safeParse and silently drop the entire blueprint — including hudWidgets,
       // which is what the user actually configured.
-      const sliceArray = (max: number) => (val: unknown) =>
-        Array.isArray(val) ? val.slice(0, max) : val;
+      const sliceArray = (max: number) => (val: unknown) => (Array.isArray(val) ? val.slice(0, max) : val);
       const clampInt = (min: number, max: number) => (val: unknown) =>
-        typeof val === "number" && Number.isFinite(val)
-          ? Math.max(min, Math.min(max, Math.trunc(val)))
-          : val;
+        typeof val === "number" && Number.isFinite(val) ? Math.max(min, Math.min(max, Math.trunc(val))) : val;
       const campaignPlanSchema = z
         .object({
           openingSituation: z.string().max(240).optional().default(""),
@@ -3663,8 +3713,10 @@ export async function gameRoutes(app: FastifyInstance) {
     const sessionNumber = prevSummaries.length + 1;
 
     const messages = await chats.listMessages(chatId);
-    const relevantMessages = messages.filter((message) => message.role !== "system");
-    const transcriptText = relevantMessages.map((message) => `[${message.role}] ${message.content}`).join("\n\n");
+    const relevantMessages = applyGameSegmentEditsForPrompt(messages, meta).filter(
+      (message) => message.role !== "system",
+    );
+    const transcriptText = formatGameTranscript(relevantMessages);
     const journalRecap = buildStructuredRecap((meta.gameJournal as Journal | null) ?? createJournal(), sessionNumber);
 
     const gameStates = createGameStateStorage(app.db);
@@ -4028,12 +4080,10 @@ export async function gameRoutes(app: FastifyInstance) {
 
     const messages = await chats.listMessages(chatId);
     const conclusionHeader = `**Session ${sessionNumber} Concluded**`;
-    const relevantMessages = messages.filter(
-      (message) =>
-        message.role !== "system" &&
-        !(message.content.trim().startsWith("**Session ") && message.content.includes(" Concluded**")),
+    const relevantMessages = applyGameSegmentEditsForPrompt(messages, meta).filter(
+      (message) => message.role !== "system" && !isSessionConclusionMessage(message.content),
     );
-    const transcriptText = relevantMessages.map((message) => `[${message.role}] ${message.content}`).join("\n\n");
+    const transcriptText = formatGameTranscript(relevantMessages);
     const journalRecap = buildStructuredRecap((meta.gameJournal as Journal | null) ?? createJournal(), sessionNumber);
 
     const gameStates = createGameStateStorage(app.db);
@@ -4267,12 +4317,10 @@ export async function gameRoutes(app: FastifyInstance) {
     const setupConfig =
       (currentMeta.gameSetupConfig as GameSetupConfig | null) ?? (targetMeta.gameSetupConfig as GameSetupConfig | null);
     const targetMessages = await chats.listMessages(targetSession.id);
-    const relevantMessages = targetMessages.filter(
-      (message) =>
-        message.role !== "system" &&
-        !(message.content.trim().startsWith("**Session ") && message.content.includes(" Concluded**")),
+    const relevantMessages = applyGameSegmentEditsForPrompt(targetMessages, targetMeta).filter(
+      (message) => message.role !== "system" && !isSessionConclusionMessage(message.content),
     );
-    const transcriptText = relevantMessages.map((message) => `[${message.role}] ${message.content}`).join("\n\n");
+    const transcriptText = formatGameTranscript(relevantMessages);
     if (!transcriptText.trim()) throw new Error("Selected session has no transcript to analyze");
 
     const gameStates = createGameStateStorage(app.db);
@@ -4610,7 +4658,7 @@ export async function gameRoutes(app: FastifyInstance) {
         );
         const generationParameters = resolveStoredGameGenerationParameters(meta, defaultGenerationParameters);
         const latestState = await stateStore.getLatest(input.chatId);
-        const recentMessages = await chats.listMessages(input.chatId);
+        const recentMessages = applyGameSegmentEditsForPrompt(await chats.listMessages(input.chatId), meta);
         const recentTranscript = recentMessages
           .filter((message) => message.role !== "system")
           .slice(-12)
@@ -4849,6 +4897,7 @@ export async function gameRoutes(app: FastifyInstance) {
     advantage: z.boolean().optional(),
     disadvantage: z.boolean().optional(),
     preRolledD20: z.number().int().min(1).max(20).optional(),
+    messageId: z.string().min(1).optional(),
   });
 
   app.post("/skill-check", async (req) => {
@@ -4893,7 +4942,24 @@ export async function gameRoutes(app: FastifyInstance) {
       preRolledD20: input.preRolledD20,
     });
 
-    return { result };
+    let updatedContent: string | undefined;
+    if (input.messageId) {
+      const chats = createChatsStorage(app.db);
+      const message = await chats.getMessage(input.messageId);
+      if (message?.chatId === input.chatId && (message.role === "assistant" || message.role === "narrator")) {
+        const nextContent = replaceFirstUnresolvedSkillCheckTag(
+          message.content,
+          { skill: input.skill, dc: input.dc },
+          result,
+        );
+        if (nextContent !== message.content) {
+          await chats.updateMessageContent(input.messageId, nextContent);
+          updatedContent = nextContent;
+        }
+      }
+    }
+
+    return { result, updatedContent };
   });
 
   // ── POST /game/morale ──

@@ -486,6 +486,8 @@ export function useRollDice() {
 }
 
 export function useSkillCheck() {
+  const qc = useQueryClient();
+
   return useMutation({
     mutationFn: (data: {
       chatId: string;
@@ -494,7 +496,18 @@ export function useSkillCheck() {
       advantage?: boolean;
       disadvantage?: boolean;
       preRolledD20?: number;
-    }) => api.post<{ result: import("@marinara-engine/shared").SkillCheckResult }>("/game/skill-check", data),
+      messageId?: string;
+    }) =>
+      api.post<{ result: import("@marinara-engine/shared").SkillCheckResult; updatedContent?: string }>(
+        "/game/skill-check",
+        data,
+      ),
+    onSuccess: (res, variables) => {
+      if (res.updatedContent) {
+        qc.invalidateQueries({ queryKey: chatKeys.messages(variables.chatId) });
+        qc.invalidateQueries({ queryKey: lorebookKeys.active(variables.chatId) });
+      }
+    },
   });
 }
 

@@ -33,6 +33,21 @@ function showAgentWarning(raw: unknown) {
 }
 
 const editableCharacterCardFieldSet = new Set<string>(EDITABLE_CHARACTER_CARD_FIELDS);
+
+function formatToolDebugPayload(value: unknown, maxLength = 1_200): string {
+  const raw =
+    typeof value === "string"
+      ? value
+      : (() => {
+          try {
+            return JSON.stringify(value);
+          } catch {
+            return String(value ?? "");
+          }
+        })();
+  return raw.length > maxLength ? `${raw.slice(0, maxLength)}...` : raw;
+}
+
 /**
  * Validate one entry in the Card Evolution Auditor's `updates` array and coerce
  * it to a typed CharacterCardFieldUpdate. LLM output can be messy, so we drop
@@ -98,8 +113,7 @@ function resolveCachedCharacterIdentity(
     "Character";
   const avatarCrop =
     parsed && typeof parsed.extensions === "object" && parsed.extensions && "avatarCrop" in parsed.extensions
-      ? ((parsed.extensions as { avatarCrop?: AvatarCropValue | null }).avatarCrop ??
-        null)
+      ? ((parsed.extensions as { avatarCrop?: AvatarCropValue | null }).avatarCrop ?? null)
       : null;
 
   return {
@@ -214,7 +228,12 @@ import { useGameModeStore } from "../stores/game-mode.store";
 import { useGameStateStore } from "../stores/game-state.store";
 import { useTranslationStore } from "../stores/translation.store";
 import { useUIStore } from "../stores/ui.store";
-import { chatKeys } from "./use-chats";
+import {
+  applyRecentMessageContentEditsToData,
+  chatKeys,
+  forgetRecentMessageContentEdit,
+  preserveRecentMessageContentEdit,
+} from "./use-chats";
 import { characterKeys } from "./use-characters";
 import { lorebookKeys } from "./use-lorebooks";
 import { playNotificationPing } from "../lib/notification-sound";
@@ -232,7 +251,9 @@ function sortMessagesByCreatedAt(messages: Message[]): Message[] {
 function upsertPersistedMessages(qc: QueryClient, chatId: string, incoming: Message[]) {
   if (incoming.length === 0) return;
 
-  const sortedIncoming = sortMessagesByCreatedAt(incoming);
+  const sortedIncoming = sortMessagesByCreatedAt(
+    incoming.map((message) => preserveRecentMessageContentEdit(chatId, message)),
+  );
 
   qc.setQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId), (old) => {
     if (!old?.pages) {
@@ -269,7 +290,9 @@ function upsertPersistedMessages(qc: QueryClient, chatId: string, incoming: Mess
 function appendMissingPersistedMessages(qc: QueryClient, chatId: string, incoming: Message[]) {
   if (incoming.length === 0) return;
 
-  const sortedIncoming = sortMessagesByCreatedAt(incoming);
+  const sortedIncoming = sortMessagesByCreatedAt(
+    incoming.map((message) => preserveRecentMessageContentEdit(chatId, message)),
+  );
 
   qc.setQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId), (old) => {
     if (!old?.pages) {
@@ -292,6 +315,12 @@ function appendMissingPersistedMessages(qc: QueryClient, chatId: string, incomin
 
     return { ...old, pages };
   });
+}
+
+function preserveRecentMessageContentEditsInCache(qc: QueryClient, chatId: string) {
+  qc.setQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId), (old) =>
+    applyRecentMessageContentEditsToData(chatId, old),
+  );
 }
 
 async function refreshMessagesAuthoritatively(
@@ -332,6 +361,7 @@ async function refreshMessagesAuthoritatively(
       upsertPersistedMessages(qc, chatId, persisted);
     }
   }
+  preserveRecentMessageContentEditsInCache(qc, chatId);
 }
 
 function parseChatMetadata(metadata: Chat["metadata"] | string | null | undefined): Record<string, unknown> {
@@ -435,6 +465,7 @@ export function useGenerate() {
   const setDelayedCharacterInfo = useChatStore((s) => s.setDelayedCharacterInfo);
   const setProcessing = useAgentStore((s) => s.setProcessing);
   const addResult = useAgentStore((s) => s.addResult);
+  const addDebugEntry = useAgentStore((s) => s.addDebugEntry);
   const addThoughtBubble = useAgentStore((s) => s.addThoughtBubble);
   const clearThoughtBubbles = useAgentStore((s) => s.clearThoughtBubbles);
   const addEchoMessage = useAgentStore((s) => s.addEchoMessage);
@@ -505,6 +536,9 @@ export function useGenerate() {
       // message after it is upserted into the cache. Cancel early so the
       // post-save refresh owns the query lifecycle for this generation.
       await qc.cancelQueries({ queryKey: chatKeys.messages(params.chatId), exact: true });
+      if (params.regenerateMessageId) {
+        forgetRecentMessageContentEdit(params.chatId, params.regenerateMessageId);
+      }
 
       // Optimistically show the user message in the chat immediately
       if (params.userMessage && !params.impersonate) {
@@ -974,8 +1008,31 @@ export function useGenerate() {
               break;
             }
 
+            case "tool_call": {
+              if (!debugMode) break;
+              const data = event.data as { name?: unknown; arguments?: unknown; allowed?: unknown };
+              addDebugEntry({
+                phase: "tool_call",
+                toolCall: {
+                  name: typeof data.name === "string" ? data.name : "unknown_tool",
+                  arguments: formatToolDebugPayload(data.arguments),
+                  allowed: data.allowed !== false,
+                },
+              });
+              break;
+            }
+
             case "tool_result": {
-              // Already handled by existing tool display — pass through
+              if (!debugMode) break;
+              const data = event.data as { name?: unknown; result?: unknown; success?: unknown };
+              addDebugEntry({
+                phase: "tool_result",
+                toolResult: {
+                  name: typeof data.name === "string" ? data.name : "unknown_tool",
+                  result: formatToolDebugPayload(data.result),
+                  success: data.success === true,
+                },
+              });
               break;
             }
 
@@ -1619,6 +1676,7 @@ export function useGenerate() {
       setDelayedCharacterInfo,
       setProcessing,
       addResult,
+      addDebugEntry,
       addThoughtBubble,
       clearThoughtBubbles,
       addEchoMessage,

@@ -1279,6 +1279,7 @@ async function applyRetryResultEffects(args: {
   const chats = createChatsStorage(app.db);
   const agentsStore = createAgentsStorage(app.db);
   const chatMeta = parseExtra(chat.metadata) as Record<string, unknown>;
+  let currentResponseForRewrite = agentContext.mainResponse;
 
   for (const result of sortedResults) {
     if (result.success && result.type === "text_rewrite" && result.data && typeof result.data === "object") {
@@ -1287,6 +1288,15 @@ async function applyRetryResultEffects(args: {
         const editedText = (rewriteData.editedText as string) ?? "";
         const changes = (rewriteData.changes as Array<{ description: string }>) ?? [];
         if (retryMessageId && editedText && changes.length > 0) {
+          const currentMessage = await chats.getMessage(retryMessageId);
+          if ((currentMessage?.content ?? "") !== currentResponseForRewrite) {
+            logger.info(
+              "[retry-agents] Skipping rewrite for message %s because the message was edited during agent retry",
+              retryMessageId,
+            );
+            break;
+          }
+          currentResponseForRewrite = editedText;
           await chats.updateMessageContent(retryMessageId, editedText);
           sendSseEvent(reply, { type: "text_rewrite", data: { editedText, changes } });
         }

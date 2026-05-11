@@ -31,6 +31,16 @@ export interface AgentDebugEntry {
     maxTokens: number;
   }>;
   results?: AgentResult[];
+  toolCall?: {
+    name: string;
+    arguments: string;
+    allowed: boolean;
+  };
+  toolResult?: {
+    name: string;
+    result: string;
+    success: boolean;
+  };
   batchMaxTokens?: number;
   timestamp: number;
 }

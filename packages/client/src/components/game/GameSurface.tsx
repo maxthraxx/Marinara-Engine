@@ -3416,6 +3416,7 @@ export function GameSurface({
             advantage: sc.advantage,
             disadvantage: sc.disadvantage,
             preRolledD20: sc.preRolledD20,
+            messageId: msg.id,
           },
           {
             onSuccess: (res) => setPendingSkillCheck(res.result),
@@ -4477,14 +4478,11 @@ export function GameSurface({
     if (startGame.isPending || startGameRequested || startGameGuardRef.current) return;
     startGameGuardRef.current = true;
     setStartGameRequested(true);
-    console.log("[GameSurface] Start Game clicked, chatId:", activeChatId);
     startGame.mutate(
       { chatId: activeChatId },
       {
-        onSuccess: (res) => {
-          console.log("[GameSurface] startGame succeeded:", res);
+        onSuccess: () => {
           generateInitialGameTurn();
-          console.log("[GameSurface] initial game turn generation requested");
         },
         onError: (err) => {
           startGameGuardRef.current = false;
@@ -6568,10 +6566,10 @@ export function GameSurface({
   }, [sessionStatus]);
 
   useEffect(() => {
-    if (sessionStatus !== "ready" || introPresented) {
+    if (sessionStatus !== "ready") {
       setPrepareInitialWidgetsOpen(false);
     }
-  }, [introPresented, sessionStatus]);
+  }, [sessionStatus]);
 
   const handleQteSelect = useCallback(
     (action: string, timeRemaining: number) => {
@@ -7039,6 +7037,31 @@ export function GameSurface({
     setStartGameRequested(false);
   }, [hasEverHadPlayableContent, sessionStatus, startGameRequested]);
 
+  const widgetSessionPrepModal = (
+    <GameWidgetSessionPrepModal
+      open={prepareInitialWidgetsOpen || prepareSessionWidgetsOpen}
+      widgets={normalizedWidgets}
+      chatId={activeChatId}
+      mode={prepareInitialWidgetsOpen ? "initial" : "next"}
+      onClose={() => {
+        if (prepareInitialWidgetsOpen) {
+          setPrepareInitialWidgetsOpen(false);
+          return;
+        }
+        setPrepareSessionWidgetsOpen(false);
+      }}
+      onStartSession={
+        prepareInitialWidgetsOpen
+          ? () => {
+              setPrepareInitialWidgetsOpen(false);
+              handleStartGameNow();
+            }
+          : handleStartNewSessionNow
+      }
+      isStartingSession={prepareInitialWidgetsOpen ? startGame.isPending || startGameRequested : startSessionLocked}
+    />
+  );
+
   // Does this chat need initial game creation?
   const needsCreation = !chatMeta.gameId;
 
@@ -7252,6 +7275,7 @@ export function GameSurface({
           isStartingSession={startGame.isPending || startGameRequested}
         />
         {imagePromptReviewModal}
+        {widgetSessionPrepModal}
       </>
     );
   }
@@ -8442,28 +8466,7 @@ export function GameSurface({
         </div>
       </Modal>
 
-      <GameWidgetSessionPrepModal
-        open={prepareInitialWidgetsOpen || prepareSessionWidgetsOpen}
-        widgets={normalizedWidgets}
-        chatId={activeChatId}
-        mode={prepareInitialWidgetsOpen ? "initial" : "next"}
-        onClose={() => {
-          if (prepareInitialWidgetsOpen) {
-            setPrepareInitialWidgetsOpen(false);
-            return;
-          }
-          setPrepareSessionWidgetsOpen(false);
-        }}
-        onStartSession={
-          prepareInitialWidgetsOpen
-            ? () => {
-                setPrepareInitialWidgetsOpen(false);
-                handleStartGameNow();
-              }
-            : handleStartNewSessionNow
-        }
-        isStartingSession={prepareInitialWidgetsOpen ? startGame.isPending || startGameRequested : startSessionLocked}
-      />
+      {widgetSessionPrepModal}
 
       <GameJsonRepairModal
         request={jsonRepairRequest}

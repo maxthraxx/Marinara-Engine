@@ -13,12 +13,7 @@
 // ratio without distortion.
 import { useEffect, useRef, useState } from "react";
 import { Crop, Maximize2, RotateCcw, X } from "lucide-react";
-import {
-  type AvatarCrop,
-  type LegacyAvatarCrop,
-  getAvatarCropStyle,
-  isLegacyAvatarCrop,
-} from "../../lib/utils";
+import { type AvatarCrop, type LegacyAvatarCrop, getAvatarCropStyle, isLegacyAvatarCrop } from "../../lib/utils";
 
 interface CropPx {
   x: number;
@@ -74,7 +69,6 @@ export function AvatarCropWidget({ src, alt, crop, onChange }: AvatarCropWidgetP
     if (img && img.complete && img.naturalWidth > 0 && imgRect === null) {
       handleImgLoad();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
   // Re-sync the local overlay when the parent's `crop` prop changes for the
@@ -288,10 +282,30 @@ export function AvatarCropWidget({ src, alt, crop, onChange }: AvatarCropWidgetP
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
             >
-              <CornerHandle pos="tl" onPointerDown={(e) => onPointerDown(e, "tl")} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
-              <CornerHandle pos="tr" onPointerDown={(e) => onPointerDown(e, "tr")} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
-              <CornerHandle pos="bl" onPointerDown={(e) => onPointerDown(e, "bl")} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
-              <CornerHandle pos="br" onPointerDown={(e) => onPointerDown(e, "br")} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
+              <CornerHandle
+                pos="tl"
+                onPointerDown={(e) => onPointerDown(e, "tl")}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+              />
+              <CornerHandle
+                pos="tr"
+                onPointerDown={(e) => onPointerDown(e, "tr")}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+              />
+              <CornerHandle
+                pos="bl"
+                onPointerDown={(e) => onPointerDown(e, "bl")}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+              />
+              <CornerHandle
+                pos="br"
+                onPointerDown={(e) => onPointerDown(e, "br")}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+              />
             </div>
           )}
         </div>
@@ -383,42 +397,26 @@ function resizeCorner(
   if (handle === "br") {
     const px = startBR.x + dx;
     const py = startBR.y + dy;
-    const size = clamp(
-      Math.min(px - startTL.x, py - startTL.y),
-      MIN_CROP_PX,
-      Math.min(W - startTL.x, H - startTL.y),
-    );
+    const size = clamp(Math.min(px - startTL.x, py - startTL.y), MIN_CROP_PX, Math.min(W - startTL.x, H - startTL.y));
     return { x: startTL.x, y: startTL.y, size };
   }
   if (handle === "tl") {
     const px = startTL.x + dx;
     const py = startTL.y + dy;
-    const size = clamp(
-      Math.min(startBR.x - px, startBR.y - py),
-      MIN_CROP_PX,
-      Math.min(startBR.x, startBR.y),
-    );
+    const size = clamp(Math.min(startBR.x - px, startBR.y - py), MIN_CROP_PX, Math.min(startBR.x, startBR.y));
     return { x: startBR.x - size, y: startBR.y - size, size };
   }
   if (handle === "tr") {
     const anchor = { x: startTL.x, y: startBR.y };
     const px = startBR.x + dx;
     const py = startTL.y + dy;
-    const size = clamp(
-      Math.min(px - anchor.x, anchor.y - py),
-      MIN_CROP_PX,
-      Math.min(W - anchor.x, anchor.y),
-    );
+    const size = clamp(Math.min(px - anchor.x, anchor.y - py), MIN_CROP_PX, Math.min(W - anchor.x, anchor.y));
     return { x: anchor.x, y: anchor.y - size, size };
   }
   // bl
   const anchor = { x: startBR.x, y: startTL.y };
   const px = startTL.x + dx;
   const py = startBR.y + dy;
-  const size = clamp(
-    Math.min(anchor.x - px, py - anchor.y),
-    MIN_CROP_PX,
-    Math.min(anchor.x, H - anchor.y),
-  );
+  const size = clamp(Math.min(anchor.x - px, py - anchor.y), MIN_CROP_PX, Math.min(anchor.x, H - anchor.y));
   return { x: anchor.x - size, y: anchor.y, size };
 }

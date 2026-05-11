@@ -45,8 +45,8 @@ export interface SkillCheckResult {
   criticalSuccess: boolean;
   /** Natural 1 on the used roll. */
   criticalFailure: boolean;
-  /** "advantage" | "disadvantage" | "normal" */
-  rollMode: string;
+  /** Roll mode used by the resolver. */
+  rollMode: "advantage" | "disadvantage" | "normal";
 }
 
 function d20(): number {

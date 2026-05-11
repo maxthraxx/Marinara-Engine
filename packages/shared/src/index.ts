@@ -54,3 +54,5 @@ export * from "./utils/macro-engine.js";
 export * from "./utils/xml-wrapper.js";
 export * from "./utils/music-score.js";
 export * from "./utils/agent-cost.js";
+export * from "./utils/regex-replacement.js";
+export * from "./utils/skill-check-format.js";

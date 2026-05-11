@@ -32,6 +32,81 @@ export const chatKeys = {
   group: (groupId: string) => [...chatKeys.all, "group", groupId] as const,
 };
 
+const RECENT_MESSAGE_CONTENT_EDIT_TTL_MS = 5 * 60 * 1000;
+
+interface RecentMessageContentEdit {
+  chatId: string;
+  content: string;
+  activeSwipeIndex: number | null;
+  updatedAt: number;
+}
+
+const recentMessageContentEdits = new Map<string, RecentMessageContentEdit>();
+
+function pruneRecentMessageContentEdits(now = Date.now()) {
+  for (const [messageId, edit] of recentMessageContentEdits) {
+    if (now - edit.updatedAt > RECENT_MESSAGE_CONTENT_EDIT_TTL_MS) {
+      recentMessageContentEdits.delete(messageId);
+    }
+  }
+}
+
+function findCachedMessage(data: InfiniteData<Message[]> | undefined, messageId: string): Message | null {
+  if (!data?.pages) return null;
+  for (const page of data.pages) {
+    const found = page.find((message) => message.id === messageId);
+    if (found) return found;
+  }
+  return null;
+}
+
+export function rememberRecentMessageContentEdit(
+  chatId: string,
+  messageId: string,
+  content: string,
+  activeSwipeIndex?: number | null,
+) {
+  pruneRecentMessageContentEdits();
+  recentMessageContentEdits.set(messageId, {
+    chatId,
+    content,
+    activeSwipeIndex: activeSwipeIndex ?? null,
+    updatedAt: Date.now(),
+  });
+}
+
+export function forgetRecentMessageContentEdit(chatId: string, messageId: string) {
+  const edit = recentMessageContentEdits.get(messageId);
+  if (edit?.chatId === chatId) {
+    recentMessageContentEdits.delete(messageId);
+  }
+}
+
+export function preserveRecentMessageContentEdit(chatId: string, message: Message): Message {
+  pruneRecentMessageContentEdits();
+  const edit = recentMessageContentEdits.get(message.id);
+  if (!edit || edit.chatId !== chatId) return message;
+  if (edit.activeSwipeIndex !== null && edit.activeSwipeIndex !== (message.activeSwipeIndex ?? 0)) return message;
+  if (message.content === edit.content) return message;
+  return { ...message, content: edit.content };
+}
+
+export function applyRecentMessageContentEditsToData(
+  chatId: string,
+  data: InfiniteData<Message[]> | undefined,
+): InfiniteData<Message[]> | undefined {
+  if (!data?.pages || recentMessageContentEdits.size === 0) return data;
+  let changed = false;
+  const pages = data.pages.map((page) =>
+    page.map((message) => {
+      const next = preserveRecentMessageContentEdit(chatId, message);
+      if (next !== message) changed = true;
+      return next;
+    }),
+  );
+  return changed ? { ...data, pages } : data;
+}
+
 export type ExpungeScope =
   | "chats"
   | "characters"
@@ -100,7 +175,11 @@ export function useChatMessages(chatId: string | null, pageSize: number = 0, ena
       if (pageSize > 0) params.set("limit", String(pageSize));
       if (pageParam) params.set("before", pageParam);
       const qs = params.toString();
-      return api.get<Message[]>(`/chats/${chatId}/messages${qs ? `?${qs}` : ""}`, { signal });
+      return api
+        .get<Message[]>(`/chats/${chatId}/messages${qs ? `?${qs}` : ""}`, { signal })
+        .then((messages) =>
+          chatId ? messages.map((message) => preserveRecentMessageContentEdit(chatId, message)) : messages,
+        );
     },
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => {
@@ -418,6 +497,8 @@ export function useUpdateMessage(chatId: string | null) {
       // don't overwrite the optimistic value with stale server data.
       await qc.cancelQueries({ queryKey: chatKeys.messages(chatId) });
       const previous = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId));
+      const previousMessage = findCachedMessage(previous, messageId);
+      rememberRecentMessageContentEdit(chatId, messageId, content, previousMessage?.activeSwipeIndex);
       qc.setQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId), (old) => {
         if (!old?.pages) return old;
         return {
@@ -427,7 +508,15 @@ export function useUpdateMessage(chatId: string | null) {
       });
       return { previous };
     },
+    onSuccess: (updated, { messageId, content }) => {
+      if (chatId) {
+        rememberRecentMessageContentEdit(chatId, messageId, updated?.content ?? content, updated?.activeSwipeIndex);
+      }
+    },
     onError: (_err, _vars, context) => {
+      if (chatId) {
+        forgetRecentMessageContentEdit(chatId, _vars.messageId);
+      }
       if (chatId && context?.previous) {
         qc.setQueryData(chatKeys.messages(chatId), context.previous);
       }

@@ -148,6 +148,61 @@ test("additional matching sources can activate entries without chat keyword matc
   );
 });
 
+test("entry probability is rolled only after a trigger candidate matches", () => {
+  let rolls = 0;
+  const entry = makeEntry({ probability: 1 });
+
+  const untriggered = scanForActivatedEntries([{ role: "user", content: "nothing relevant" }], [entry], {
+    random: () => {
+      rolls++;
+      return 0;
+    },
+  });
+
+  assert.equal(untriggered.length, 0);
+  assert.equal(rolls, 0);
+
+  const blocked = scanForActivatedEntries([{ role: "user", content: "keyword" }], [entry], {
+    random: () => {
+      rolls++;
+      return 0.99;
+    },
+  });
+
+  assert.equal(blocked.length, 0);
+  assert.equal(rolls, 1);
+});
+
+test("entry probability is not re-rolled by semantic fallback after a keyword match fails the roll", () => {
+  let rolls = 0;
+  const entry = makeEntry({ probability: 1, embedding: [1, 0] });
+
+  const activated = scanForActivatedEntries([{ role: "user", content: "keyword" }], [entry], {
+    chatEmbedding: [1, 0],
+    semanticThreshold: 0.5,
+    random: () => {
+      rolls++;
+      return rolls === 1 ? 0.99 : 0;
+    },
+  });
+
+  assert.equal(activated.length, 0);
+  assert.equal(rolls, 1);
+});
+
+test("entry probability allows activation when the roll is below the configured percentage", () => {
+  const entry = makeEntry({ probability: 1 });
+
+  const activated = scanForActivatedEntries([{ role: "user", content: "keyword" }], [entry], {
+    random: () => 0.009,
+  });
+
+  assert.deepEqual(
+    activated.map((result) => result.entry.id),
+    ["entry-1"],
+  );
+});
+
 test("persona-linked lorebooks activate only for the active persona", () => {
   const personaBook = makeLorebook({ id: "persona-book", personaId: "persona-1" });
   const otherPersonaBook = makeLorebook({ id: "other-persona-book", personaId: "persona-2" });

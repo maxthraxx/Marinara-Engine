@@ -11,6 +11,7 @@ import {
   nameToXmlTag,
   resolveMacros,
   summariesPatchSchema,
+  applyRegexReplacement,
 } from "@marinara-engine/shared";
 import type { CharacterData, ChatMemoryChunk, LorebookEntryTimingState } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
@@ -1025,7 +1026,7 @@ export async function chatsRoutes(app: FastifyInstance) {
                 if (sMaxDepth != null && messageDepth > sMaxDepth) continue;
                 try {
                   const re = new RegExp(script.findRegex as string, script.flags as string);
-                  text = text.replace(re, script.replaceString as string);
+                  text = applyRegexReplacement(text, re, script.replaceString as string);
                   const trims: string[] = (() => {
                     try {
                       return JSON.parse(script.trimStrings as string);
