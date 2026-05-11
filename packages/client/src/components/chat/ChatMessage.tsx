@@ -1,7 +1,14 @@
 // ──────────────────────────────────────────────
 // Chat: Message — mode-aware rendering
 // ──────────────────────────────────────────────
-import { cn, copyToClipboard, getAvatarCropStyle, parseAvatarCropJson, type AvatarCropValue } from "../../lib/utils";
+import {
+  cn,
+  copyToClipboard,
+  getAvatarCropStyle,
+  isLegacyAvatarCrop,
+  parseAvatarCropJson,
+  type AvatarCropValue,
+} from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks, applyInlineMarkdownHTML } from "../../lib/markdown";
 import {
   User,
@@ -1134,6 +1141,40 @@ export const ChatMessage = memo(function ChatMessage({
   const compactAvatarFrameClass = useCompactRectangleAvatar
     ? "h-[calc(3.5rem*var(--roleplay-avatar-scale))] w-[calc(2.75rem*var(--roleplay-avatar-scale))] rounded-xl"
     : "h-[calc(2.5rem*var(--roleplay-avatar-scale))] w-[calc(2.5rem*var(--roleplay-avatar-scale))] rounded-full";
+  // RP rectangle avatars (compact "rectangles" style and the larger glued
+  // panel) can't apply the new source-rectangle crop format directly — that
+  // format renders the <img> with position: absolute and non-aspect-preserving
+  // width/height, which stretches when forced into a rectangle whose aspect
+  // ratio differs from the (square) crop. Instead, convert the new-format
+  // crop into an `object-position` focal point so `object-cover` still fills
+  // the rectangle without distortion, but centered on the user's chosen face.
+  // Legacy {zoom, offsetX, offsetY} crops compose fine with object-cover
+  // (they're a CSS transform) so they pass through unchanged.
+  const rectangleSafeCropStyle = (
+    crop: AvatarCropValue | null | undefined,
+    fallback: React.CSSProperties,
+  ): React.CSSProperties => {
+    if (!crop) return fallback;
+    if (isLegacyAvatarCrop(crop)) return fallback;
+    const centerX = crop.srcX + crop.srcWidth / 2;
+    const centerY = crop.srcY + crop.srcHeight / 2;
+    return {
+      objectPosition: `${(centerX * 100).toFixed(2)}% ${(centerY * 100).toFixed(2)}%`,
+    };
+  };
+  const compactAvatarCrop: AvatarCropValue | null = isUser
+    ? (personaAvatarCrop ?? null)
+    : (charInfo?.avatarCrop ?? null);
+  const compactAvatarCropStyle: React.CSSProperties = useCompactRectangleAvatar
+    ? rectangleSafeCropStyle(compactAvatarCrop, avatarCropStyle)
+    : avatarCropStyle;
+  const compactMergedAvatarCropStyle = (avatar: { crop?: AvatarCropValue | null }): React.CSSProperties =>
+    useCompactRectangleAvatar
+      ? rectangleSafeCropStyle(avatar.crop, getAvatarCropStyle(avatar.crop))
+      : getAvatarCropStyle(avatar.crop);
+  const panelAvatarCropStyle: React.CSSProperties = rectangleSafeCropStyle(compactAvatarCrop, avatarCropStyle);
+  const panelMergedAvatarCropStyle = (avatar: { crop?: AvatarCropValue | null }): React.CSSProperties =>
+    rectangleSafeCropStyle(avatar.crop, getAvatarCropStyle(avatar.crop));
   const compactAvatarSpacerClass = useCompactRectangleAvatar
     ? "w-[calc(2.75rem*var(--roleplay-avatar-scale))]"
     : "w-[calc(2.5rem*var(--roleplay-avatar-scale))]";
@@ -1156,7 +1197,7 @@ export const ChatMessage = memo(function ChatMessage({
             loading="lazy"
             decoding="async"
             className="rpg-avatar-panel-tail-image absolute inset-0 h-full w-full object-cover object-top transition-opacity duration-700"
-            style={{ opacity: i === 0 ? 1 : 0, ...getAvatarCropStyle(avatar.crop) }}
+            style={{ opacity: i === 0 ? 1 : 0, ...panelMergedAvatarCropStyle(avatar) }}
           />
         ))}
       </div>
@@ -1169,7 +1210,7 @@ export const ChatMessage = memo(function ChatMessage({
           loading="lazy"
           decoding="async"
           className="rpg-avatar-panel-tail-image absolute inset-0 h-full w-full object-cover object-top"
-          style={avatarCropStyle}
+          style={panelAvatarCropStyle}
         />
       </div>
     ) : null
@@ -1377,7 +1418,7 @@ export const ChatMessage = memo(function ChatMessage({
                       loading="lazy"
                       decoding="async"
                       className="absolute inset-0 h-full w-full object-cover transition-opacity duration-700"
-                      style={{ opacity: i === 0 ? 1 : 0, ...getAvatarCropStyle(avatar.crop) }}
+                      style={{ opacity: i === 0 ? 1 : 0, ...compactMergedAvatarCropStyle(avatar) }}
                     />
                   ))}
                 </button>
@@ -1395,7 +1436,7 @@ export const ChatMessage = memo(function ChatMessage({
                       loading="lazy"
                       decoding="async"
                       className="h-full w-full object-cover"
-                      style={avatarCropStyle}
+                      style={compactAvatarCropStyle}
                     />
                   </button>
                 </div>
@@ -1518,7 +1559,7 @@ export const ChatMessage = memo(function ChatMessage({
                               loading="lazy"
                               decoding="async"
                               className="absolute inset-0 h-full w-full object-cover object-top transition-opacity duration-700"
-                              style={{ opacity: i === 0 ? 1 : 0, ...getAvatarCropStyle(avatar.crop) }}
+                              style={{ opacity: i === 0 ? 1 : 0, ...panelMergedAvatarCropStyle(avatar) }}
                             />
                           ))}
                         </button>
@@ -1538,7 +1579,7 @@ export const ChatMessage = memo(function ChatMessage({
                             loading="lazy"
                             decoding="async"
                             className="h-full w-full object-cover object-top"
-                            style={avatarCropStyle}
+                            style={panelAvatarCropStyle}
                           />
                         </button>
                       ) : (
