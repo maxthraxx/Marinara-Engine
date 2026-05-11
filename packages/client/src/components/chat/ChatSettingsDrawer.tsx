@@ -417,7 +417,13 @@ export function ChatSettingsDrawer({
     queryKey: ["spotify", "playlists", 50],
     queryFn: () =>
       api.get<{
-        playlists: Array<{ id: string; name: string; uri: string; trackCount: number | null; owned: boolean }>;
+        playlists: Array<{
+          id: string;
+          name: string;
+          uri: string;
+          trackCount: number | null;
+          owned: boolean | null;
+        }>;
       }>("/spotify/playlists?limit=50"),
     enabled: open && isGame && gameUseSpotifyMusic && gameSpotifySourceType === "playlist",
     staleTime: 60_000,
@@ -3678,9 +3684,9 @@ export function ChatSettingsDrawer({
                                   const suffix =
                                     typeof playlist.trackCount === "number"
                                       ? ` (${playlist.trackCount})`
-                                      : playlist.owned
-                                        ? ""
-                                        : " (followed — unavailable)";
+                                      : playlist.owned === false
+                                        ? " (followed — unavailable)"
+                                        : "";
                                   return (
                                     <option key={playlist.id} value={playlist.id}>
                                       {playlist.name}
