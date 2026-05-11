@@ -42,6 +42,10 @@ export interface SceneAnalyzerContext {
   useSpotifyMusic?: boolean;
   /** Spotify tracks preselected mechanically for the scene analyzer to choose from. */
   availableSpotifyTracks?: SceneSpotifyTrackCandidate[];
+  /** Currently or most recently played Spotify track URI. */
+  currentSpotifyTrack?: string | null;
+  /** Recently played Spotify track URIs, most recent first. */
+  recentSpotifyTracks?: string[];
   /** Current ambient tag. */
   currentAmbient?: string | null;
   /** Current weather. */
@@ -179,6 +183,9 @@ export function buildSceneAnalyzerUserPrompt(
   const locationKindOptions = [...LOCATION_KINDS, "null"].join(" | ");
   const useSpotifyMusic = !!ctx?.useSpotifyMusic;
   const spotifyOptions = (ctx?.availableSpotifyTracks ?? []).slice(0, 50);
+  const recentSpotifyTracks = Array.from(
+    new Set([ctx?.currentSpotifyTrack ?? null, ...(ctx?.recentSpotifyTracks ?? [])]),
+  ).filter((uri): uri is string => typeof uri === "string" && uri.startsWith("spotify:track:"));
 
   // ── 1. Narration (longest — furthest from generation) ──
 
@@ -210,6 +217,14 @@ export function buildSceneAnalyzerUserPrompt(
         const album = track.album ? `, album="${compactPromptLabel(track.album)}"` : "";
         return `${index + 1}. uri="${track.uri}", title="${compactPromptLabel(track.name)}", artist="${compactPromptLabel(track.artist)}"${album}`;
       }),
+    );
+  }
+
+  if (useSpotifyMusic && recentSpotifyTracks.length > 0) {
+    parts.push(
+      ``,
+      `RECENT SPOTIFY TRACKS (avoid repeating unless no other option fits):`,
+      ...recentSpotifyTracks.slice(0, 8).map((uri, index) => `${index + 1}. ${uri}`),
     );
   }
 
@@ -255,6 +270,7 @@ export function buildSceneAnalyzerUserPrompt(
     ...(useSpotifyMusic
       ? [
           `- spotifyTrack must be null or one URI string copied exactly from SPOTIFY TRACK OPTIONS. Never invent a Spotify URI. Do not wrap it in an object. Do not include a reason.`,
+          `- Prefer a spotifyTrack that is not in RECENT SPOTIFY TRACKS when another suitable option exists.`,
           `- Do not include musicGenre or musicIntensity when Spotify music is enabled.`,
         ]
       : [

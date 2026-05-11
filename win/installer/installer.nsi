@@ -88,7 +88,11 @@ Future updates: Open Settings in the app and click $\"Check for Updates$\"."
 
 ; ── Pages ──
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE WarnSameDirectoryReinstall
 !insertmacro MUI_PAGE_DIRECTORY
+!ifdef MUI_PAGE_CUSTOMFUNCTION_LEAVE
+!undef MUI_PAGE_CUSTOMFUNCTION_LEAVE
+!endif
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 
@@ -112,6 +116,31 @@ Var STAGE_PARENT
 
 Function LaunchApp
   ExecShell "" "$INSTDIR\start.bat"
+FunctionEnd
+
+Function WarnSameDirectoryReinstall
+  StrCpy $1 "0"
+  ReadRegStr $0 HKCU "Software\${APP_NAME}" "InstallDir"
+  ${If} $0 != ""
+  ${AndIf} $INSTDIR == $0
+    StrCpy $1 "1"
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\data\*.*"
+    StrCpy $1 "1"
+  ${EndIf}
+  ${If} $1 != "1"
+    Return
+  ${EndIf}
+
+  MessageBox MB_YESNO|MB_ICONEXCLAMATION "\
+yo this'll delete your user data$\r$\n$\r$\n\
+You are reinstalling ${APP_NAME} into the same folder:$\r$\n\
+$INSTDIR$\r$\n$\r$\n\
+Back up $INSTDIR\data first if you want to keep it.$\r$\n$\r$\n\
+Continue anyway?" IDYES continueReinstallWarning
+  Abort
+
+  continueReinstallWarning:
 FunctionEnd
 
 Function CreateAppShortcut

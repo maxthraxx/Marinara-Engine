@@ -32,6 +32,27 @@ set "INSTALL_DIR=%USERPROFILE%\Marinara-Engine"
 set "USER_INPUT="
 set /p "USER_INPUT=  Install location [%INSTALL_DIR%]: "
 if not "%USER_INPUT%"=="" set "INSTALL_DIR=%USER_INPUT%"
+if exist "%INSTALL_DIR%\data\" goto :warn_same_install_dir
+if exist "%INSTALL_DIR%\.git\" goto :warn_same_install_dir
+if exist "%INSTALL_DIR%\start.bat" goto :warn_same_install_dir
+goto :after_same_install_dir_warning
+
+:warn_same_install_dir
+echo.
+echo  [WARN] yo this'll delete your user data
+echo         You are reinstalling Marinara Engine into:
+echo         %INSTALL_DIR%
+echo.
+echo         Back up %INSTALL_DIR%\data first if you want to keep it.
+echo.
+choice /C YN /N /M "  Continue anyway? [Y/N]: "
+if errorlevel 2 (
+    echo.
+    echo  Installation cancelled.
+    goto :eof
+)
+
+:after_same_install_dir_warning
 
 :: -- Check prerequisites --
 echo.

@@ -34,6 +34,8 @@ interface AnalyzeSceneInput {
     recentMusic?: string[];
     useSpotifyMusic?: boolean;
     availableSpotifyTracks?: SceneSpotifyTrackCandidate[];
+    currentSpotifyTrack?: string | null;
+    recentSpotifyTracks?: string[];
     currentAmbient: string | null;
     currentWeather: string | null;
     currentTimeOfDay: string | null;

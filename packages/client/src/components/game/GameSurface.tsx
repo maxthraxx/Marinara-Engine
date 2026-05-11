@@ -65,6 +65,7 @@ import { normalizeGameSegmentEdit, serializeGameSegmentEdit, type GameSegmentEdi
 import { useSceneAnalysis } from "../../hooks/use-scene-analysis";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { parsePartyDialogue } from "../../lib/party-dialogue-parser";
+import { dispatchSpotifySceneTrackChange } from "../../lib/spotify-playback-events";
 import { ActiveWorldInfoButton, ActiveWorldInfoModal } from "../chat/ActiveWorldInfoButton";
 import type {
   PartyDialogueLine,
@@ -453,7 +454,7 @@ function combatStatusEffectsFromGenerated(
   const mapped = statuses
     .filter((status) => status?.name)
     .map((status) => ({
-      name: status.name,
+      name: typeof status.name === "string" ? status.name : String(status.name),
       modifier: typeof status.modifier === "number" ? status.modifier : 0,
       stat: status.stat ?? ("hp" as const),
       turnsLeft: Math.max(1, Number(status.duration) || 1),
@@ -487,8 +488,8 @@ function combatSkillsFromGeneratedAttacks(
             : 1.35,
       description: attack.description || (attack.type === "AoE" ? "Area combat ability" : "Combat ability"),
       cooldown: typeof attack.cooldown === "number" ? attack.cooldown : undefined,
-      element: attack.element || undefined,
-      statusEffect: attack.statusEffect || undefined,
+      element: typeof attack.element === "string" ? attack.element : undefined,
+      statusEffect: typeof attack.statusEffect === "string" ? attack.statusEffect : undefined,
     });
   }
   return skills.length > 0 ? skills : undefined;
@@ -1572,6 +1573,7 @@ function getSceneBackgroundTags(assetKeys: string[]): string[] {
 }
 
 const RECENT_MUSIC_HISTORY_LIMIT = 8;
+const RECENT_SPOTIFY_TRACK_HISTORY_LIMIT = 12;
 const GAME_START_GENERATION_GUIDE =
   "Begin the game now with the first visible GM VN narration/dialogue segment. This is an invisible startup trigger, not a player action. Do not mention a start command.";
 const SYNTHETIC_GAME_START_MESSAGE_RE = /^\s*\[start(?:\s+the)?\s+game\]\s*$/i;
@@ -1583,6 +1585,19 @@ function normalizeRecentMusicHistory(value: unknown): string[] {
 function appendRecentMusic(history: string[], tag: string | null | undefined): string[] {
   if (!tag) return history.slice(0, RECENT_MUSIC_HISTORY_LIMIT);
   return [tag, ...history.filter((entry) => entry !== tag)].slice(0, RECENT_MUSIC_HISTORY_LIMIT);
+}
+
+function normalizeRecentSpotifyTrackHistory(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((uri): uri is string => typeof uri === "string" && uri.startsWith("spotify:track:"))
+        .slice(0, RECENT_SPOTIFY_TRACK_HISTORY_LIMIT)
+    : [];
+}
+
+function appendRecentSpotifyTrack(history: string[], uri: string | null | undefined): string[] {
+  if (!uri?.startsWith("spotify:track:")) return history.slice(0, RECENT_SPOTIFY_TRACK_HISTORY_LIMIT);
+  return [uri, ...history.filter((entry) => entry !== uri)].slice(0, RECENT_SPOTIFY_TRACK_HISTORY_LIMIT);
 }
 
 function formatCombatLogContent(message: Message): string {
@@ -1952,6 +1967,9 @@ export function GameSurface({
   const [activeReadable, setActiveReadable] = useState<JournalReadable | null>(null);
   const readableQueueRef = useRef<JournalReadable[]>([]);
   const recentMusicHistoryRef = useRef<string[]>(normalizeRecentMusicHistory(chatMeta.gameRecentMusic));
+  const recentSpotifyTrackHistoryRef = useRef<string[]>(
+    normalizeRecentSpotifyTrackHistory(chatMeta.gameRecentSpotifyTracks),
+  );
   const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startGameGuardRef = useRef(false);
   const startSessionGuardRef = useRef(false);
@@ -2168,6 +2186,7 @@ export function GameSurface({
     if (prevActiveChatRef.current === activeChatId) return; // skip initial mount
     prevActiveChatRef.current = activeChatId;
     recentMusicHistoryRef.current = normalizeRecentMusicHistory(chatMeta.gameRecentMusic);
+    recentSpotifyTrackHistoryRef.current = normalizeRecentSpotifyTrackHistory(chatMeta.gameRecentSpotifyTracks);
     setPartyDialogue([]);
     setPartyChatMessageId(null);
     setQueuedQte(null);
@@ -2198,7 +2217,7 @@ export function GameSurface({
     setPrepareSessionWidgetsOpen(false);
     // Allow the auto-tutorial to re-evaluate for the new chat (guard still gates on disabled flag)
     tutorialAutoTriggeredRef.current = false;
-  }, [activeChatId, chatMeta.gameInventory, chatMeta.gameRecentMusic]);
+  }, [activeChatId, chatMeta.gameInventory, chatMeta.gameRecentMusic, chatMeta.gameRecentSpotifyTracks]);
 
   const clearPendingInteractiveCommands = useCallback(() => {
     setActiveChoices(null);
@@ -2840,11 +2859,21 @@ export function GameSurface({
       if (!activeChatId || !useSpotifyGameMusic || !track?.uri) return;
       setSpotifyRetryPending(true);
       try {
+        dispatchSpotifySceneTrackChange(track.uri);
         await api.post<GameSpotifyPlayResponse>(
           "/game/spotify/play",
           { chatId: activeChatId, track },
           { signal: AbortSignal.timeout(20_000) },
         );
+        recentSpotifyTrackHistoryRef.current = appendRecentSpotifyTrack(
+          recentSpotifyTrackHistoryRef.current,
+          track.uri,
+        );
+        api
+          .patch(`/chats/${activeChatId}/metadata`, {
+            gameRecentSpotifyTracks: recentSpotifyTrackHistoryRef.current,
+          })
+          .catch(() => {});
         await queryClient.invalidateQueries({ queryKey: ["spotify", "player"] });
       } catch (error) {
         console.warn("[spotify/game] Failed to play scene track:", error);
@@ -2936,6 +2965,7 @@ export function GameSurface({
       normalizeRecentMusicHistory(chatMeta.gameRecentMusic),
       savedMusic,
     );
+    recentSpotifyTrackHistoryRef.current = normalizeRecentSpotifyTrackHistory(chatMeta.gameRecentSpotifyTracks);
 
     // Always overwrite from chatMeta (source of truth on mount) — handles both
     // same-chat remount (store may already match) and different-chat mount.
@@ -2992,6 +3022,7 @@ export function GameSurface({
     chatMeta.gameSceneBackground,
     chatMeta.gameSceneMusic,
     chatMeta.gameRecentMusic,
+    chatMeta.gameRecentSpotifyTracks,
     chatMeta.gameSceneAmbient,
     hasQteResponseAfterMessage,
     hasCombatResultAfterMessage,
@@ -3580,6 +3611,8 @@ export function GameSurface({
       recentMusic: recentMusicHistoryRef.current,
       useSpotifyMusic: useSpotifyGameMusic,
       availableSpotifyTracks: [] as SceneSpotifyTrackCandidate[],
+      currentSpotifyTrack: recentSpotifyTrackHistoryRef.current[0] ?? null,
+      recentSpotifyTracks: recentSpotifyTrackHistoryRef.current,
       currentAmbient: useGameAssetStore.getState().currentAmbient,
       currentWeather: gameSnapshot?.weather ?? null,
       currentTimeOfDay: gameSnapshot?.time ?? null,
@@ -4377,6 +4410,8 @@ export function GameSurface({
       recentMusic: recentMusicHistoryRef.current,
       useSpotifyMusic: useSpotifyGameMusic,
       availableSpotifyTracks: [] as SceneSpotifyTrackCandidate[],
+      currentSpotifyTrack: recentSpotifyTrackHistoryRef.current[0] ?? null,
+      recentSpotifyTracks: recentSpotifyTrackHistoryRef.current,
       currentAmbient: useGameAssetStore.getState().currentAmbient,
       currentWeather: gameSnapshot?.weather ?? null,
       currentTimeOfDay: gameSnapshot?.time ?? null,

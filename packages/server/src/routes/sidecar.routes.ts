@@ -280,6 +280,8 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
         )
         .max(50)
         .optional(),
+      currentSpotifyTrack: z.string().max(300).nullable().optional(),
+      recentSpotifyTracks: z.array(z.string().max(300)).max(20).optional(),
       currentAmbient: z.string().nullable().optional(),
       currentWeather: z.string().nullable().optional(),
       currentTimeOfDay: z.string().nullable().optional(),

@@ -1806,7 +1806,8 @@ export function GameNarration({
     editingContent === null &&
     segmentEditInfoRef.current[activeIndex] != null
   );
-  const narrationComplete = !isStreaming && segments.length > 0 && activeIndex === segments.length - 1 && doneTyping;
+  const narrationComplete =
+    !isStreaming && !scenePreparing && segments.length > 0 && activeIndex === segments.length - 1 && doneTyping;
   const activeSegmentAnchor = active ? narrationSegmentAnchorKey(active) : null;
   const segmentAnchorSignature = useMemo(() => segments.map(narrationSegmentAnchorKey).join("|"), [segments]);
   const activeSegmentAnchorRef = useRef<{ key: string; index: number; sourceMessageId: string | null } | null>(null);
@@ -2263,10 +2264,10 @@ export function GameNarration({
   const getSegmentStartVisibleChars = useCallback(
     (index: number) => {
       const segment = segments[index];
-      if (!segment || !gameInstantTextReveal || directionsActive) return 0;
+      if (!segment || !gameInstantTextReveal || directionsActive || scenePreparing) return 0;
       return effectDisplayLength(segment.content);
     },
-    [segments, gameInstantTextReveal, directionsActive],
+    [segments, gameInstantTextReveal, directionsActive, scenePreparing],
   );
 
   useEffect(() => {
@@ -2363,6 +2364,7 @@ export function GameNarration({
   const readableFiredRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (narrationMessageChanged) return;
+    if (scenePreparing) return;
     if (!active || active.type !== "readable" || !active.readableContent || !onReadable) return;
     if (readableFiredRef.current.has(active.id)) return;
     const dispLen = effectDisplayLength(active.content);
@@ -2374,7 +2376,7 @@ export function GameNarration({
       sourceMessageId: active.sourceMessageId,
       sourceSegmentIndex: active.sourceSegmentIndex,
     });
-  }, [active, narrationMessageChanged, visibleChars, onReadable]);
+  }, [active, narrationMessageChanged, scenePreparing, visibleChars, onReadable]);
 
   useEffect(() => {
     if (!ttsConfig || !gameVoiceEnabled || isStreaming || generationFailed) return;
@@ -2613,7 +2615,7 @@ export function GameNarration({
   useEffect(() => {
     if (!active) return;
     // Pause typewriter while direction effects (fades, flashes, etc.) are playing
-    if (directionsActive) return;
+    if (directionsActive || scenePreparing) return;
     const dispLen = effectDisplayLength(active.content);
 
     // Sync internal position with React state (handles restore / skip / segment change)
@@ -2643,7 +2645,7 @@ export function GameNarration({
     }, TICK_MS);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, gameInstantTextReveal, gameTextSpeed, directionsActive]); // visibleChars intentionally excluded — managed internally
+  }, [active, gameInstantTextReveal, gameTextSpeed, directionsActive, scenePreparing]); // visibleChars intentionally excluded — managed internally
 
   const assetManifest = useGameAssetStore((s) => s.manifest);
 

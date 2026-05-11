@@ -29,6 +29,8 @@ import type {
   CombatDialogueCue,
   CombatItemEffect,
   CombatMechanic,
+  CombatSkill,
+  CombatStatus,
   PartyDialogueLine,
   TTSConfig,
 } from "@marinara-engine/shared";
@@ -57,6 +59,9 @@ import {
 // initials fallback instead of stuffing free text into `<img src>`.
 type SpriteKind = { kind: "url"; value: string } | { kind: "emoji"; value: string } | { kind: "none" };
 
+type CombatSkillType = NonNullable<Combatant["skills"]>[number]["type"];
+type CombatStatusStat = NonNullable<Combatant["statusEffects"]>[number]["stat"];
+
 function resolveSpriteKind(sprite: string | null | undefined): SpriteKind {
   if (!sprite) return { kind: "none" };
   const trimmed = sprite.trim();
@@ -68,6 +73,221 @@ function resolveSpriteKind(sprite: string | null | undefined): SpriteKind {
     return { kind: "emoji", value: trimmed };
   }
   return { kind: "none" };
+}
+
+function stringFromUnknown(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return (
+      stringFromUnknown(record.name) ??
+      stringFromUnknown(record.label) ??
+      stringFromUnknown(record.id) ??
+      stringFromUnknown(record.type)
+    );
+  }
+  return undefined;
+}
+
+function numberFromUnknown(value: unknown, fallback: number): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeCombatSkillType(value: unknown): CombatSkillType {
+  return value === "heal" || value === "buff" || value === "debuff" ? value : "attack";
+}
+
+function normalizeCombatStatusStat(value: unknown): CombatStatusStat {
+  return value === "attack" || value === "defense" || value === "speed" || value === "hp" ? value : "hp";
+}
+
+function sanitizeCombatSkills(skills: unknown): Combatant["skills"] {
+  if (!Array.isArray(skills)) return undefined;
+  const sanitized: CombatSkill[] = [];
+  for (const [index, raw] of skills.entries()) {
+    if (!raw || typeof raw !== "object") continue;
+    const skill = raw as Record<string, unknown>;
+    const name = stringFromUnknown(skill.name);
+    if (!name) continue;
+    const next: CombatSkill = {
+      id: stringFromUnknown(skill.id) ?? `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${index}`,
+      name,
+      type: normalizeCombatSkillType(skill.type),
+      mpCost: Math.max(0, numberFromUnknown(skill.mpCost, 0)),
+      power: Math.max(0.1, numberFromUnknown(skill.power, 1)),
+    };
+    const description = stringFromUnknown(skill.description);
+    if (description) next.description = description;
+    if (typeof skill.cooldown === "number" && Number.isFinite(skill.cooldown)) next.cooldown = skill.cooldown;
+    const element = stringFromUnknown(skill.element);
+    if (element) next.element = element;
+    const statusEffect = stringFromUnknown(skill.statusEffect);
+    if (statusEffect) next.statusEffect = statusEffect;
+    sanitized.push(next);
+  }
+  return sanitized.length > 0 ? sanitized : undefined;
+}
+
+function sanitizeCombatStatusEffects(statusEffects: unknown): Combatant["statusEffects"] {
+  if (!Array.isArray(statusEffects)) return undefined;
+  const sanitized = statusEffects
+    .map((raw) => {
+      if (!raw || typeof raw !== "object") return null;
+      const effect = raw as Record<string, unknown>;
+      const name = stringFromUnknown(effect.name);
+      if (!name) return null;
+      return {
+        name,
+        modifier: numberFromUnknown(effect.modifier, 0),
+        stat: normalizeCombatStatusStat(effect.stat),
+        turnsLeft: Math.max(1, Math.floor(numberFromUnknown(effect.turnsLeft, 1))),
+      };
+    })
+    .filter((effect): effect is NonNullable<Combatant["statusEffects"]>[number] => !!effect);
+  return sanitized.length > 0 ? sanitized : undefined;
+}
+
+function sanitizeElementAura(elementAura: unknown): Combatant["elementAura"] | undefined {
+  if (elementAura == null) return elementAura as null | undefined;
+  if (!elementAura || typeof elementAura !== "object") return undefined;
+  const aura = elementAura as Record<string, unknown>;
+  const element = stringFromUnknown(aura.element);
+  const sourceId = stringFromUnknown(aura.sourceId);
+  if (!element || !sourceId) return undefined;
+  return {
+    element,
+    gauge: numberFromUnknown(aura.gauge, 1),
+    sourceId,
+  };
+}
+
+function sanitizeCombatItemEffect(effect: unknown): CombatItemEffect | undefined {
+  if (!effect || typeof effect !== "object") return undefined;
+  const raw = effect as Record<string, unknown>;
+  const name = stringFromUnknown(raw.name);
+  if (!name) return undefined;
+  const target =
+    raw.target === "self" || raw.target === "ally" || raw.target === "enemy" || raw.target === "any"
+      ? raw.target
+      : "any";
+  const type =
+    raw.type === "heal" ||
+    raw.type === "damage" ||
+    raw.type === "buff" ||
+    raw.type === "debuff" ||
+    raw.type === "status" ||
+    raw.type === "utility"
+      ? raw.type
+      : "utility";
+  const status =
+    raw.status && typeof raw.status === "object"
+      ? (() => {
+          const rawStatus = raw.status as Record<string, unknown>;
+          const statusName = stringFromUnknown(rawStatus.name);
+          if (!statusName) return undefined;
+          const status: CombatStatus = {
+            name: statusName,
+            emoji: stringFromUnknown(rawStatus.emoji) ?? "",
+            duration: Math.max(1, Math.floor(numberFromUnknown(rawStatus.duration, 2))),
+          };
+          if (typeof rawStatus.modifier === "number" && Number.isFinite(rawStatus.modifier)) {
+            status.modifier = rawStatus.modifier;
+          }
+          if (
+            rawStatus.stat === "attack" ||
+            rawStatus.stat === "defense" ||
+            rawStatus.stat === "speed" ||
+            rawStatus.stat === "hp"
+          ) {
+            status.stat = rawStatus.stat;
+          }
+          return status;
+        })()
+      : undefined;
+  return {
+    name,
+    target,
+    type,
+    description: stringFromUnknown(raw.description) ?? name,
+    power: typeof raw.power === "number" && Number.isFinite(raw.power) ? raw.power : undefined,
+    element: stringFromUnknown(raw.element),
+    status,
+    consumes: typeof raw.consumes === "boolean" ? raw.consumes : undefined,
+  };
+}
+
+function sanitizeCombatMechanics(mechanics: unknown): CombatMechanic[] | undefined {
+  if (!Array.isArray(mechanics)) return undefined;
+  const sanitized: CombatMechanic[] = [];
+  for (const raw of mechanics) {
+    if (!raw || typeof raw !== "object") continue;
+    const mechanic = raw as Record<string, unknown>;
+    const name = stringFromUnknown(mechanic.name);
+    const description = stringFromUnknown(mechanic.description);
+    if (!name || !description) continue;
+    const next: CombatMechanic = {
+      name,
+      description,
+      trigger:
+        mechanic.trigger === "round_interval" ||
+        mechanic.trigger === "hp_threshold" ||
+        mechanic.trigger === "on_hit" ||
+        mechanic.trigger === "on_attack" ||
+        mechanic.trigger === "passive"
+          ? mechanic.trigger
+          : "passive",
+    };
+    const ownerName = stringFromUnknown(mechanic.ownerName);
+    if (ownerName) next.ownerName = ownerName;
+    if (typeof mechanic.interval === "number" && Number.isFinite(mechanic.interval)) next.interval = mechanic.interval;
+    if (typeof mechanic.hpThreshold === "number" && Number.isFinite(mechanic.hpThreshold)) {
+      next.hpThreshold = mechanic.hpThreshold;
+    }
+    const counterplay = stringFromUnknown(mechanic.counterplay);
+    if (counterplay) next.counterplay = counterplay;
+    if (
+      mechanic.effectType === "damage_all" ||
+      mechanic.effectType === "damage_one" ||
+      mechanic.effectType === "buff_self" ||
+      mechanic.effectType === "debuff_party" ||
+      mechanic.effectType === "status_party" ||
+      mechanic.effectType === "status_enemy"
+    ) {
+      next.effectType = mechanic.effectType;
+    }
+    if (typeof mechanic.power === "number" && Number.isFinite(mechanic.power)) next.power = mechanic.power;
+    const element = stringFromUnknown(mechanic.element);
+    if (element) next.element = element;
+    const status = sanitizeCombatItemEffect({ name, target: "any", type: "status", status: mechanic.status })?.status;
+    if (status) next.status = status;
+    sanitized.push(next);
+  }
+  return sanitized.length > 0 ? sanitized : undefined;
+}
+
+function sanitizeCombatantForRound(combatant: Combatant): Omit<Combatant, "sprite"> {
+  return {
+    id: stringFromUnknown(combatant.id) ?? combatant.id,
+    name: stringFromUnknown(combatant.name) ?? combatant.name,
+    hp: numberFromUnknown(combatant.hp, 0),
+    maxHp: Math.max(1, numberFromUnknown(combatant.maxHp, 1)),
+    mp: combatant.mp == null ? undefined : numberFromUnknown(combatant.mp, 0),
+    maxMp: combatant.maxMp == null ? undefined : Math.max(0, numberFromUnknown(combatant.maxMp, 0)),
+    attack: Math.max(1, numberFromUnknown(combatant.attack, 1)),
+    defense: Math.max(0, numberFromUnknown(combatant.defense, 0)),
+    speed: Math.max(0, numberFromUnknown(combatant.speed, 0)),
+    level: Math.max(1, numberFromUnknown(combatant.level, 1)),
+    side: combatant.side,
+    skills: sanitizeCombatSkills(combatant.skills),
+    statusEffects: sanitizeCombatStatusEffects(combatant.statusEffects),
+    element: stringFromUnknown(combatant.element),
+    elementAura: sanitizeElementAura(combatant.elementAura),
+  };
 }
 
 // Mobile layout breakpoint. Uses Tailwind's `sm` boundary so the existing
@@ -973,28 +1193,13 @@ export function GameCombatUI({
       combatRound.mutate(
         {
           chatId,
-          combatants: allCombatants
-            .filter((c) => c.hp > 0)
-            .map((c) => ({
-              id: c.id,
-              name: c.name,
-              hp: c.hp,
-              maxHp: c.maxHp,
-              mp: c.mp,
-              maxMp: c.maxMp,
-              attack: c.attack,
-              defense: c.defense,
-              speed: c.speed,
-              level: c.level,
-              side: c.side,
-              skills: c.skills,
-              statusEffects: c.statusEffects,
-              element: c.element,
-              elementAura: c.elementAura,
-            })),
+          combatants: allCombatants.filter((c) => c.hp > 0).map((c) => sanitizeCombatantForRound(c)),
           round,
-          playerAction,
-          mechanics: combatMechanics,
+          playerAction:
+            playerAction.type === "item"
+              ? { ...playerAction, itemEffect: sanitizeCombatItemEffect(playerAction.itemEffect) }
+              : playerAction,
+          mechanics: sanitizeCombatMechanics(combatMechanics),
         },
         {
           onSuccess: (data) => {

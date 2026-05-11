@@ -96,7 +96,7 @@ export function useApplyRegex() {
     [parsedScripts],
   );
 
-  // Applies only prompt-only scripts (for content sent to the AI but not displayed)
+  // Applies scripts in prompt context, including scripts marked prompt-only.
   const applyPromptOnly = useCallback(
     (text: string, placement: RegexPlacement, depth?: number) =>
       applyScripts(text, parsedScripts, placement, { promptOnly: true, depth }),

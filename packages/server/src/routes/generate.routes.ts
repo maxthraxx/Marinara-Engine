@@ -13,7 +13,6 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   resolveMacros,
   LIMITS,
-  applyRegexReplacement,
 } from "@marinara-engine/shared";
 import type {
   AgentContext,
@@ -36,6 +35,7 @@ import { createGameStateStorage } from "../services/storage/game-state.storage.j
 import { createCustomToolsStorage } from "../services/storage/custom-tools.storage.js";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
 import { createRegexScriptsStorage } from "../services/storage/regex-scripts.storage.js";
+import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { loadPrompt, CONVERSATION_SELFIE } from "../services/prompt-overrides/index.js";
 import { processLorebooks } from "../services/lorebook/index.js";
@@ -934,53 +934,19 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       }
 
-      // ── Apply prompt-only regex scripts to message content ──
-      const allRegexScripts = await regexScriptsStore.list();
-      const promptOnlyScripts = allRegexScripts.filter((s: any) => {
-        if (s.enabled !== "true" || s.promptOnly !== "true") return false;
-        return true;
-      });
-      if (promptOnlyScripts.length > 0) {
-        const totalMessages = mappedMessages.length;
-        for (let msgIdx = 0; msgIdx < totalMessages; msgIdx++) {
-          const msg = mappedMessages[msgIdx]!;
-          const messageDepth = totalMessages - 1 - msgIdx;
-          const placement = msg.role === "user" ? "user_input" : "ai_output";
-          let text = msg.content;
-          for (const script of promptOnlyScripts) {
-            const placements: string[] = (() => {
-              try {
-                return JSON.parse(script.placement as string);
-              } catch {
-                return [];
-              }
-            })();
-            if (!placements.includes(placement)) continue;
-            // Depth range filtering
-            const sMinDepth = script.minDepth as number | null;
-            const sMaxDepth = script.maxDepth as number | null;
-            if (sMinDepth != null && messageDepth < sMinDepth) continue;
-            if (sMaxDepth != null && messageDepth > sMaxDepth) continue;
-            try {
-              const re = new RegExp(script.findRegex as string, script.flags as string);
-              text = applyRegexReplacement(text, re, script.replaceString as string);
-              const trims: string[] = (() => {
-                try {
-                  return JSON.parse(script.trimStrings as string);
-                } catch {
-                  return [];
-                }
-              })();
-              for (const t of trims) {
-                if (t) text = text.split(t).join("");
-              }
-            } catch {
-              /* invalid regex — skip */
-            }
-          }
-          msg.content = text;
-        }
+      const characterIds: string[] = JSON.parse(chat.characterIds as string);
+
+      // ── Game mode: apply segment edit/delete overlays before regex scripts ──
+      // Users can edit individual narration/dialogue beats in the VN UI.
+      // Apply overlays first so regex scripts also affect corrected beat text.
+      if (chatMode === "game") {
+        applyAllSegmentEdits(mappedMessages, chatMeta as Record<string, unknown>, chatMessages);
       }
+
+      // ── Apply regex scripts to prompt message content ──
+      // Normal scripts apply to both prompt context and display; Prompt Only
+      // scripts are excluded only from display by the client.
+      applyRegexScriptsToPromptMessages(mappedMessages, await regexScriptsStore.list());
 
       // Always collapse 3+ consecutive blank lines into a double newline —
       // these waste tokens and produce messy logs regardless of user regex settings.
@@ -989,8 +955,6 @@ export async function generateRoutes(app: FastifyInstance) {
         msg.content = msg.content.replace(/\n([ \t]*\n){2,}/g, "\n\n");
       }
 
-      const characterIds: string[] = JSON.parse(chat.characterIds as string);
-
       // Resolve persona — prefer per-chat personaId, fall back to globally active persona
       // (Game mode skips the fallback — persona must be explicitly selected in the setup wizard)
       let personaId: string | null = null;
@@ -998,14 +962,6 @@ export async function generateRoutes(app: FastifyInstance) {
       let personaDescription = "";
       let personaFields: { personality?: string; scenario?: string; backstory?: string; appearance?: string } = {};
       const allPersonas = await chars.listPersonas();
-      // ── Game mode: apply segment edit overlays to message content ──
-      // Users can edit individual narration/dialogue segments in the VN UI.
-      // Edits are stored as chat-metadata overlays; apply them so the model
-      // sees the corrected text in its conversation history.
-      if (chatMode === "game") {
-        applyAllSegmentEdits(mappedMessages, chatMeta as Record<string, unknown>, chatMessages);
-      }
-
       const persona =
         (chat.personaId ? allPersonas.find((p: any) => p.id === chat.personaId) : null) ??
         (chatMode !== "game" ? allPersonas.find((p: any) => p.isActive === "true") : null);

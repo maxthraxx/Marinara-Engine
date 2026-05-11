@@ -11,7 +11,6 @@ import {
   nameToXmlTag,
   resolveMacros,
   summariesPatchSchema,
-  applyRegexReplacement,
 } from "@marinara-engine/shared";
 import type { CharacterData, ChatMemoryChunk, LorebookEntryTimingState } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
@@ -40,6 +39,7 @@ import {
   isMemoryRecallVectorizerAvailable,
   resolveMemoryRecallEmbeddingSource,
 } from "../services/memory-recall-embedding.js";
+import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
 
 type TrackerWrapFormat = "xml" | "markdown" | "none";
 type EntryStateOverrides = Record<string, { ephemeral?: number | null; enabled?: boolean }>;
@@ -1000,50 +1000,9 @@ export async function chatsRoutes(app: FastifyInstance) {
             mappedMessages.pop();
           }
 
-          // ── Apply prompt-only regex scripts (mirrors generate.routes.ts) ──
+          // Apply regex scripts to prompt context (mirrors generate.routes.ts).
           const regexStore = createRegexScriptsStorage(app.db);
-          const allRegexScripts = await regexStore.list();
-          const promptOnlyScripts = allRegexScripts.filter((s: any) => s.enabled === "true" && s.promptOnly === "true");
-          if (promptOnlyScripts.length > 0) {
-            const totalMessages = mappedMessages.length;
-            for (let msgIdx = 0; msgIdx < totalMessages; msgIdx++) {
-              const msg = mappedMessages[msgIdx]!;
-              const messageDepth = totalMessages - 1 - msgIdx;
-              const placement = msg.role === "user" ? "user_input" : "ai_output";
-              let text = msg.content;
-              for (const script of promptOnlyScripts) {
-                const placements: string[] = (() => {
-                  try {
-                    return JSON.parse(script.placement as string);
-                  } catch {
-                    return [];
-                  }
-                })();
-                if (!placements.includes(placement)) continue;
-                const sMinDepth = script.minDepth as number | null;
-                const sMaxDepth = script.maxDepth as number | null;
-                if (sMinDepth != null && messageDepth < sMinDepth) continue;
-                if (sMaxDepth != null && messageDepth > sMaxDepth) continue;
-                try {
-                  const re = new RegExp(script.findRegex as string, script.flags as string);
-                  text = applyRegexReplacement(text, re, script.replaceString as string);
-                  const trims: string[] = (() => {
-                    try {
-                      return JSON.parse(script.trimStrings as string);
-                    } catch {
-                      return [];
-                    }
-                  })();
-                  for (const t of trims) {
-                    if (t) text = text.split(t).join("");
-                  }
-                } catch {
-                  /* invalid regex — skip */
-                }
-              }
-              msg.content = text;
-            }
-          }
+          applyRegexScriptsToPromptMessages(mappedMessages, await regexStore.list());
 
           const [sections, groups, choiceBlocks] = await Promise.all([
             presetStore.listSections(presetId),

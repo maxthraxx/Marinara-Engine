@@ -36,6 +36,7 @@ export interface GameSpotifyCandidateResult {
   cacheStatus?: "hit" | "miss";
   candidateMode?: string;
   matchedTokens?: string[];
+  excludedRecentTrackCount?: number;
   query?: string | null;
   reason?: string;
 }
@@ -239,23 +240,57 @@ function sampleSpotifyTracksEvenly(
   return sampled;
 }
 
+function buildSpotifyCandidatePool(
+  tracks: SceneSpotifyTrackCandidate[],
+  recentTrackUris: readonly string[] | undefined,
+): {
+  tracks: SceneSpotifyTrackCandidate[];
+  excludedRecentTrackCount: number;
+} {
+  const recent = new Set(
+    (recentTrackUris ?? []).filter((uri): uri is string => typeof uri === "string" && uri.startsWith("spotify:track:")),
+  );
+  if (recent.size === 0) {
+    return { tracks, excludedRecentTrackCount: 0 };
+  }
+
+  const fresh = tracks.filter((track) => !recent.has(track.uri));
+  if (fresh.length === 0) {
+    return { tracks, excludedRecentTrackCount: 0 };
+  }
+
+  return {
+    tracks: fresh,
+    excludedRecentTrackCount: tracks.length - fresh.length,
+  };
+}
+
 function selectSpotifyTrackCandidates(args: {
   tracks: SceneSpotifyTrackCandidate[];
   query: string;
   limit: number;
   sourceKey: string;
-}): { candidates: SceneSpotifyTrackCandidate[]; mode: string; tokens: string[] } {
+  recentTrackUris?: readonly string[];
+}): {
+  candidates: SceneSpotifyTrackCandidate[];
+  mode: string;
+  tokens: string[];
+  excludedRecentTrackCount: number;
+} {
   const phrase = normalizeSpotifyText(args.query);
   const tokens = buildSpotifyCandidateTokens(args.query);
+  const pool = buildSpotifyCandidatePool(args.tracks, args.recentTrackUris);
+  const modeSuffix = pool.excludedRecentTrackCount > 0 ? "_fresh" : "";
   if (tokens.length === 0) {
     return {
-      candidates: sampleSpotifyTracksEvenly(args.tracks, args.limit, `${args.sourceKey}:balanced`),
-      mode: "balanced_sample",
+      candidates: sampleSpotifyTracksEvenly(pool.tracks, args.limit, `${args.sourceKey}:balanced`),
+      mode: `balanced_sample${modeSuffix}`,
       tokens,
+      excludedRecentTrackCount: pool.excludedRecentTrackCount,
     };
   }
 
-  const scored = args.tracks
+  const scored = pool.tracks
     .map((track) => ({ ...track, score: scoreSpotifyCandidate(track, phrase, tokens) }))
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const strong = scored.filter((track) => (track.score ?? 0) >= 2);
@@ -265,7 +300,7 @@ function selectSpotifyTrackCandidates(args: {
 
   if (reserve > 0) {
     const fallback = sampleSpotifyTracksEvenly(
-      args.tracks.filter((track) => !seen.has(track.uri)),
+      pool.tracks.filter((track) => !seen.has(track.uri)),
       reserve,
       `${args.sourceKey}:${phrase}:fallback`,
     );
@@ -274,8 +309,9 @@ function selectSpotifyTrackCandidates(args: {
 
   return {
     candidates: selected.slice(0, args.limit),
-    mode: strong.length > 0 ? "scored_candidates" : "balanced_sample",
+    mode: `${strong.length > 0 ? "scored_candidates" : "balanced_sample"}${modeSuffix}`,
     tokens,
+    excludedRecentTrackCount: pool.excludedRecentTrackCount,
   };
 }
 
@@ -470,6 +506,7 @@ export async function getGameSpotifyCandidates(args: {
   chatMeta: Record<string, unknown>;
   query: string;
   limit?: number;
+  recentTrackUris?: readonly string[];
 }): Promise<GameSpotifyCandidateResult> {
   const source = getGameSpotifySource(args.chatMeta);
   if (!source.enabled) {
@@ -488,6 +525,7 @@ export async function getGameSpotifyCandidates(args: {
       query,
       limit,
       sourceKey,
+      recentTrackUris: args.recentTrackUris,
     });
     return {
       enabled: true,
@@ -499,6 +537,7 @@ export async function getGameSpotifyCandidates(args: {
       cacheStatus: index.cacheStatus,
       candidateMode: selection.mode,
       matchedTokens: selection.tokens,
+      excludedRecentTrackCount: selection.excludedRecentTrackCount,
       query: query || null,
     };
   }
@@ -510,23 +549,27 @@ export async function getGameSpotifyCandidates(args: {
     if (tracks.length === 0) {
       tracks = await searchSpotifyTracks(credentials, `artist:${artist}`, limit);
     }
+    const pool = buildSpotifyCandidatePool(tracks, args.recentTrackUris);
     return {
       enabled: true,
-      tracks,
+      tracks: pool.tracks.slice(0, limit),
       sourceType: source.type,
       sourceLabel: artist,
-      candidateMode: "spotify_search",
+      candidateMode: `spotify_search${pool.excludedRecentTrackCount > 0 ? "_fresh" : ""}`,
+      excludedRecentTrackCount: pool.excludedRecentTrackCount,
       query: artistQuery,
     };
   }
 
   const tracks = await searchSpotifyTracks(credentials, query || "game soundtrack instrumental", limit);
+  const pool = buildSpotifyCandidatePool(tracks, args.recentTrackUris);
   return {
     enabled: true,
-    tracks,
+    tracks: pool.tracks.slice(0, limit),
     sourceType: source.type,
     sourceLabel: "Spotify search",
-    candidateMode: "spotify_search",
+    candidateMode: `spotify_search${pool.excludedRecentTrackCount > 0 ? "_fresh" : ""}`,
+    excludedRecentTrackCount: pool.excludedRecentTrackCount,
     query: query || null,
   };
 }

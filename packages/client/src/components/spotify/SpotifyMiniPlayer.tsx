@@ -15,7 +15,6 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
-  Sparkles,
   Volume2,
   VolumeX,
   X,
@@ -31,6 +30,11 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { api } from "../../lib/api-client";
+import {
+  SPOTIFY_SCENE_TRACK_CHANGE_EVENT,
+  SPOTIFY_SCENE_TRACK_CHANGE_SUPPRESS_MS,
+  type SpotifySceneTrackChangeDetail,
+} from "../../lib/spotify-playback-events";
 import { cn } from "../../lib/utils";
 import { useUIStore } from "../../stores/ui.store";
 
@@ -154,8 +158,7 @@ function getNextRepeatState(state: SpotifyRepeatState | undefined): SpotifyRepea
   return "context";
 }
 
-function getShuffleTitle(shuffle: boolean, smartShuffle: boolean) {
-  if (smartShuffle) return "Smart Shuffle on";
+function getShuffleTitle(shuffle: boolean) {
   if (shuffle) return "Shuffle on";
   return "Shuffle off";
 }
@@ -387,6 +390,20 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
     );
   }, [dismissDjMariToast]);
 
+  useEffect(() => {
+    if (!enabled) return;
+    const handleSceneTrackChange = (event: Event) => {
+      const detail = (event as CustomEvent<SpotifySceneTrackChangeDetail>).detail;
+      if (!detail?.uri) return;
+      suppressRepeatRecoveryUntilRef.current = Date.now() + SPOTIFY_SCENE_TRACK_CHANGE_SUPPRESS_MS;
+      repeatReplayRef.current = null;
+      previousPlaybackRef.current = null;
+    };
+
+    window.addEventListener(SPOTIFY_SCENE_TRACK_CHANGE_EVENT, handleSceneTrackChange);
+    return () => window.removeEventListener(SPOTIFY_SCENE_TRACK_CHANGE_EVENT, handleSceneTrackChange);
+  }, [enabled]);
+
   const createDjMariPlaylist = useMutation({
     mutationFn: () =>
       api.post<DjMariPlaylistResponse>("/spotify/dj-mari-playlist", {
@@ -448,17 +465,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
 
   const handleShufflePress = useCallback(
     (args: { shuffle: boolean; smartShuffle: boolean; deviceId?: string | null }) => {
-      if (args.smartShuffle) {
-        runControl.mutate({ type: "shuffle", enabled: false, deviceId: args.deviceId });
-        return;
-      }
-
-      if (args.shuffle) {
-        toast.info("Spotify does not expose Smart Shuffle toggling through its Web API yet.");
-        return;
-      }
-
-      runControl.mutate({ type: "shuffle", enabled: true, deviceId: args.deviceId });
+      runControl.mutate({ type: "shuffle", enabled: !(args.shuffle || args.smartShuffle), deviceId: args.deviceId });
     },
     [runControl],
   );
@@ -544,7 +551,8 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
     runControl.isPending && (runControl.variables?.type === "play" || runControl.variables?.type === "pause");
   const shuffleActive = player?.shuffle === true;
   const smartShuffleActive = player?.smartShuffle === true;
-  const shuffleTitle = getShuffleTitle(shuffleActive, smartShuffleActive);
+  const shuffleEnabled = shuffleActive || smartShuffleActive;
+  const shuffleTitle = getShuffleTitle(shuffleEnabled);
   const repeatState = player?.repeat ?? "off";
   const RepeatIcon = repeatState === "track" ? Repeat1 : Repeat2;
   const repeatTitle =
@@ -592,13 +600,12 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
             onClick={() => handleShufflePress({ shuffle: shuffleActive, smartShuffle: smartShuffleActive, deviceId })}
             className={cn(
               "relative inline-flex h-7 w-7 items-center justify-center rounded-full text-[oklch(0.70_0.012_145)] transition-colors hover:text-[oklch(0.96_0.006_145)]",
-              (shuffleActive || smartShuffleActive) && SPOTIFY_GREEN_CLASS,
+              shuffleEnabled && SPOTIFY_GREEN_CLASS,
             )}
-            aria-pressed={shuffleActive || smartShuffleActive}
+            aria-pressed={shuffleEnabled}
             title={shuffleTitle}
           >
             <Shuffle size="0.8125rem" />
-            {smartShuffleActive && <Sparkles size="0.4375rem" className="absolute right-0.5 top-0.5" />}
           </button>
           <button
             type="button"
@@ -691,6 +698,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
       runControl,
       sdkDeviceId,
       shuffleActive,
+      shuffleEnabled,
       shuffleTitle,
       smartShuffleActive,
       subtitle,
