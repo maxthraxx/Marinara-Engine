@@ -63,6 +63,20 @@ export function AvatarCropWidget({ src, alt, crop, onChange }: AvatarCropWidgetP
     setCropPx(null);
   }, [src]);
 
+  // Cached images are the dominant case in practice (the persona/character
+  // panel just rendered a thumbnail of the same URL), and the browser fires
+  // the `load` event so quickly that React's onLoad listener can miss it
+  // even with `key={src}` forcing a remount. After every render, if the IMG
+  // is already complete and we haven't initialized yet, run handleImgLoad
+  // ourselves. The `imgRect == null` guard makes this a no-op once initialized.
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img && img.complete && img.naturalWidth > 0 && imgRect === null) {
+      handleImgLoad();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
   const emitFromPx = (px: CropPx, w: number, h: number) => {
     onChange({
       srcX: px.x / w,
