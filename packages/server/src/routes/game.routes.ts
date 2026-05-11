@@ -2786,33 +2786,48 @@ export async function gameRoutes(app: FastifyInstance) {
     }
 
     if (setupData.blueprint) {
+      // Coerce LLM output into the campaign-plan ranges rather than rejecting it.
+      // The LLM occasionally exceeds the array caps or the pressure-clock step
+      // count; without preprocessing, a single out-of-range value would fail
+      // safeParse and silently drop the entire blueprint — including hudWidgets,
+      // which is what the user actually configured.
+      const sliceArray = (max: number) => (val: unknown) =>
+        Array.isArray(val) ? val.slice(0, max) : val;
+      const clampInt = (min: number, max: number) => (val: unknown) =>
+        typeof val === "number" && Number.isFinite(val)
+          ? Math.max(min, Math.min(max, Math.trunc(val)))
+          : val;
       const campaignPlanSchema = z
         .object({
           openingSituation: z.string().max(240).optional().default(""),
-          pressureClocks: z
-            .array(
-              z.object({
-                name: z.string().max(80),
-                steps: z.number().int().min(1).max(12).default(4),
-                current: z.number().int().min(0).max(12).default(0),
-                failure: z.string().max(180).default(""),
-              }),
-            )
-            .max(2)
-            .default([]),
-          factions: z
-            .array(
-              z.object({
-                name: z.string().max(80),
-                goal: z.string().max(160),
-                method: z.string().max(160).optional(),
-                secret: z.string().max(180).optional(),
-              }),
-            )
-            .max(2)
-            .default([]),
-          questSeeds: z.array(z.string().max(180)).max(3).default([]),
-          encounterPrinciples: z.array(z.string().max(160)).max(2).default([]),
+          pressureClocks: z.preprocess(
+            sliceArray(2),
+            z
+              .array(
+                z.object({
+                  name: z.string().max(80),
+                  steps: z.preprocess(clampInt(1, 12), z.number().int().min(1).max(12).default(4)),
+                  current: z.preprocess(clampInt(0, 12), z.number().int().min(0).max(12).default(0)),
+                  failure: z.string().max(180).default(""),
+                }),
+              )
+              .default([]),
+          ),
+          factions: z.preprocess(
+            sliceArray(2),
+            z
+              .array(
+                z.object({
+                  name: z.string().max(80),
+                  goal: z.string().max(160),
+                  method: z.string().max(160).optional(),
+                  secret: z.string().max(180).optional(),
+                }),
+              )
+              .default([]),
+          ),
+          questSeeds: z.preprocess(sliceArray(3), z.array(z.string().max(180)).default([])),
+          encounterPrinciples: z.preprocess(sliceArray(2), z.array(z.string().max(160)).default([])),
         })
         .optional()
         .nullable()
@@ -2860,9 +2875,8 @@ export async function gameRoutes(app: FastifyInstance) {
           })
           .optional(),
       });
-      const parsed = blueprintSchema.safeParse(setupData.blueprint);
-      if (parsed.success) {
-        for (const w of parsed.data.hudWidgets) {
+      const normalizeStatBlocks = (widgets: Array<{ type: string; config: Record<string, unknown> }>) => {
+        for (const w of widgets) {
           if (w.type === "stat_block" && w.config.stats) {
             const raw = w.config.stats;
             if (Array.isArray(raw)) {
@@ -2878,7 +2892,27 @@ export async function gameRoutes(app: FastifyInstance) {
             }
           }
         }
+      };
+      const parsed = blueprintSchema.safeParse(setupData.blueprint);
+      if (parsed.success) {
+        normalizeStatBlocks(parsed.data.hudWidgets);
         updates.gameBlueprint = parsed.data;
+      } else {
+        // Last-ditch recovery: keep the user's HUD widgets even if campaignPlan
+        // or other sections of the blueprint are malformed. Without this, a
+        // single bad field anywhere drops the whole widget set and Start Game
+        // proceeds with no HUD — a confusing failure mode for the user.
+        logger.warn(
+          { issues: parsed.error.issues },
+          "[game/setup] blueprintSchema validation failed; attempting hudWidgets-only recovery",
+        );
+        const hudOnly = z.object({ hudWidgets: blueprintSchema.shape.hudWidgets }).safeParse({
+          hudWidgets: (setupData.blueprint as { hudWidgets?: unknown })?.hudWidgets,
+        });
+        if (hudOnly.success && hudOnly.data.hudWidgets.length > 0) {
+          normalizeStatBlocks(hudOnly.data.hudWidgets);
+          updates.gameBlueprint = { hudWidgets: hudOnly.data.hudWidgets };
+        }
       }
     }
 
