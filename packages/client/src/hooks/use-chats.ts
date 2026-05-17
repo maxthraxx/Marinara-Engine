@@ -636,6 +636,52 @@ export function useUpdateMessageExtra(chatId: string | null) {
   });
 }
 
+export function useBulkSetMessagesHiddenFromAI() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ chatId, messageIds, hidden }: { chatId: string; messageIds: string[]; hidden: boolean }) =>
+      api.patch<{ updated: number }>(`/chats/${chatId}/messages/bulk-hidden`, { messageIds, hidden }),
+    onMutate: async ({ chatId, messageIds, hidden }) => {
+      await qc.cancelQueries({ queryKey: chatKeys.messages(chatId) });
+      const previous = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId));
+      const idSet = new Set(messageIds);
+
+      qc.setQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId), (old) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page) =>
+            page.map((msg) => {
+              if (!idSet.has(msg.id)) return msg;
+              let currentExtra: Record<string, unknown> = {};
+              try {
+                currentExtra =
+                  typeof msg.extra === "string"
+                    ? JSON.parse(msg.extra)
+                    : ((msg.extra ?? {}) as unknown as Record<string, unknown>);
+              } catch {
+                currentExtra = {};
+              }
+              return { ...msg, extra: { ...currentExtra, hiddenFromAI: hidden } as unknown as Message["extra"] };
+            }),
+          ),
+        };
+      });
+
+      return { previous };
+    },
+    onError: (_err, vars, context) => {
+      if (context?.previous) {
+        qc.setQueryData(chatKeys.messages(vars.chatId), context.previous);
+      }
+    },
+    onSettled: (_data, _err, vars) => {
+      qc.invalidateQueries({ queryKey: chatKeys.messages(vars.chatId) });
+      qc.invalidateQueries({ queryKey: lorebookKeys.active(vars.chatId) });
+    },
+  });
+}
+
 function replaceCachedMessage(
   old: InfiniteData<Message[]> | undefined,
   messageId: string,
@@ -723,11 +769,36 @@ export function useBranchChat() {
 }
 
 /** Generate a rolling summary for a chat via the LLM */
+export type GenerateSummaryInput = {
+  chatId: string;
+  contextSize?: number;
+  rangeStartMessageId?: string;
+  rangeEndMessageId?: string;
+  rangeStartIndex?: number;
+  rangeEndIndex?: number;
+  promptTemplateId?: string | null;
+};
+
 export function useGenerateSummary() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ chatId, contextSize }: { chatId: string; contextSize?: number }) =>
-      api.post<{ summary: string }>(`/chats/${chatId}/generate-summary`, { contextSize }),
+    mutationFn: ({
+      chatId,
+      contextSize,
+      rangeStartMessageId,
+      rangeEndMessageId,
+      rangeStartIndex,
+      rangeEndIndex,
+      promptTemplateId,
+    }: GenerateSummaryInput) =>
+      api.post<{ summary: string; messageIds: string[] }>(`/chats/${chatId}/generate-summary`, {
+        contextSize,
+        rangeStartMessageId,
+        rangeEndMessageId,
+        rangeStartIndex,
+        rangeEndIndex,
+        promptTemplateId,
+      }),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: chatKeys.detail(vars.chatId) });
     },

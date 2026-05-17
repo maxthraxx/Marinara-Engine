@@ -9,11 +9,14 @@ import {
   Copy,
   RefreshCw,
   Eye,
+  Search,
   ScrollText,
   Brain,
   X,
   User,
   Languages,
+  ChevronRight,
+  EyeOff,
 } from "lucide-react";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import type { Message, MessageExtra } from "@marinara-engine/shared";
@@ -46,6 +49,64 @@ function nameColorStyle(color?: string): CSSProperties | undefined {
     };
   }
   return { color };
+}
+
+function HiddenFromAIConversationButton({
+  canCollapse,
+  onExpand,
+  isHiddenExpanded,
+}: {
+  canCollapse: boolean;
+  onExpand: () => void;
+  isHiddenExpanded: boolean;
+}) {
+  if (!canCollapse) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 align-middle text-[0.625rem] font-medium text-amber-500/80"
+        title="Hidden from AI"
+      >
+        <EyeOff size="0.7rem" className="shrink-0" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 align-middle">
+      <button
+        type="button"
+        onClick={onExpand}
+        className={cn(
+          "inline-flex items-center gap-1 rounded px-1 py-0.5 text-[0.625rem] font-medium text-amber-500/80 transition-colors hover:bg-amber-500/10 hover:text-amber-400",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/40",
+        )}
+        aria-label={isHiddenExpanded ? "Collapse hidden from AI message" : "Expand hidden from AI message"}
+        title={isHiddenExpanded ? "Collapse hidden from AI message" : "Expand hidden from AI message"}
+      >
+        <ChevronRight size="0.7rem" className={cn("shrink-0 transition-transform", isHiddenExpanded && "rotate-90")} />
+        <EyeOff size="0.7rem" className="shrink-0" />
+      </button>
+    </span>
+  );
+}
+
+function HiddenFromAIConversationSummary({ onExpand }: { onExpand: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onExpand();
+      }}
+      className="flex w-full items-center gap-2 rounded-md border border-amber-400/20 bg-amber-500/10 px-2.5 py-1.5 text-left text-[0.75rem] text-amber-600/90 transition-colors hover:bg-amber-500/15 dark:text-amber-200/75"
+      title="Expand hidden from AI message"
+      aria-label="Expand hidden from AI message"
+    >
+      <EyeOff size="0.8rem" className="shrink-0" />
+      <span className="min-w-0 flex-1 truncate">Hidden from AI</span>
+      <span className="shrink-0 text-[0.625rem] opacity-70">Show</span>
+    </button>
+  );
 }
 
 /** Regex to detect a message that is just an image/GIF URL */
@@ -229,6 +290,7 @@ interface MessageData {
       duration?: number;
     } | null;
     isConversationStart?: boolean;
+    hiddenFromAI?: boolean;
     thinking?: string | null;
     generationReplay?: MessageExtra["generationReplay"];
     attachments?: Array<{ type: string; url: string; filename?: string; prompt?: string; galleryId?: string }>;
@@ -247,6 +309,7 @@ interface ConversationMessageProps {
   onRegenerate?: (messageId: string) => void;
   onEdit?: (messageId: string, content: string) => void;
   onSetActiveSwipe?: (messageId: string, index: number) => void;
+  onToggleHiddenFromAI?: (messageId: string, current: boolean) => void;
   onPeekPrompt?: () => void;
   isLastAssistantMessage?: boolean;
   characterMap?: CharacterMap;
@@ -274,6 +337,7 @@ export const ConversationMessage = memo(function ConversationMessage({
   onRegenerate,
   onEdit,
   onSetActiveSwipe,
+  onToggleHiddenFromAI,
   onPeekPrompt,
   isLastAssistantMessage,
   characterMap,
@@ -292,6 +356,8 @@ export const ConversationMessage = memo(function ConversationMessage({
   const [copied, setCopied] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
   const [showGenerationReplay, setShowGenerationReplay] = useState(false);
+  const [manuallyExpandedHidden, setManuallyExpandedHidden] = useState(false);
+  const collapseHiddenMessages = useUIStore((s) => s.summaryPopoverSettings.collapseHiddenMessages);
   const [imageLightbox, setImageLightbox] = useState<{ url: string; prompt?: string | null } | null>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const hasInput = useChatStore((s) => s.currentInput.trim().length > 0);
@@ -318,10 +384,19 @@ export const ConversationMessage = memo(function ConversationMessage({
     if (!message.extra) return {} as Record<string, any>;
     return typeof message.extra === "string" ? JSON.parse(message.extra) : message.extra;
   }, [message.extra]);
+  const isHiddenFromAI = extra.hiddenFromAI === true;
   const generationReplay = hasGenerationReplayDetails(extra.generationReplay) ? extra.generationReplay : null;
   // canRegenerate lets assistant messages retry; isUser messages need generationReplay
   // metadata from hasGenerationReplayDetails, such as /impersonate.
   const canRegenerate = !isUser || generationReplay !== null;
+
+  useEffect(() => {
+    setManuallyExpandedHidden(false);
+  }, [message.id]);
+
+  useEffect(() => {
+    if (!isHiddenFromAI || !collapseHiddenMessages) setManuallyExpandedHidden(false);
+  }, [collapseHiddenMessages, isHiddenFromAI]);
 
   useEffect(() => {
     if (!generationReplay) setShowGenerationReplay(false);
@@ -593,6 +668,17 @@ export const ConversationMessage = memo(function ConversationMessage({
     );
   }
 
+  const isHiddenExpanded =
+    isHiddenFromAI && (!collapseHiddenMessages || manuallyExpandedHidden || editing || !!isStreaming);
+  const isHiddenCollapsed = isHiddenFromAI && collapseHiddenMessages && !isHiddenExpanded;
+  const hiddenFromAIHeader = isHiddenFromAI ? (
+    <HiddenFromAIConversationButton
+      canCollapse={collapseHiddenMessages}
+      isHiddenExpanded={isHiddenExpanded}
+      onExpand={() => setManuallyExpandedHidden((value) => !value)}
+    />
+  ) : null;
+
   // ── Render: grouped multi-speaker message (merged group chat) ──
   if (groupedSegments && !editing && !isUser) {
     return (
@@ -636,118 +722,132 @@ export const ConversationMessage = memo(function ConversationMessage({
             </button>
           </div>
         )}
-        {/* Render each grouped speaker as a mini-message row (staggered reveal) */}
-        {groupedSegments.slice(0, visibleSegments).map((grp, i) => {
-          const segChar = grp.speaker && charByName ? charByName.get(grp.speaker.toLowerCase()) : null;
-          const segAvatar = segChar?.avatarUrl ?? null;
-          const segAvatarCropStyle = getAvatarCropStyle(segChar?.avatarCrop);
-          const segName = segChar?.name ?? grp.speaker ?? "";
-          const segColor = segChar?.nameColor;
-          const isFirst = i === 0;
-          const combinedText = grp.lines.join("\n");
+        {hiddenFromAIHeader && !isHiddenCollapsed && (
+          <div className="mb-1 flex items-center gap-1 pl-14 text-[0.6875rem] text-amber-500/80">
+            {hiddenFromAIHeader}
+            <span>Hidden from AI</span>
+          </div>
+        )}
+        {isHiddenCollapsed ? (
+          <div className="pl-14 py-1">
+            <HiddenFromAIConversationSummary onExpand={() => setManuallyExpandedHidden(true)} />
+          </div>
+        ) : (
+          // Render each grouped speaker as a mini-message row (staggered reveal)
+          groupedSegments.slice(0, visibleSegments).map((grp, i) => {
+            const segChar = grp.speaker && charByName ? charByName.get(grp.speaker.toLowerCase()) : null;
+            const segAvatar = segChar?.avatarUrl ?? null;
+            const segAvatarCropStyle = getAvatarCropStyle(segChar?.avatarCrop);
+            const segName = segChar?.name ?? grp.speaker ?? "";
+            const segColor = segChar?.nameColor;
+            const isFirst = i === 0;
+            const combinedText = grp.lines.join("\n");
 
-          if (!grp.speaker) {
-            // Non-attributed narration text — render as indented italic
+            if (!grp.speaker) {
+              // Non-attributed narration text — render as indented italic
+              return (
+                <div
+                  key={i}
+                  className="pl-14 py-0.5 text-[0.875rem] leading-relaxed break-words whitespace-pre-wrap text-[var(--muted-foreground)] italic animate-[fadeSlideIn_0.4s_ease-out]"
+                  style={messageTextStyle}
+                >
+                  {mentionNames.length
+                    ? highlightMentions(applyInlineMarkdown(combinedText, `ns${i}`), mentionNames, `ns${i}`)
+                    : applyInlineMarkdown(combinedText, `ns${i}`)}
+                </div>
+              );
+            }
+
             return (
-              <div
-                key={i}
-                className="pl-14 py-0.5 text-[0.875rem] leading-relaxed break-words whitespace-pre-wrap text-[var(--muted-foreground)] italic animate-[fadeSlideIn_0.4s_ease-out]"
-                style={messageTextStyle}
-              >
-                {mentionNames.length
-                  ? highlightMentions(applyInlineMarkdown(combinedText, `ns${i}`), mentionNames, `ns${i}`)
-                  : applyInlineMarkdown(combinedText, `ns${i}`)}
-              </div>
-            );
-          }
-
-          return (
-            <div key={i} className={cn("animate-[fadeSlideIn_0.4s_ease-out]", i > 0 && "mt-3")}>
-              {/* First row: Avatar + Name + first paragraph */}
-              {(() => {
-                // Split into paragraphs (on blank lines) for Discord-style compact display
-                const paragraphs = combinedText
-                  .split(/\n{2,}/)
-                  .map((p) => p.trim())
-                  .filter(Boolean);
-                if (paragraphs.length === 0) return null;
-                return (
-                  <>
-                    <div className="flex gap-4">
-                      {/* Avatar */}
-                      <div className="w-10 flex-shrink-0">
-                        <div className="relative h-10 w-10 overflow-hidden rounded-full bg-[var(--accent)]">
-                          {segAvatar ? (
-                            <img
-                              src={segAvatar}
-                              alt={segName}
-                              loading="lazy"
-                              className="h-full w-full object-cover"
-                              style={segAvatarCropStyle}
-                            />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center text-sm font-bold text-[var(--muted-foreground)]">
-                              {segName[0]?.toUpperCase()}
-                            </div>
-                          )}
+              <div key={i} className={cn("animate-[fadeSlideIn_0.4s_ease-out]", i > 0 && "mt-3")}>
+                {/* First row: Avatar + Name + first paragraph */}
+                {(() => {
+                  // Split into paragraphs (on blank lines) for Discord-style compact display
+                  const paragraphs = combinedText
+                    .split(/\n{2,}/)
+                    .map((p) => p.trim())
+                    .filter(Boolean);
+                  if (paragraphs.length === 0) return null;
+                  return (
+                    <>
+                      <div className="flex gap-4">
+                        {/* Avatar */}
+                        <div className="w-10 flex-shrink-0">
+                          <div className="relative h-10 w-10 overflow-hidden rounded-full bg-[var(--accent)]">
+                            {segAvatar ? (
+                              <img
+                                src={segAvatar}
+                                alt={segName}
+                                loading="lazy"
+                                className="h-full w-full object-cover"
+                                style={segAvatarCropStyle}
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-sm font-bold text-[var(--muted-foreground)]">
+                                {segName[0]?.toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          {isFirst &&
+                            (showActions || forceShowActions || showMessageNumbers) &&
+                            messageIndex != null && (
+                              <span className="mt-0.5 block text-center text-[0.5rem] font-medium text-[var(--muted-foreground)] select-none">
+                                #{messageIndex}
+                              </span>
+                            )}
                         </div>
-                        {isFirst && (showActions || forceShowActions || showMessageNumbers) && messageIndex != null && (
-                          <span className="mt-0.5 block text-center text-[0.5rem] font-medium text-[var(--muted-foreground)] select-none">
-                            #{messageIndex}
-                          </span>
-                        )}
-                      </div>
-                      {/* Name + first paragraph */}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline gap-2 mb-0.5">
-                          <span
-                            className="text-[0.9375rem] font-semibold leading-tight hover:underline cursor-default"
-                            style={nameColorStyle(segColor)}
-                          >
-                            {segName}
-                          </span>
-                          {isFirst && (
-                            <span className="text-[0.6875rem] text-[var(--muted-foreground)]/60">
-                              {formatTimestamp(message.createdAt)}
+                        {/* Name + first paragraph */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline gap-2 mb-0.5">
+                            <span
+                              className="text-[0.9375rem] font-semibold leading-tight hover:underline cursor-default"
+                              style={nameColorStyle(segColor)}
+                            >
+                              {segName}
                             </span>
-                          )}
+                            {isFirst && (
+                              <span className="text-[0.6875rem] text-[var(--muted-foreground)]/60">
+                                {formatTimestamp(message.createdAt)}
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className="text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap"
+                            style={messageTextStyle}
+                          >
+                            {mentionNames.length
+                              ? highlightMentions(
+                                  applyInlineMarkdown(paragraphs[0]!, `gs${i}_0`),
+                                  mentionNames,
+                                  `gs${i}_0`,
+                                )
+                              : applyInlineMarkdown(paragraphs[0]!, `gs${i}_0`)}
+                          </div>
                         </div>
+                      </div>
+                      {/* Subsequent paragraphs — indented to align with text (no avatar/name) */}
+                      {paragraphs.slice(1).map((para, pi) => (
                         <div
-                          className="text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap"
+                          key={pi}
+                          className="pl-14 mt-0.5 text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap"
                           style={messageTextStyle}
                         >
                           {mentionNames.length
                             ? highlightMentions(
-                                applyInlineMarkdown(paragraphs[0]!, `gs${i}_0`),
+                                applyInlineMarkdown(para, `gs${i}_${pi + 1}`),
                                 mentionNames,
-                                `gs${i}_0`,
+                                `gs${i}_${pi + 1}`,
                               )
-                            : applyInlineMarkdown(paragraphs[0]!, `gs${i}_0`)}
+                            : applyInlineMarkdown(para, `gs${i}_${pi + 1}`)}
                         </div>
-                      </div>
-                    </div>
-                    {/* Subsequent paragraphs — indented to align with text (no avatar/name) */}
-                    {paragraphs.slice(1).map((para, pi) => (
-                      <div
-                        key={pi}
-                        className="pl-14 mt-0.5 text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap"
-                        style={messageTextStyle}
-                      >
-                        {mentionNames.length
-                          ? highlightMentions(
-                              applyInlineMarkdown(para, `gs${i}_${pi + 1}`),
-                              mentionNames,
-                              `gs${i}_${pi + 1}`,
-                            )
-                          : applyInlineMarkdown(para, `gs${i}_${pi + 1}`)}
-                      </div>
-                    ))}
-                  </>
-                );
-              })()}
-            </div>
-          );
-        })}
+                      ))}
+                    </>
+                  );
+                })()}
+              </div>
+            );
+          })
+        )}
 
         {/* Streaming cursor */}
         {isStreaming && (
@@ -823,8 +923,16 @@ export const ConversationMessage = memo(function ConversationMessage({
             title={regenerateButtonTitle}
             className={regenerateGuidedClass}
           />
+          {onToggleHiddenFromAI && (
+            <MsgAction
+              icon={isHiddenFromAI ? <Eye size="0.75rem" /> : <EyeOff size="0.75rem" />}
+              onClick={() => onToggleHiddenFromAI(message.id, isHiddenFromAI)}
+              title={isHiddenFromAI ? "Unhide from AI" : "Hide from AI"}
+              className={isHiddenFromAI ? "text-amber-400" : undefined}
+            />
+          )}
           {isLastAssistantMessage && (
-            <MsgAction icon={<Eye size="0.75rem" />} onClick={() => onPeekPrompt?.()} title="Peek prompt" />
+            <MsgAction icon={<Search size="0.75rem" />} onClick={() => onPeekPrompt?.()} title="Peek prompt" />
           )}
           {generationReplay && (
             <MsgAction
@@ -962,6 +1070,7 @@ export const ConversationMessage = memo(function ConversationMessage({
         {/* Header — name + timestamp (only for first in group) */}
         {!isGrouped && (
           <div className="mari-message-meta flex items-baseline gap-2 mb-0.5">
+            {hiddenFromAIHeader}
             <span
               className="mari-message-name text-[0.9375rem] font-semibold leading-tight hover:underline cursor-default"
               style={nameColorStyle(nameColor)}
@@ -975,7 +1084,9 @@ export const ConversationMessage = memo(function ConversationMessage({
         )}
 
         {/* Message body */}
-        {editing ? (
+        {isHiddenCollapsed ? (
+          <HiddenFromAIConversationSummary onExpand={() => setManuallyExpandedHidden(true)} />
+        ) : editing ? (
           <div className="space-y-2">
             <textarea
               ref={editRef}
@@ -1124,8 +1235,16 @@ export const ConversationMessage = memo(function ConversationMessage({
               className={regenerateGuidedClass}
             />
           )}
+          {onToggleHiddenFromAI && (
+            <MsgAction
+              icon={isHiddenFromAI ? <Eye size="0.75rem" /> : <EyeOff size="0.75rem" />}
+              onClick={() => onToggleHiddenFromAI(message.id, isHiddenFromAI)}
+              title={isHiddenFromAI ? "Unhide from AI" : "Hide from AI"}
+              className={isHiddenFromAI ? "text-amber-400" : undefined}
+            />
+          )}
           {isLastAssistantMessage && !isUser && (
-            <MsgAction icon={<Eye size="0.75rem" />} onClick={() => onPeekPrompt?.()} title="Peek prompt" />
+            <MsgAction icon={<Search size="0.75rem" />} onClick={() => onPeekPrompt?.()} title="Peek prompt" />
           )}
           {generationReplay && (
             <MsgAction
@@ -1176,9 +1295,9 @@ export const ConversationMessage = memo(function ConversationMessage({
                 </pre>
               </div>
             </div>
-            </div>,
-            document.body,
-          )}
+          </div>,
+          document.body,
+        )}
       {generationReplay && (
         <GenerationReplayDetailsModal
           open={showGenerationReplay}

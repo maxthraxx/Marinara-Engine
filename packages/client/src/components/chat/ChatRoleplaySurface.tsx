@@ -326,12 +326,16 @@ function SummaryButton({
   chatId,
   summary,
   summaryContextSize,
-  onContextSizeChange,
+  summaryPromptTemplates,
+  activeSummaryPromptTemplateId,
+  totalMessageCount,
 }: {
   chatId: string | null;
   summary: string | null;
   summaryContextSize: number;
-  onContextSizeChange: (size: number) => void;
+  summaryPromptTemplates?: ComponentProps<typeof SummaryPopover>["promptTemplates"];
+  activeSummaryPromptTemplateId?: string | null;
+  totalMessageCount: number;
 }) {
   const [open, setOpen] = useState(false);
   const compact = useUIStore((s) => s.centerCompact);
@@ -361,7 +365,9 @@ function SummaryButton({
             chatId={chatId}
             summary={summary}
             contextSize={summaryContextSize}
-            onContextSizeChange={onContextSizeChange}
+            promptTemplates={summaryPromptTemplates}
+            activePromptTemplateId={activeSummaryPromptTemplateId}
+            totalMessageCount={totalMessageCount}
             onClose={() => setOpen(false)}
           />
         </Suspense>
@@ -532,7 +538,6 @@ type RoleplaySurfaceProps = {
   onCloneSceneFromHere?: (messageId: string) => void;
   isCloneSceneFromHereDisabled?: boolean;
   onToggleSelectMessage: (toggle: MessageSelectionToggle) => void;
-  onSummaryContextSizeChange: (size: number) => void;
   onRerunTrackers: () => void;
   onRerunSingleTracker: (agentType: string) => void;
   onRetryFailedAgents?: () => void;
@@ -632,7 +637,6 @@ export function ChatRoleplaySurface({
   onCloneSceneFromHere,
   isCloneSceneFromHereDisabled,
   onToggleSelectMessage,
-  onSummaryContextSizeChange,
   onRerunTrackers,
   onRerunSingleTracker,
   onRetryFailedAgents,
@@ -744,7 +748,15 @@ export function ChatRoleplaySurface({
                       chatId={chat?.id ?? null}
                       summary={chatMeta.summary ?? null}
                       summaryContextSize={summaryContextSize}
-                      onContextSizeChange={onSummaryContextSizeChange}
+                      summaryPromptTemplates={
+                        Array.isArray(chatMeta.summaryPromptTemplates) ? chatMeta.summaryPromptTemplates : []
+                      }
+                      activeSummaryPromptTemplateId={
+                        typeof chatMeta.activeSummaryPromptTemplateId === "string"
+                          ? chatMeta.activeSummaryPromptTemplateId
+                          : null
+                      }
+                      totalMessageCount={totalMessageCount}
                     />
                     <ActiveWorldInfoButton chatId={chat?.id ?? null} />
                     <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
@@ -830,7 +842,15 @@ export function ChatRoleplaySurface({
                           chatId={chat?.id ?? null}
                           summary={chatMeta.summary ?? null}
                           summaryContextSize={summaryContextSize}
-                          onContextSizeChange={onSummaryContextSizeChange}
+                          summaryPromptTemplates={
+                            Array.isArray(chatMeta.summaryPromptTemplates) ? chatMeta.summaryPromptTemplates : []
+                          }
+                          activeSummaryPromptTemplateId={
+                            typeof chatMeta.activeSummaryPromptTemplateId === "string"
+                              ? chatMeta.activeSummaryPromptTemplateId
+                              : null
+                          }
+                          totalMessageCount={totalMessageCount}
                         />
                         <ActiveWorldInfoButton chatId={chat?.id ?? null} />
                         <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
@@ -888,7 +908,15 @@ export function ChatRoleplaySurface({
                         chatId={chat?.id ?? null}
                         summary={chatMeta.summary ?? null}
                         summaryContextSize={summaryContextSize}
-                        onContextSizeChange={onSummaryContextSizeChange}
+                        summaryPromptTemplates={
+                          Array.isArray(chatMeta.summaryPromptTemplates) ? chatMeta.summaryPromptTemplates : []
+                        }
+                        activeSummaryPromptTemplateId={
+                          typeof chatMeta.activeSummaryPromptTemplateId === "string"
+                            ? chatMeta.activeSummaryPromptTemplateId
+                            : null
+                        }
+                        totalMessageCount={totalMessageCount}
                       />
                       <ActiveWorldInfoButton chatId={chat?.id ?? null} />
                       <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />

@@ -36,6 +36,7 @@ import { normalizeTimestampOverrides } from "../services/import/import-timestamp
 import {
   findLastIndex,
   parseExtra,
+  isMessageHiddenFromAI,
   resolveVisibleGameStateAnchor,
   shouldEnableAgentsForGeneration,
 } from "./generate/generate-route-utils.js";
@@ -356,7 +357,6 @@ export async function chatsRoutes(app: FastifyInstance) {
   app.patch<{ Params: { id: string } }>("/:id/metadata", async (req, reply) => {
     const chat = await storage.getById(req.params.id);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
-    const existing = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
     const incoming = req.body as Record<string, unknown>;
     // Validate Discord webhook URL if provided
     if (typeof incoming.discordWebhookUrl === "string" && incoming.discordWebhookUrl.trim()) {
@@ -366,13 +366,12 @@ export async function chatsRoutes(app: FastifyInstance) {
       }
       incoming.discordWebhookUrl = url;
     }
-    const merged = { ...existing, ...incoming };
     if (incoming.conversationSchedulesEnabled === false) {
-      delete merged.characterSchedules;
-      delete merged.scheduleWeekStart;
       await clearConversationScheduleState(chat);
+      incoming.characterSchedules = undefined;
+      incoming.scheduleWeekStart = undefined;
     }
-    return storage.updateMetadata(req.params.id, merged);
+    return storage.patchMetadata(req.params.id, incoming);
   });
 
   // Mark a chat as having autonomous messages the user has not viewed yet.
@@ -1845,12 +1844,22 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     const chatMeta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
 
-    // Accept context size from request body, fall back to chat meta, then default 50
+    // Accept context size from request body, fall back to chat meta, then default 50.
+    // Manual UI generation may also pass inclusive message ID anchors.
     const body = (req.body ?? {}) as Record<string, unknown>;
     const contextSize = Math.max(
       5,
       Math.min(200, Number(body.contextSize) || (chatMeta.summaryContextSize as number) || 50),
     );
+    const requestedRangeStartMessageId = typeof body.rangeStartMessageId === "string" ? body.rangeStartMessageId : null;
+    const requestedRangeEndMessageId = typeof body.rangeEndMessageId === "string" ? body.rangeEndMessageId : null;
+    const requestedRangeStartIndex =
+      typeof body.rangeStartIndex === "number" && Number.isInteger(body.rangeStartIndex) ? body.rangeStartIndex : null;
+    const requestedRangeEndIndex =
+      typeof body.rangeEndIndex === "number" && Number.isInteger(body.rangeEndIndex) ? body.rangeEndIndex : null;
+    const hasRangeByMessageId = !!requestedRangeStartMessageId && !!requestedRangeEndMessageId;
+    const hasRangeByIndex = requestedRangeStartIndex !== null && requestedRangeEndIndex !== null;
+    const hasRange = hasRangeByMessageId || hasRangeByIndex;
 
     const chatConnId = chat.connectionId;
 
@@ -1908,13 +1917,65 @@ export async function chatsRoutes(app: FastifyInstance) {
       model = conn.model;
     }
 
-    // Build conversation context (use contextSize from popover)
+    // Build conversation context (use contextSize from popover, or a custom range).
+    // Hidden-from-AI messages are excluded from summary generation even when
+    // they fall inside the selected range.
     const allMessages = await storage.listMessages(req.params.id);
-    const recentMessages = allMessages.slice(-contextSize);
-    const chatLog = recentMessages.map((m: any) => `[${m.role}]: ${(m.content as string).slice(0, 2000)}`).join("\n\n");
+    const selectedMessages = hasRange
+      ? (() => {
+          const startIndex = hasRangeByIndex
+            ? requestedRangeStartIndex! - 1
+            : allMessages.findIndex((message) => message.id === requestedRangeStartMessageId);
+          const endIndex = hasRangeByIndex
+            ? requestedRangeEndIndex! - 1
+            : allMessages.findIndex((message) => message.id === requestedRangeEndMessageId);
+          if (startIndex === -1 || endIndex === -1) {
+            return { error: "Summary range messages were not found in this chat" as const };
+          }
+          if (startIndex < 0 || endIndex < 0 || startIndex >= allMessages.length || endIndex >= allMessages.length) {
+            return { error: "Summary range is outside this chat's message history" as const };
+          }
+          const from = Math.min(startIndex, endIndex);
+          const to = Math.max(startIndex, endIndex);
+          const count = to - from + 1;
+          if (count > 200) {
+            return { error: "Summary ranges cannot include more than 200 messages" as const };
+          }
+          return allMessages.slice(from, to + 1).filter((message) => !isMessageHiddenFromAI(message));
+        })()
+      : allMessages.slice(-contextSize).filter((message) => !isMessageHiddenFromAI(message));
+    if (selectedMessages && "error" in selectedMessages) {
+      return reply.status(400).send({ error: selectedMessages.error });
+    }
+    if (selectedMessages.length === 0) {
+      return reply.status(400).send({ error: "No non-hidden messages available for the requested summary range" });
+    }
+    const chatLog = selectedMessages
+      .map((m: any) => `[${m.role}]: ${(m.content as string).slice(0, 2000)}`)
+      .join("\n\n");
 
     const previousSummary = chatMeta.summary ?? null;
-    const summaryPrompt = getDefaultAgentPrompt("chat-summary");
+    const requestedPromptTemplateId =
+      typeof body.promptTemplateId === "string" && body.promptTemplateId.trim()
+        ? body.promptTemplateId.trim()
+        : typeof chatMeta.activeSummaryPromptTemplateId === "string" && chatMeta.activeSummaryPromptTemplateId.trim()
+          ? chatMeta.activeSummaryPromptTemplateId.trim()
+          : null;
+    const summaryPromptTemplates = Array.isArray(chatMeta.summaryPromptTemplates)
+      ? (chatMeta.summaryPromptTemplates as Array<Record<string, unknown>>)
+      : [];
+    const selectedSummaryPrompt = requestedPromptTemplateId
+      ? summaryPromptTemplates.find(
+          (template) =>
+            template.id === requestedPromptTemplateId &&
+            typeof template.prompt === "string" &&
+            template.prompt.trim().length > 0,
+        )
+      : null;
+    const summaryPrompt =
+      typeof selectedSummaryPrompt?.prompt === "string"
+        ? selectedSummaryPrompt.prompt.trim()
+        : (summaryAgentCfg?.promptTemplate as string | undefined)?.trim() || getDefaultAgentPrompt("chat-summary");
 
     const messages: Array<{ role: "system" | "user"; content: string }> = [
       { role: "system", content: summaryPrompt },
@@ -1950,12 +2011,18 @@ export async function chatsRoutes(app: FastifyInstance) {
       summaryText = result.content.trim();
     }
 
-    // Append to existing summary (don't replace)
-    const existing = ((chatMeta.summary as string) ?? "").trim();
-    const combined = existing ? `${existing}\n\n${summaryText}` : summaryText;
-    const merged = { ...chatMeta, summary: combined };
-    await storage.updateMetadata(req.params.id, merged);
+    // Append to the latest summary without replacing concurrent metadata changes.
+    let combined = summaryText;
+    const updatedChat = await storage.patchMetadata(req.params.id, (freshMeta) => {
+      const existing = ((freshMeta.summary as string) ?? "").trim();
+      combined = existing ? `${existing}\n\n${summaryText}` : summaryText;
+      return {
+        summary: combined,
+        ...(!hasRange && typeof body.contextSize !== "undefined" ? { summaryContextSize: contextSize } : {}),
+      };
+    });
+    if (!updatedChat) return reply.status(404).send({ error: "Chat not found" });
 
-    return { summary: combined };
+    return { summary: combined, messageIds: selectedMessages.map((message) => message.id) };
   });
 }

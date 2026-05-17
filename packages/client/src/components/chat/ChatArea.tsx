@@ -440,12 +440,6 @@ export function ChatArea() {
 
   const updateMeta = useUpdateChatMetadata();
   const summaryContextSize: number = (chatMeta.summaryContextSize as number) ?? 50;
-  const handleSummaryContextSizeChange = useCallback(
-    (size: number) => {
-      if (chat?.id) updateMeta.mutate({ id: chat.id, summaryContextSize: size });
-    },
-    [chat?.id, updateMeta],
-  );
 
   // Sync translation config from chat metadata to the translation store
   useEffect(() => {
@@ -1120,12 +1114,7 @@ export function ChatArea() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    intuitiveSwipeBlocked,
-    intuitiveSwipeNavigation,
-    latestAssistantMessageForSwipes,
-    navigateLatestSwipe,
-  ]);
+  }, [intuitiveSwipeBlocked, intuitiveSwipeNavigation, latestAssistantMessageForSwipes, navigateLatestSwipe]);
 
   // Up-Arrow recall of the most recent message (user OR assistant) — runs
   // independently of swipe nav so the shortcut works with that toggle off.
@@ -1817,6 +1806,7 @@ export function ChatArea() {
             onRegenerate={handleRegenerate}
             onEdit={handleEdit}
             onSetActiveSwipe={handleSetActiveSwipe}
+            onToggleHiddenFromAI={handleToggleHiddenFromAI}
             onPeekPrompt={handlePeekPrompt}
             onToggleSelectMessage={handleToggleSelectMessage}
             onSwitchChat={chat?.connectedChatId ? () => setActiveChatId(chat.connectedChatId!) : undefined}
@@ -1931,7 +1921,6 @@ export function ChatArea() {
           onCloneSceneFromHere={isSceneChat ? handleCloneSceneFromHere : undefined}
           isCloneSceneFromHereDisabled={isForking || isStreaming}
           onToggleSelectMessage={handleToggleSelectMessage}
-          onSummaryContextSizeChange={handleSummaryContextSizeChange}
           onRerunTrackers={handleRerunTrackers}
           onRerunSingleTracker={handleRerunSingleTracker}
           onStartEncounter={() => startEncounter()}
