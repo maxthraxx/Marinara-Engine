@@ -981,9 +981,19 @@ function IntroTypewriter({ text, onComplete }: { text: string; onComplete?: () =
   );
 }
 
-function removeInventoryUnit<T extends { name: string; quantity: number }>(items: T[], itemName: string): T[] {
+function normalizeInventoryCount(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(1, Math.min(9999, Math.floor(value ?? 1)));
+}
+
+function removeInventoryUnit<T extends { name: string; quantity: number }>(
+  items: T[],
+  itemName: string,
+  count = 1,
+): T[] {
   const normalizedName = itemName.trim().toLowerCase();
   if (!normalizedName) return items;
+  const quantityToRemove = normalizeInventoryCount(count);
 
   let removed = false;
   const updated: T[] = [];
@@ -991,7 +1001,7 @@ function removeInventoryUnit<T extends { name: string; quantity: number }>(items
   for (const item of items) {
     if (!removed && item.name.trim().toLowerCase() === normalizedName) {
       removed = true;
-      const nextQuantity = item.quantity - 1;
+      const nextQuantity = item.quantity - quantityToRemove;
       if (nextQuantity > 0) {
         updated.push({ ...item, quantity: nextQuantity });
       }
@@ -1003,18 +1013,19 @@ function removeInventoryUnit<T extends { name: string; quantity: number }>(items
   return removed ? updated : items;
 }
 
-function addInventoryUnit<T extends { name: string; quantity: number }>(items: T[], itemName: string): T[] {
+function addInventoryUnit<T extends { name: string; quantity: number }>(items: T[], itemName: string, count = 1): T[] {
   const name = normalizeInventoryName(itemName);
   if (!name) return items;
+  const quantityToAdd = normalizeInventoryCount(count);
 
   let addedToExisting = false;
   const updated = items.map((item) => {
     if (item.name.trim().toLowerCase() !== name.toLowerCase()) return item;
     addedToExisting = true;
-    return { ...item, quantity: item.quantity + 1 };
+    return { ...item, quantity: item.quantity + quantityToAdd };
   });
 
-  return addedToExisting ? updated : [...updated, { name, quantity: 1 } as T];
+  return addedToExisting ? updated : [...updated, { name, quantity: quantityToAdd } as T];
 }
 
 function normalizeInventoryName(value: string): string {
@@ -2356,7 +2367,7 @@ export function GameSurface({
       if (updates.length === 0) return;
 
       const notifications: string[] = [];
-      const journalEntries: Array<{ item: string; action: "acquired" | "lost" }> = [];
+      const journalEntries: Array<{ item: string; action: "acquired" | "lost"; quantity: number }> = [];
       const previousInventory = inventoryItemsRef.current;
       let updated = previousInventory;
       const currentGameState = useGameStateStore.getState().current;
@@ -2364,30 +2375,39 @@ export function GameSurface({
       let nextPlayerStats = currentPlayerStats;
 
       for (const invUpdate of updates) {
+        const quantity = normalizeInventoryCount(invUpdate.count);
         for (const itemName of invUpdate.items) {
           const normalizedItemName = normalizeInventoryName(itemName);
           if (!normalizedItemName) continue;
 
           let applied = false;
           if (invUpdate.action === "add") {
-            updated = addInventoryUnit(updated, normalizedItemName);
+            updated = addInventoryUnit(updated, normalizedItemName, quantity);
             if (nextPlayerStats) {
               nextPlayerStats = {
                 ...nextPlayerStats,
-                inventory: addInventoryUnit(nextPlayerStats.inventory, normalizedItemName),
+                inventory: addInventoryUnit(nextPlayerStats.inventory, normalizedItemName, quantity),
               };
             }
-            notifications.push(`You gained ${normalizedItemName}!`);
+            notifications.push(
+              quantity > 1 ? `You gained ${normalizedItemName} x${quantity}!` : `You gained ${normalizedItemName}!`,
+            );
             applied = true;
           } else {
-            const nextInventory = removeInventoryUnit(updated, normalizedItemName);
+            const nextInventory = removeInventoryUnit(updated, normalizedItemName, quantity);
             if (nextInventory !== updated) {
               updated = nextInventory;
-              notifications.push(`You lost ${normalizedItemName}!`);
+              notifications.push(
+                quantity > 1 ? `You lost ${normalizedItemName} x${quantity}!` : `You lost ${normalizedItemName}!`,
+              );
               applied = true;
             }
             if (nextPlayerStats) {
-              const nextDetailedInventory = removeInventoryUnit(nextPlayerStats.inventory, normalizedItemName);
+              const nextDetailedInventory = removeInventoryUnit(
+                nextPlayerStats.inventory,
+                normalizedItemName,
+                quantity,
+              );
               if (nextDetailedInventory !== nextPlayerStats.inventory) {
                 nextPlayerStats = { ...nextPlayerStats, inventory: nextDetailedInventory };
                 applied = true;
@@ -2399,6 +2419,7 @@ export function GameSurface({
             journalEntries.push({
               item: normalizedItemName,
               action: invUpdate.action === "add" ? "acquired" : "lost",
+              quantity,
             });
           }
         }
@@ -2424,7 +2445,7 @@ export function GameSurface({
             data: {
               item: entry.item,
               action: entry.action,
-              quantity: 1,
+              quantity: entry.quantity,
             },
           })
           .catch(() => {});
