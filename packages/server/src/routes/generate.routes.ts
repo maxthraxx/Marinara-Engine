@@ -142,8 +142,12 @@ import { chunkAndEmbedMessages, embedMemoryRecallTexts, recallMemories } from ".
 import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import {
+  appendGenerationTailMessages,
+  canUseMessageForUserRegeneration,
   findLastIndex,
   appendReadableAttachmentsToContent,
+  buildUserMessageRegenerationPromptFromSource,
+  buildUserMessageRegenerationSourceMessage,
   extractImageAttachmentDataUrls,
   injectIntoOutputFormatOrLastUser,
   isManualTrackerCharacterId,
@@ -157,6 +161,7 @@ import {
   resolveBaseUrl,
   resolveRegenerationGameStateFallbackMessageIds,
   resolveRegenerationGameStateAnchor,
+  resolveUserRegenerationPersistentAttachments,
   resolveVisibleGameStateAnchor,
   shouldPreferLatestVisibleGameState,
   shouldAbortOnPassiveGenerationDisconnect,
@@ -1115,7 +1120,9 @@ export async function generateRoutes(app: FastifyInstance) {
         ? scopedMessages.filter((message: any) => !isMessageHiddenFromAI(message))
         : scopedMessages;
       let lorebookKeeperMessages = chatMessages;
-      let regenMsg;
+      let regenMsg: any;
+      let regenerateUserMessage: SimpleMessage | null = null;
+      let regenerateUserSourceMessage: SimpleMessage | null = null;
 
       // ── Regeneration as swipe: exclude the target message from context ──
       if (input.regenerateMessageId) {
@@ -1123,6 +1130,13 @@ export async function generateRoutes(app: FastifyInstance) {
         if (!regenMsg) {
           sendSseEvent(reply, { type: "error", data: "Regenerated message not found" });
           return;
+        }
+        if (!canUseMessageForUserRegeneration({ message: regenMsg, supportsHiddenFromAI })) {
+          sendSseEvent(reply, { type: "error", data: "Cannot regenerate a message hidden from AI" });
+          return;
+        }
+        if (regenMsg.role === "user") {
+          regenerateUserSourceMessage = buildUserMessageRegenerationSourceMessage(regenMsg);
         }
         chatMessages = chatMessages.filter((m: any) => m.id !== input.regenerateMessageId);
         lorebookKeeperMessages = lorebookKeeperMessages.filter((m: any) => m.id !== input.regenerateMessageId);
@@ -1233,6 +1247,15 @@ export async function generateRoutes(app: FastifyInstance) {
       if (chatMode === "game") {
         applyAllSegmentEdits(mappedMessages, chatMeta as Record<string, unknown>, chatMessages);
       }
+
+      // User-message regeneration removes the target turn from real chat history,
+      // but prompt shaping still needs that original user input for macros,
+      // lorebook matching, semantic embeddings, and memory recall. Keep this
+      // separate from the final Gemini rewrite instruction appended near send time.
+      const currentInputMessages = (): SimpleMessage[] =>
+        regenerateUserSourceMessage ? [...mappedMessages, regenerateUserSourceMessage] : mappedMessages;
+      const currentUserInputContent = (): string | undefined =>
+        [...currentInputMessages()].reverse().find((message) => message.role === "user")?.content;
 
       const persona =
         (chat.personaId ? allPersonas.find((p: any) => p.id === chat.personaId) : null) ??
@@ -1440,7 +1463,7 @@ export async function generateRoutes(app: FastifyInstance) {
             typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
               ? (chatMeta.groupScenarioText as string).trim()
               : null,
-          lastInput: [...mappedMessages].reverse().find((message) => message.role === "user")?.content,
+          lastInput: currentUserInputContent(),
           chatId: input.chatId,
           model: conn.model,
         });
@@ -1461,9 +1484,16 @@ export async function generateRoutes(app: FastifyInstance) {
         // before it lands in runningMessagesForFollowUp, so each message still
         // gets exactly one pass.
         if (followUpIteration === 0) {
-          applyRegexScriptsToPromptMessages(mappedMessages, await regexScriptsStore.list(), {
+          const regexScripts = await regexScriptsStore.list();
+          applyRegexScriptsToPromptMessages(mappedMessages, regexScripts, {
             resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
           });
+          if (regenerateUserSourceMessage) {
+            const sourceMessages = [regenerateUserSourceMessage];
+            applyRegexScriptsToPromptMessages(sourceMessages, regexScripts, {
+              resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
+            });
+          }
 
           // Always collapse 3+ consecutive blank lines into a double newline —
           // these waste tokens and produce messy logs regardless of user regex settings.
@@ -1471,13 +1501,20 @@ export async function generateRoutes(app: FastifyInstance) {
           for (const msg of mappedMessages) {
             msg.content = msg.content.replace(/\n([ \t]*\n){2,}/g, "\n\n");
           }
+          if (regenerateUserSourceMessage) {
+            regenerateUserSourceMessage.content = regenerateUserSourceMessage.content.replace(
+              /\n([ \t]*\n){2,}/g,
+              "\n\n",
+            );
+          }
         }
-        promptMacroContext.lastInput = [...mappedMessages]
-          .reverse()
-          .find((message) => message.role === "user")?.content;
+        if (regenerateUserSourceMessage) {
+          regenerateUserMessage = buildUserMessageRegenerationPromptFromSource(regenerateUserSourceMessage);
+        }
+        promptMacroContext.lastInput = currentUserInputContent();
         const toLorebookScanMessages = () =>
           buildLorebookScanMessagesWithGenerationGuide(
-            mappedMessages.map((m) => ({
+            currentInputMessages().map((m) => ({
               role: m.role,
               content: m.content,
             })),
@@ -1504,7 +1541,7 @@ export async function generateRoutes(app: FastifyInstance) {
             (entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0,
           );
           if (hasVectorizedEntries) {
-            const recentMsgs = mappedMessages
+            const recentMsgs = currentInputMessages()
               .slice(-10)
               .map((m) => m.content)
               .join("\n");
@@ -4133,7 +4170,7 @@ export async function generateRoutes(app: FastifyInstance) {
           const _tRecall = Date.now();
           try {
             // Use the last user message as the query
-            const lastUserMsg = [...mappedMessages].reverse().find((m) => m.role === "user");
+            const lastUserMsg = [...currentInputMessages()].reverse().find((m) => m.role === "user");
             if (lastUserMsg?.content?.trim()) {
               // Scope recall to this chat only. Users expect memories to stay with
               // the exact conversation/roleplay/game where they were created.
@@ -5959,11 +5996,26 @@ export async function generateRoutes(app: FastifyInstance) {
           finalMessages.push({ role: "user", content: impersonateInstruction });
         }
 
-        if (assistantPrefill.trim() && followUpIteration === 0) {
-          finalMessages.push({ role: "assistant", content: assistantPrefill });
+        const tailMessages = appendGenerationTailMessages(finalMessages, {
+          assistantPrefill,
+          followUpIteration,
+          impersonate: input.impersonate,
+          isGoogleProvider,
+          regenerateUserMessage,
+        });
+        if (tailMessages.assistantPrefillInjected) {
+          const prefillPosition = tailMessages.googleUserRegenerationInjected
+            ? "before final user message"
+            : "as final assistant message";
           logger.debug(
-            "[generate] Injected assistant prefill (%d chars) as final assistant message",
+            "[generate] Injected assistant prefill (%d chars) %s",
             assistantPrefill.length,
+            prefillPosition,
+          );
+        }
+        if (tailMessages.googleUserRegenerationInjected && assistantPrefill.trim()) {
+          logger.debug(
+            "[generate] Preserved assistant prefill before Gemini user-message regeneration instruction",
           );
         }
 
@@ -6943,6 +6995,8 @@ export async function generateRoutes(app: FastifyInstance) {
               extraUpdate.generationReplay = buildGenerationReplay(input);
               // Cache the final prompt (what was actually sent to the model) for Peek Prompt
               extraUpdate.cachedPrompt = finalPromptSent.map((m) => ({ role: m.role, content: m.content }));
+              const persistentAttachments = resolveUserRegenerationPersistentAttachments(regenMsg ?? {});
+              if (persistentAttachments) extraUpdate.attachments = persistentAttachments;
               await chats.updateMessageExtra(savedMsg.id, extraUpdate);
               // Also persist on the active swipe so switching swipes preserves per-swipe extras
               const refreshedMsg = await chats.getMessage(savedMsg.id);
