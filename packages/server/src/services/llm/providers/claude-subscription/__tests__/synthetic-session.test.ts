@@ -29,7 +29,17 @@ const META: CommonSessionMeta = {
   permissionMode: "bypassPermissions",
 };
 
-describe("sessionsDirFor", () => {
+// `synthetic-session` is a Linux/macOS-only module: `constructSessionFile`
+// throws on win32 and the provider falls back to transcript-fold there, so
+// none of this module's code path runs on Windows. Skipping these suites on
+// win32 avoids asserting POSIX path math and a Unix-only write path on a
+// platform where neither executes — coverage the Linux run already provides.
+// The win32 contract that *does* matter — the provider selecting the fold
+// path — is asserted in `claude-subscription.provider.test.ts`.
+const WIN32_SKIP =
+  process.platform === "win32" && "synthetic-session is Unix-only (win32 uses the fold path)";
+
+describe("sessionsDirFor", { skip: WIN32_SKIP }, () => {
   // The default-path tests assume CLAUDE_CONFIG_DIR is unset (so the
   // function falls back to `~/.claude`). Developers running this suite in
   // a shell with CLAUDE_CONFIG_DIR exported for their own Claude Code
@@ -62,7 +72,7 @@ describe("sessionsDirFor", () => {
   });
 });
 
-describe("assembleEntries", () => {
+describe("assembleEntries", { skip: WIN32_SKIP }, () => {
   it("skips system messages (they ride systemPrompt, not the JSONL)", () => {
     const history: ChatMessage[] = [
       { role: "system", content: "you are helpful" },
@@ -109,7 +119,7 @@ describe("assembleEntries", () => {
   });
 });
 
-describe("constructSessionFile", () => {
+describe("constructSessionFile", { skip: WIN32_SKIP }, () => {
   let dir: string;
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "marinara-jsonl-test-"));
@@ -176,7 +186,7 @@ describe("constructSessionFile", () => {
   });
 });
 
-describe("cleanupSessionFile", () => {
+describe("cleanupSessionFile", { skip: WIN32_SKIP }, () => {
   let dir: string;
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "marinara-jsonl-test-"));
@@ -225,7 +235,7 @@ describe("cleanupSessionFile", () => {
   });
 });
 
-describe("cleanupOrphanedSessions", () => {
+describe("cleanupOrphanedSessions", { skip: WIN32_SKIP }, () => {
   let dir: string;
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "marinara-jsonl-test-"));

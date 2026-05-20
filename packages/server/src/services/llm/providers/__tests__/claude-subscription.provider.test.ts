@@ -450,3 +450,51 @@ describe("ClaudeSubscriptionProvider — resume path wiring", () => {
     await assert.rejects(() => stat(sessionPath), /ENOENT/, "session file should be cleaned up after completion");
   });
 });
+
+describe("ClaudeSubscriptionProvider — win32 fold-path fallback", () => {
+  // The synthetic-session resume machinery is Linux/macOS only
+  // (`constructSessionFile` throws on win32), so Windows hosts must degrade
+  // to the transcript-fold path. Pinning that contract here is what lets the
+  // synthetic-session unit suite be skipped on win32 rather than ported.
+  let priorPlatform: NodeJS.Platform;
+  beforeEach(() => {
+    priorPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+  });
+  afterEach(() => {
+    __setSdkForTesting(null);
+    if (process.platform !== priorPlatform) {
+      Object.defineProperty(process, "platform", { value: priorPlatform, configurable: true });
+    }
+  });
+
+  it("uses the fold path on win32 — no resume, no cwd, plain-string prompt", async () => {
+    const captured: CapturedQuery[] = [];
+    __setSdkForTesting(makeFakeSdk(captured) as unknown as Parameters<typeof __setSdkForTesting>[0]);
+
+    const provider = new ClaudeSubscriptionProvider("", "");
+    // Multi-turn history: on a non-win32 host this WOULD engage the resume
+    // path, so asserting it doesn't here proves the platform gate works.
+    await drainProviderChat(
+      provider,
+      [
+        { role: "user", content: "first user message" },
+        { role: "assistant", content: "first assistant reply" },
+        { role: "user", content: "second user message" },
+      ],
+      { model: "claude-test-model", stream: false },
+    );
+
+    const call = captured[0]!;
+    assert.equal(call.options["resume"], undefined, "resume must NOT be set on win32 (fold path)");
+    assert.equal(call.options["cwd"], undefined, "cwd must NOT be set on win32 (fold path)");
+    assert.equal(
+      typeof call.prompt,
+      "string",
+      "fold path passes a plain-string transcript, not an AsyncIterable",
+    );
+    const prompt = call.prompt as string;
+    assert.match(prompt, /second user message/, "folded transcript must include the latest turn");
+    assert.match(prompt, /first assistant reply/, "folded transcript must include prior turns");
+  });
+});
