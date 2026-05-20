@@ -116,6 +116,19 @@ function writeCollapsedFolderIds(lorebookId: string, ids: Set<string>) {
   }
 }
 
+function appendNewTags(existingTags: string[], rawInput: string) {
+  const seen = new Set(existingTags);
+  const additions: string[] = [];
+
+  for (const tag of rawInput.split(",").map((part) => part.trim())) {
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    additions.push(tag);
+  }
+
+  return additions.length > 0 ? [...existingTags, ...additions] : existingTags;
+}
+
 // ── Types ──
 type LinkedResourceItem = {
   id: string;
@@ -631,6 +644,15 @@ export function LorebookEditor() {
 
   // ── Handlers ──
   const markLorebookDirty = useCallback(() => setLorebookDirty(true), []);
+
+  const handleAddTags = useCallback(() => {
+    const nextTags = appendNewTags(formTags, newTag);
+    if (nextTags === formTags) return;
+    setFormTags(nextTags);
+    markLorebookDirty();
+    setNewTag("");
+  }, [formTags, markLorebookDirty, newTag]);
+
   const exitEntrySelectionMode = useCallback(() => {
     setEntrySelectionMode(false);
     setSelectedEntryIds(new Set());
@@ -1200,28 +1222,16 @@ export function LorebookEditor() {
                       value={newTag}
                       onChange={(e) => setNewTag(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" && newTag.trim()) {
+                        if (e.key === "Enter") {
                           e.preventDefault();
-                          const t = newTag.trim();
-                          if (!formTags.includes(t)) {
-                            setFormTags([...formTags, t]);
-                            markLorebookDirty();
-                          }
-                          setNewTag("");
+                          handleAddTags();
                         }
                       }}
                       placeholder="Add tag…"
                       className="flex-1 rounded-xl bg-[var(--secondary)] px-3 py-2 text-xs ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                     />
                     <button
-                      onClick={() => {
-                        const t = newTag.trim();
-                        if (t && !formTags.includes(t)) {
-                          setFormTags([...formTags, t]);
-                          markLorebookDirty();
-                        }
-                        setNewTag("");
-                      }}
+                      onClick={handleAddTags}
                       className="rounded-xl bg-[var(--secondary)] px-3 py-2 text-xs font-medium ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
                     >
                       <Plus size="0.75rem" />
