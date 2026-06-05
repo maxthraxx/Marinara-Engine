@@ -6433,6 +6433,7 @@ export async function gameRoutes(app: FastifyInstance) {
               });
               const generatedTag = await generateSceneIllustration({
                 chatId: input.chatId,
+                title: illustration.title,
                 prompt: illustration.prompt,
                 reason: illustration.reason,
                 characters: illustration.characters,
@@ -6717,6 +6718,7 @@ export async function gameRoutes(app: FastifyInstance) {
       .object({
         segment: z.number().int().min(0).max(500).optional(),
         prompt: z.string().min(40).max(1200),
+        title: z.string().max(160).optional(),
         characters: z.array(z.string().min(1).max(200)).max(6).optional(),
         reason: z.string().max(300).optional(),
         slug: z.string().max(80).optional(),
@@ -6859,6 +6861,7 @@ export async function gameRoutes(app: FastifyInstance) {
         });
         const compiledReviewPrompt = await buildSceneIllustrationProviderPrompt({
           chatId: input.chatId,
+          title: illustration.title,
           prompt: illustration.prompt,
           reason: illustration.reason,
           characters: illustration.characters,
@@ -7172,6 +7175,7 @@ export async function gameRoutes(app: FastifyInstance) {
         });
         const tag = await generateSceneIllustration({
           chatId: input.chatId,
+          title: illustration.title,
           prompt: illustration.prompt,
           reason: illustration.reason,
           characters: illustration.characters,

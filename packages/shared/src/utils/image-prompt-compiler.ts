@@ -493,6 +493,14 @@ function cleanPromptFragment(fragment: string, promptMode: ImageStyleProfile["pr
   let clean = fragment
     .replace(/\s+/g, " ")
     .replace(
+      /\b(?:major character moment|key emotional moment|major reveal|dramatic action scene|important scene|scene moment|narrative purpose)\s*[-:]\s*/gi,
+      "",
+    )
+    .replace(
+      /^\s*(?:major character moment|key emotional moment|major reveal|dramatic action scene|important scene|scene moment)\s*[-:]?\s*/i,
+      "",
+    )
+    .replace(
       /^(?:create|generate|make|draw|depict|render)\s+(?:an?\s+)?(?:image|picture|illustration|portrait|scene)\s+(?:of|for)?\s*/i,
       "",
     )

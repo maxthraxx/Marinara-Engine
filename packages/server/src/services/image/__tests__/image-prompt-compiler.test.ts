@@ -5,6 +5,7 @@ import { mergeNegativePrompt } from "../../../../../shared/src/constants/image-g
 import { compileImagePrompt } from "../../../../../shared/src/utils/image-prompt-compiler.js";
 import {
   buildBackgroundProviderPrompt,
+  buildSceneIllustrationProviderPrompt,
   buildNpcPortraitProviderPrompt,
 } from "../../game/game-asset-generation.js";
 
@@ -80,6 +81,49 @@ test("compileImagePrompt preserves Z-Image Turbo narrative phrasing", () => {
   assert.match(compiled.prompt, /moonlit courtyard/);
   assert.match(compiled.prompt, /glowing door/);
   assert.match(compiled.negativePrompt, /watermark/);
+});
+
+test("compileImagePrompt strips illustrator narrative moment labels from gallery prompts", () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const compiled = compileImagePrompt({
+    kind: "illustration",
+    prompt: [
+      "Fantasy anime illustration, warm cinematic lighting, rich saturated colors, soft painterly shading.",
+      "Major character moment - protagonist seeing transformed self in academy uniform for the first time, emotional self-recognition scene.",
+      "Maeve O'Riordan's POV looking at herself in a full-length ornate academy mirror inside dorm room 213.",
+      "She wears a fitted structured blazer buttoned neatly from collar to waist, a snug pleated skirt ending above the knees, and knee-high socks.",
+    ].join(" "),
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+  });
+
+  assert.doesNotMatch(compiled.prompt, /major character moment/i, compiled.prompt);
+  assert.match(compiled.prompt, /protagonist seeing transformed self/i, compiled.prompt);
+  assert.match(compiled.prompt, /academy uniform|structured blazer|pleated skirt/i, compiled.prompt);
+});
+
+test("scene illustration prompts include visual title context when the scene prompt is vague", async () => {
+  const settings = createDefaultImageStyleProfileSettings();
+  const compiled = await buildSceneIllustrationProviderPrompt({
+    chatId: "chat-1",
+    title: "Protagonist seeing transformed self in academy mirror",
+    prompt: "Emotional self-recognition scene with warm light and cinematic composition.",
+    reason: "major character moment",
+    slug: "mirror-self-recognition",
+    genre: "fantasy",
+    setting: "academy dorm room",
+    artStyle: "anime illustration",
+    imgModel: "sdxl",
+    imgBaseUrl: "http://127.0.0.1:7860",
+    imgApiKey: "",
+    styleProfiles: settings,
+    styleProfileId: "photorealistic",
+  });
+
+  assert.doesNotMatch(compiled.prompt, /visual subject context|major character moment/i, compiled.prompt);
+  assert.match(compiled.prompt, /Protagonist seeing transformed self/i, compiled.prompt);
+  assert.match(compiled.prompt, /academy mirror/i, compiled.prompt);
+  assert.match(compiled.prompt, /Emotional self-recognition scene/i, compiled.prompt);
 });
 
 test("compileImagePrompt distills verbose avatar source prompts when tag grammar is selected", () => {

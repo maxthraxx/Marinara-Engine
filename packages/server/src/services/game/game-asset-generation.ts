@@ -554,6 +554,7 @@ export interface ChatBackgroundGenRequest extends BackgroundGenRequest {
 
 export interface SceneIllustrationGenRequest {
   chatId: string;
+  title?: string;
   prompt: string;
   reason?: string;
   characters?: string[];
@@ -656,12 +657,16 @@ export async function buildBackgroundImagePrompt(req: BackgroundGenRequest): Pro
 
 async function buildSceneIllustrationRawPrompt(req: SceneIllustrationGenRequest): Promise<string> {
   const styleHint = [req.artStyle, req.genre, req.setting].filter(Boolean).join(", ");
+  const sceneTitle = sceneIllustrationContextTitle(req);
+  const narrativePurpose = cleanSceneIllustrationContext(req.reason);
+  const meaningfulNarrativePurpose = isGenericSceneMomentLabel(narrativePurpose) ? "" : narrativePurpose;
   const imagePromptInstructionsLine = req.imagePromptInstructions?.trim()
     ? `User image instructions: ${req.imagePromptInstructions.trim().replace(/\s+/g, " ").slice(0, 1200)}`
     : "";
   const sceneIllustrationVars = {
+    sceneTitleLine: sceneTitle ? `${sceneTitle}.` : "",
     scenePrompt: req.prompt,
-    narrativePurposeLine: req.reason ? `Narrative purpose: ${req.reason}.` : "",
+    narrativePurposeLine: meaningfulNarrativePurpose ? `Narrative purpose: ${meaningfulNarrativePurpose}.` : "",
     charactersLine: req.characters?.length ? `Characters: ${req.characters.join(", ")}.` : "",
     referenceHandlingLine: req.referenceImages?.length
       ? "Reference handling: attached character reference images are available. Use them to match faces, hair, build, colors, and distinctive features for the referenced characters."
@@ -680,6 +685,36 @@ async function buildSceneIllustrationRawPrompt(req: SceneIllustrationGenRequest)
       ? `${rawIllustrationPrompt}\n${imagePromptInstructionsLine}`
       : rawIllustrationPrompt;
   return finalPrompt;
+}
+
+function sceneIllustrationContextTitle(req: SceneIllustrationGenRequest): string {
+  const explicitTitle = cleanSceneIllustrationContext(req.title);
+  if (explicitTitle) return explicitTitle;
+
+  const visualReason = cleanSceneIllustrationContext(req.reason);
+  if (visualReason && hasSceneSubjectCue(visualReason)) return visualReason;
+
+  const slugTitle = cleanSceneIllustrationContext(req.slug?.replace(/[-_]+/g, " "));
+  return slugTitle && hasSceneSubjectCue(slugTitle) ? slugTitle : "";
+}
+
+function cleanSceneIllustrationContext(value: string | null | undefined): string {
+  return (value ?? "")
+    .replace(/\b(?:major character moment|key emotional moment|major reveal|dramatic action scene|important scene|scene moment|narrative purpose)\s*[-:]\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/g, "")
+    .trim()
+    .slice(0, 180);
+}
+
+function hasSceneSubjectCue(value: string): boolean {
+  return /\b(?:seeing|watching|looking|facing|meeting|holding|reaching|standing|kneeling|falling|fighting|duel|kiss|confession|reveal|transformation|mirror|uniform|door|character|protagonist|player|npc|self|room|hall|chamber|courtyard|battle|boss|monster|creature|arrival|entrance)\b/i.test(value);
+}
+
+function isGenericSceneMomentLabel(value: string): boolean {
+  return /^(?:major character moment|key emotional moment|major reveal|dramatic action scene|important scene|scene moment)$/i.test(
+    value,
+  );
 }
 
 export async function buildSceneIllustrationProviderPrompt(

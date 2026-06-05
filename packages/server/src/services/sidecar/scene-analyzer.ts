@@ -303,6 +303,7 @@ export function buildSceneAnalyzerUserPrompt(
     ...(canGenerateIllustrations
       ? [
           `- Use "illustration" rarely. Most turns MUST keep it null. If you request it, the prompt must describe the exact illustrated moment, visible characters, player POV, mood, lighting, and composition.`,
+          `- "illustration.title" should be a short concrete visual title that names what the picture is of, not just why it matters.`,
           ...(imagePromptInstructions
             ? [`- When writing "illustration.prompt", obey these user image instructions: ${imagePromptInstructions}`]
             : []),
@@ -378,7 +379,7 @@ export function buildSceneAnalyzerUserPrompt(
       : []),
     ...(canGenerateIllustrations
       ? [
-          `,  "illustration": null OR {"segment":<0-${lines.length - 1}>,"prompt":"<important CG image prompt from player POV>","characters":["<visible named character>"],"reason":"<why this is CG-worthy>","slug":"<short-safe-slug>"}`,
+          `,  "illustration": null OR {"segment":<0-${lines.length - 1}>,"title":"<short concrete visual title>","prompt":"<important CG image prompt from player POV>","characters":["<visible named character>"],"reason":"<why this is CG-worthy>","slug":"<short-safe-slug>"}`,
         ]
       : []),
     `}`,
