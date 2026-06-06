@@ -2513,6 +2513,12 @@ function upsertGameNpcAvatarEntries(currentNpcs: GameNpc[], avatarEntries: Scene
       if (!nextNpc.description && entry.description) {
         nextNpc = { ...nextNpc, description: entry.description, descriptionSource: "narration" };
       }
+      if (!nextNpc.gender && entry.gender) {
+        nextNpc = { ...nextNpc, gender: entry.gender };
+      }
+      if (!nextNpc.pronouns && entry.pronouns) {
+        nextNpc = { ...nextNpc, pronouns: entry.pronouns };
+      }
 
       if (nextNpc !== existing) {
         nextNpcs[existingIndex] = nextNpc;
@@ -2530,6 +2536,8 @@ function upsertGameNpcAvatarEntries(currentNpcs: GameNpc[], avatarEntries: Scene
       reputation: 0,
       notes: [],
       avatarUrl: entry.avatarUrl,
+      gender: entry.gender,
+      pronouns: entry.pronouns,
       descriptionSource: entry.description ? "narration" : undefined,
     });
     changed = true;
@@ -6610,13 +6618,19 @@ export async function gameRoutes(app: FastifyInstance) {
               input.context.characterNames ?? [],
               input.narration,
             );
-            const libResolvedNpcs: Array<{ name: string; description: string; avatarUrl: string }> = [];
+            const libResolvedNpcs: SceneAssetNpcAvatarEntry[] = [];
             for (const npc of npcs) {
               if (!npc.name) continue;
               const libAvatar = findCharAvatarFuzzy(npc.name, charAvatarByName);
               if (libAvatar && npc.avatarUrl !== libAvatar) {
                 npc.avatarUrl = libAvatar;
-                libResolvedNpcs.push({ name: npc.name, description: npc.description, avatarUrl: libAvatar });
+                libResolvedNpcs.push({
+                  name: npc.name,
+                  description: npc.description,
+                  gender: npc.gender,
+                  pronouns: npc.pronouns,
+                  avatarUrl: libAvatar,
+                });
               }
             }
 
@@ -6759,6 +6773,12 @@ export async function gameRoutes(app: FastifyInstance) {
     const imgEndpointId = imgConn.imageEndpointId || undefined;
     const imgDefaults = resolveConnectionImageDefaults(imgConn);
     const promptOverridesStorage = createPromptOverridesStorage(app.db);
+    const promptOverrideById = new Map(
+      (input.promptOverrides ?? []).map((item) => [
+        item.id,
+        { prompt: item.prompt.trim(), negativePrompt: item.negativePrompt?.trim() || undefined },
+      ]),
+    );
 
     const setupCfg = meta.gameSetupConfig as Record<string, unknown> | null;
     const genre = (setupCfg?.genre as string) || "";
@@ -6785,6 +6805,7 @@ export async function gameRoutes(app: FastifyInstance) {
 
     if (input.backgroundTag) {
       const slug = generatedBackgroundSlug(input.backgroundTag);
+      const promptOverride = promptOverrideById.get(gameImagePromptReviewId("background", slug));
       const compiledReviewPrompt = await buildBackgroundProviderPrompt({
         chatId: input.chatId,
         locationSlug: slug,
@@ -6808,6 +6829,8 @@ export async function gameRoutes(app: FastifyInstance) {
         styleProfileId,
         promptOverridesStorage,
         size: backgroundSize,
+        promptOverride: promptOverride?.prompt,
+        negativePromptOverride: promptOverride?.negativePrompt,
       });
       items.push({
         id: gameImagePromptReviewId("background", slug),
@@ -6850,6 +6873,8 @@ export async function gameRoutes(app: FastifyInstance) {
         }
 
         const illustration = input.illustration as SceneIllustrationRequest;
+        const illustrationKey = illustration.slug || illustration.reason || illustration.prompt.slice(0, 80);
+        const promptOverride = promptOverrideById.get(gameImagePromptReviewId("illustration", illustrationKey));
         const illustrationAssets = collectIllustrationCharacterAssets({
           illustration,
           characterNames: illustration.characters ?? [],
@@ -6884,8 +6909,9 @@ export async function gameRoutes(app: FastifyInstance) {
           styleProfileId,
           promptOverridesStorage,
           size: backgroundSize,
+          promptOverride: promptOverride?.prompt,
+          negativePromptOverride: promptOverride?.negativePrompt,
         });
-        const illustrationKey = illustration.slug || illustration.reason || illustration.prompt.slice(0, 80);
         items.push({
           id: gameImagePromptReviewId("illustration", illustrationKey),
           kind: "illustration",
@@ -6940,6 +6966,7 @@ export async function gameRoutes(app: FastifyInstance) {
         if (!forceNpcAvatar && findCharAvatarFuzzy(npc.name, charAvatarByName)) continue;
         const metadataNpc = findNpcRecordByName(currentNpcs, npc.name);
         const presentCharacter = findRecordByName(presentCharacters, npc.name);
+        const promptOverride = promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name));
 
         const compiledReviewPrompt = await buildNpcPortraitProviderPrompt({
           chatId: input.chatId,
@@ -6960,6 +6987,8 @@ export async function gameRoutes(app: FastifyInstance) {
           styleProfileId,
           promptOverridesStorage,
           size: portraitSize,
+          promptOverride: promptOverride?.prompt,
+          negativePromptOverride: promptOverride?.negativePrompt,
         });
         items.push({
           id: gameImagePromptReviewId("portrait", npc.name),
@@ -7322,10 +7351,16 @@ export async function gameRoutes(app: FastifyInstance) {
         if (latestChat) {
           const avatarEntries: SceneAssetNpcAvatarEntry[] = generatedNpcAvatars.map((generatedAvatar) => ({
             ...generatedAvatar,
-            description:
-              input.npcsNeedingAvatars?.find(
+            ...(() => {
+              const candidate = input.npcsNeedingAvatars?.find(
                 (npc) => normalizeJournalMatch(npc.name) === normalizeJournalMatch(generatedAvatar.name),
-              )?.description ?? "",
+              );
+              return {
+                description: candidate?.description ?? "",
+                gender: candidate?.gender,
+                pronouns: candidate?.pronouns,
+              };
+            })(),
           }));
           const nextNpcs = upsertGameNpcAvatarEntries(currentNpcs, avatarEntries);
           if (nextNpcs !== currentNpcs) {

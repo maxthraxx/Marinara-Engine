@@ -8,6 +8,7 @@ import type {
 
 export const IMAGE_STYLE_PROFILES_STORAGE_KEY = "imageStyleProfiles";
 export const DEFAULT_IMAGE_STYLE_PROFILE_ID = "auto";
+const MAX_IMAGE_STYLE_PROFILES = 100;
 
 const DEFAULT_RULES: ImageStyleProfileRules = {
   dedupeStrength: "normal",
@@ -206,7 +207,7 @@ export function normalizeImageStyleProfileSettings(raw: unknown): ImageStyleProf
   const defaults = createDefaultImageStyleProfileSettings();
   if (!isRecord(raw)) return defaults;
 
-  const rawProfiles = Array.isArray(raw.profiles) ? raw.profiles : [];
+  const rawProfiles = Array.isArray(raw.profiles) ? raw.profiles.slice(0, MAX_IMAGE_STYLE_PROFILES) : [];
   const customProfiles = rawProfiles
     .map((profile) => normalizeImageStyleProfile(profile))
     .filter((profile): profile is ImageStyleProfile => !!profile);
@@ -229,10 +230,6 @@ export function normalizeImageStyleProfile(raw: unknown): ImageStyleProfile | nu
   const id = slugId(readString(raw.id, ""));
   if (!id) return null;
 
-  const builtIn = readBoolean(
-    raw.builtIn,
-    DEFAULT_IMAGE_STYLE_PROFILES.some((profile) => profile.id === id),
-  );
   const fallback = DEFAULT_IMAGE_STYLE_PROFILES.find((profile) => profile.id === id);
   const subjectTags = isRecord(raw.subjectTags) ? raw.subjectTags : {};
 
@@ -261,7 +258,7 @@ export function normalizeImageStyleProfile(raw: unknown): ImageStyleProfile | nu
     negativeTags: readString(raw.negativeTags, fallback?.negativeTags ?? "").slice(0, 4000),
     subjectTags: normalizeSubjectTags(subjectTags, fallback?.subjectTags),
     rules: normalizeRules(raw.rules, fallback?.rules ?? DEFAULT_RULES),
-    builtIn,
+    builtIn: !!fallback,
   };
 }
 

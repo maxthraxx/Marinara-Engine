@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createDefaultImageStyleProfileSettings } from "../../../../../shared/src/constants/image-style-profiles.js";
+import {
+  createDefaultImageStyleProfileSettings,
+  normalizeImageStyleProfileSettings,
+} from "../../../../../shared/src/constants/image-style-profiles.js";
 import { mergeNegativePrompt } from "../../../../../shared/src/constants/image-generation-defaults.js";
 import { compileImagePrompt } from "../../../../../shared/src/utils/image-prompt-compiler.js";
 import {
@@ -66,6 +69,60 @@ test("compileImagePrompt never leaves avoid artifact instructions in positive ta
   assert.match(compiled.negativePrompt, /UI/i);
   assert.match(compiled.negativePrompt, /watermarks/);
   assert.match(compiled.negativePrompt, /logos/);
+});
+
+test("compileImagePrompt preserves a source fallback when a custom tagged profile produces no tags", () => {
+  const settings = normalizeImageStyleProfileSettings({
+    defaultProfileId: "custom-empty",
+    profiles: [
+      {
+        id: "custom-empty",
+        name: "Custom Empty",
+        baseStyle: "custom",
+        promptMode: "tagged",
+        styleText: "",
+        positiveTags: "",
+        negativeTags: "",
+        subjectTags: {},
+        rules: {
+          dedupeStrength: "normal",
+          preferTagsOverNarrative: true,
+          preserveUserPhrases: true,
+        },
+      },
+    ],
+  });
+  const compiled = compileImagePrompt({
+    kind: "avatar",
+    prompt: "A mysterious person smiling beside an unusual red vehicle. Avoid watermark.",
+    styleProfiles: settings,
+    styleProfileId: "custom-empty",
+  });
+
+  assert.match(compiled.prompt, /mysterious person/i);
+  assert.doesNotMatch(compiled.prompt, /\bavoid\b|\bwatermark\b/i);
+  assert.match(compiled.negativePrompt, /watermark/i);
+});
+
+test("normalizeImageStyleProfileSettings derives built-in status instead of trusting synced data", () => {
+  const settings = normalizeImageStyleProfileSettings({
+    defaultProfileId: "custom",
+    profiles: [
+      {
+        id: "custom",
+        name: "Custom",
+        builtIn: true,
+      },
+      {
+        id: "anime",
+        name: "Edited Anime",
+        builtIn: false,
+      },
+    ],
+  });
+
+  assert.equal(settings.profiles.find((profile) => profile.id === "custom")?.builtIn, false);
+  assert.equal(settings.profiles.find((profile) => profile.id === "anime")?.builtIn, true);
 });
 
 test("compileImagePrompt preserves Z-Image Turbo narrative phrasing", () => {

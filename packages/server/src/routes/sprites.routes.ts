@@ -1087,10 +1087,20 @@ async function buildSpritePromptPlan(
     cellWidth,
     cellHeight,
     promptOverrides: new Map(
-      (body.promptOverrides ?? []).map((item) => [
-        item.id,
-        { prompt: item.prompt.trim(), negativePrompt: item.negativePrompt?.trim() || "" },
-      ]),
+      (Array.isArray(body.promptOverrides) ? body.promptOverrides : []).flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const override = item as Record<string, unknown>;
+        if (typeof override.id !== "string" || typeof override.prompt !== "string") return [];
+        return [
+          [
+            override.id,
+            {
+              prompt: override.prompt.trim(),
+              negativePrompt: typeof override.negativePrompt === "string" ? override.negativePrompt.trim() : "",
+            },
+          ] as const,
+        ];
+      }),
     ),
     promptOverridesStorage,
   };
@@ -1476,12 +1486,16 @@ export async function spritesRoutes(app: FastifyInstance) {
             styleProfiles: imageSettings.styleProfiles,
             imageDefaults,
           });
+          const reviewedPrompt = finalSpritePromptOverride(
+            plan.promptOverrides.get(spritePromptReviewId("expression", plan.spriteType, expression)),
+            compiledPrompt,
+          );
           return {
             id: spritePromptReviewId("expression", plan.spriteType, expression),
             kind: "sprite",
             title: `Expression: ${expression.replace(/_/g, " ")}`,
-            prompt: compiledPrompt.prompt,
-            negativePrompt: compiledPrompt.negativePrompt,
+            prompt: reviewedPrompt.prompt,
+            negativePrompt: reviewedPrompt.negativePrompt,
             width: 1024,
             height: 1024,
           };
@@ -1494,17 +1508,23 @@ export async function spritesRoutes(app: FastifyInstance) {
       styleProfiles: imageSettings.styleProfiles,
       imageDefaults,
     });
+    const sheetPromptId = spritePromptReviewId(
+      "sheet",
+      plan.spriteType,
+      `${plan.cols}x${plan.rows}-${plan.expressions.join(",")}`,
+    );
+    const reviewedPrompt = finalSpritePromptOverride(plan.promptOverrides.get(sheetPromptId), compiledPrompt);
     return {
       items: [
         {
-          id: spritePromptReviewId("sheet", plan.spriteType, `${plan.cols}x${plan.rows}-${plan.expressions.join(",")}`),
+          id: sheetPromptId,
           kind: "sprite",
           title:
             plan.spriteType === "full-body"
               ? `Full-body sprites: ${plan.cols}x${plan.rows}`
               : `Expression sprites: ${plan.cols}x${plan.rows}`,
-          prompt: compiledPrompt.prompt,
-          negativePrompt: compiledPrompt.negativePrompt,
+          prompt: reviewedPrompt.prompt,
+          negativePrompt: reviewedPrompt.negativePrompt,
           width: plan.sheetWidth,
           height: plan.sheetHeight,
         },

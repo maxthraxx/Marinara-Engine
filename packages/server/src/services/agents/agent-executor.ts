@@ -1167,7 +1167,7 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
       ]
         .map(([label, value]) => {
           const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 180) : "";
-          return text ? `${label}: ${text}` : "";
+          return text ? `${label}: ${escapeXml(text)}` : "";
         })
         .filter(Boolean);
       if (fields.length > 0) {

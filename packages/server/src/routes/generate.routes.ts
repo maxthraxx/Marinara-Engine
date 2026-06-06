@@ -9497,20 +9497,9 @@ export async function generateRoutes(app: FastifyInstance) {
                         (chatMeta.imageStyleProfileId as string | undefined) ??
                         null;
 
-                      // Use per-chat selfie resolution if set; otherwise use the synced global selfie canvas.
-                      const selfieRes = (chatMeta.selfieResolution as string) ?? "";
-                      const resParts = selfieRes.split("x").map(Number);
-                      const parsedW = resParts[0] ?? 0;
-                      const parsedH = resParts[1] ?? 0;
-                      let imgWidth: number;
-                      let imgHeight: number;
-                      if (parsedW > 0 && parsedH > 0) {
-                        imgWidth = parsedW;
-                        imgHeight = parsedH;
-                      } else {
-                        imgWidth = imageSettings.selfie.width;
-                        imgHeight = imageSettings.selfie.height;
-                      }
+                      // Scene illustrations share the landscape background canvas.
+                      const imgWidth = imageSettings.background.width;
+                      const imgHeight = imageSettings.background.height;
 
                       // Prepend style to the prompt for better results
                       let fullPrompt = style ? `${style}, ${imagePrompt}` : imagePrompt;

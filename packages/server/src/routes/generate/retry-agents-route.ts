@@ -1769,49 +1769,25 @@ async function applyRetryResultEffects(args: {
               const imageSettings = await loadImageGenerationUserSettings(app.db);
 
               const chatMeta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
-              const isGameIllustration = ((chat as any).mode ?? "conversation") === "game";
               const setupConfig = parseSettingsRecord(chatMeta.gameSetupConfig);
               const styleProfileId =
                 (typeof setupConfig.imageStyleProfileId === "string" ? setupConfig.imageStyleProfileId : "") ||
                 (typeof chatMeta.imageStyleProfileId === "string" ? chatMeta.imageStyleProfileId : "") ||
                 null;
-              const selfieRes = isGameIllustration ? "" : ((chatMeta.selfieResolution as string) ?? "");
-              const resParts = selfieRes.split("x").map(Number);
-              const parsedW = resParts[0] ?? 0;
-              const parsedH = resParts[1] ?? 0;
-              let imgWidth: number;
-              let imgHeight: number;
-              if (parsedW > 0 && parsedH > 0) {
-                imgWidth = parsedW;
-                imgHeight = parsedH;
-              } else if (isGameIllustration) {
-                imgWidth = imageSettings.background.width;
-                imgHeight = imageSettings.background.height;
-              } else {
-                imgWidth = imageSettings.selfie.width;
-                imgHeight = imageSettings.selfie.height;
-              }
+              const imgWidth = imageSettings.background.width;
+              const imgHeight = imageSettings.background.height;
 
               const gameArtStylePrompt =
                 typeof agentContext.memory._gameImageStylePrompt === "string"
                   ? agentContext.memory._gameImageStylePrompt
                   : "";
-              const fullPrompt = buildIllustratorImagePrompt({
+              let fullPrompt = buildIllustratorImagePrompt({
                 gameArtStylePrompt,
                 style,
                 imagePrompt,
                 imagePositivePrompt,
               });
               const finalNegativePrompt = [negativePrompt, savedNegativePrompt].filter(Boolean).join(", ");
-              const compiledPrompt = compileImagePrompt({
-                kind: "illustration",
-                prompt: fullPrompt,
-                negativePrompt: finalNegativePrompt || undefined,
-                styleProfiles: imageSettings.styleProfiles,
-                styleProfileId,
-                imageDefaults,
-                generatedStyle: style,
-              });
 
               // Collect character avatar references when enabled
               const useAvatarRefs = illustratorAgent?.resolved.settings?.useAvatarReferences === true;
@@ -1842,6 +1818,22 @@ async function applyRetryResultEffects(args: {
                   }
                 }
                 if (refs.length > 0) referenceImages = refs;
+
+                const appearanceLines = refChars
+                  .map((character) => {
+                    const visual = character.appearance || character.description;
+                    return visual ? `${character.name}: ${visual}` : "";
+                  })
+                  .filter(Boolean);
+                const referenceGuidance = [
+                  referenceImages
+                    ? "Reference images of the characters are attached. Use them closely to match each character's exact visual appearance - face, hair, eyes, build, etc."
+                    : "",
+                  appearanceLines.length > 0 ? `Character visual descriptions:\n${appearanceLines.join("\n")}` : "",
+                ].filter(Boolean);
+                if (referenceGuidance.length > 0) {
+                  fullPrompt += `\n\n${referenceGuidance.join("\n")}`;
+                }
               } else if (agentContext.characters.length > 0) {
                 const firstChar = agentContext.characters[0];
                 if (firstChar) {
@@ -1862,6 +1854,16 @@ async function applyRetryResultEffects(args: {
                   }
                 }
               }
+
+              const compiledPrompt = compileImagePrompt({
+                kind: "illustration",
+                prompt: fullPrompt,
+                negativePrompt: finalNegativePrompt || undefined,
+                styleProfiles: imageSettings.styleProfiles,
+                styleProfileId,
+                imageDefaults,
+                generatedStyle: style,
+              });
 
               const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
                 prompt: compiledPrompt.prompt,

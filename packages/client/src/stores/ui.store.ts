@@ -1712,7 +1712,6 @@ export const useUIStore = create<UIState>()(
           persisted.imageStyleProfiles = normalizeImageStyleProfileSettings(
             persisted[IMAGE_STYLE_PROFILES_STORAGE_KEY] ?? persisted.imageStyleProfiles,
           );
-          delete persisted[IMAGE_STYLE_PROFILES_STORAGE_KEY];
         }
         persisted.imageStyleProfiles = normalizeImageStyleProfileSettings(persisted.imageStyleProfiles);
         delete persisted.trackerPanelWidth;

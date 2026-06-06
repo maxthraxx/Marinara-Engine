@@ -493,7 +493,7 @@ export async function generateNpcPortrait(req: NpcPortraitRequest): Promise<stri
       Buffer.byteLength(result.base64, "base64"),
       url,
     );
-    logger.info(`[game-asset-gen] Generated NPC portrait for "${req.npcName}" → ${url}`);
+    logger.info('[game-asset-gen] Generated NPC portrait for "%s" -> %s', req.npcName, url);
     return url;
   } catch (err) {
     logger.warn(err, '[game-asset-gen] Failed to generate portrait for "%s"', req.npcName);
@@ -797,7 +797,7 @@ export async function generateBackground(req: BackgroundGenRequest): Promise<str
     // Rebuild manifest so the new tag is available immediately
     buildAssetManifest();
 
-    logger.info(`[game-asset-gen] Generated background "${slug}" → tag: ${tag}`);
+    logger.info('[game-asset-gen] Generated background "%s" -> tag: %s', slug, tag);
     req.debugLog?.(
       "[debug/game/image-generation] background result slug=%s bytes=%d tag=%s",
       slug,

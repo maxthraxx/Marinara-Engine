@@ -320,11 +320,23 @@ export async function charactersRoutes(app: FastifyInstance) {
     const imageSettings = await loadImageGenerationUserSettings(app.db);
     const width = body.width ?? imageSettings.portrait.width;
     const height = body.height ?? imageSettings.portrait.height;
+    const rawPromptOverrides: unknown[] = Array.isArray(body.promptOverrides) ? body.promptOverrides : [];
     const promptOverrideById = new Map(
-      (body.promptOverrides ?? []).map((item) => [
-        item.id,
-        { prompt: item.prompt.trim(), negativePrompt: item.negativePrompt?.trim() || undefined },
-      ]),
+      rawPromptOverrides.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const override = item as Record<string, unknown>;
+        if (typeof override.id !== "string" || typeof override.prompt !== "string") return [];
+        return [
+          [
+            override.id,
+            {
+              prompt: override.prompt.trim(),
+              negativePrompt:
+                typeof override.negativePrompt === "string" ? override.negativePrompt.trim() || undefined : undefined,
+            },
+          ] as const,
+        ];
+      }),
     );
     const promptOverride = promptOverrideById.get(avatarGenerationPromptId(body.name ?? "character"));
     const referenceImages = (body.referenceImages ?? [])

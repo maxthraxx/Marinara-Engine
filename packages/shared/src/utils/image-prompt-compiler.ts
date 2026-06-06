@@ -104,11 +104,14 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
   }
 
   const hardPrefix = dedupeFragments(hardPrefixFragments, profile.rules.dedupeStrength, positiveDiagnostics);
-  const positive = compactPromptFragments(
+  let positive = compactPromptFragments(
     [...hardPrefix, ...dedupeFragments(positiveFragments, profile.rules.dedupeStrength, positiveDiagnostics)],
     compactPrompt,
     hardPrefix.length,
   );
+  if (positive.length === 0) {
+    positive = fallbackPositiveFragments(input, promptMode, compactPrompt);
+  }
   const negative = dedupeFragments(negativeFragments, profile.rules.dedupeStrength, negativeDiagnostics);
 
   return {
@@ -121,6 +124,19 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
       movedNegativeFragments,
     },
   };
+}
+
+function fallbackPositiveFragments(
+  input: CompileImagePromptInput,
+  promptMode: ImageStyleProfile["promptMode"],
+  compactPrompt: boolean,
+): string[] {
+  const fallbackFragments = [input.generatedStyle, input.prompt, input.userPositive]
+    .flatMap((value) => splitPromptFragments(value, "natural"))
+    .filter((fragment) => !extractNegativeFragment(fragment) && !hasAvoidInstructionPrefix(fragment))
+    .map((fragment) => cleanPromptFragment(fragment, promptMode))
+    .filter(Boolean);
+  return compactPromptFragments(fallbackFragments, compactPrompt);
 }
 
 function imagePromptPrefixFromDefaults(defaults: ImageGenerationDefaultsProfile | null | undefined): string {
