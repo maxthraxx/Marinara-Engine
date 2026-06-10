@@ -11567,7 +11567,13 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       }
 
-      // Wait for illustration to finish before closing the SSE stream
+      // Signal completion before the slow illustration tail. The client keeps
+      // listening until the HTTP stream closes, so late illustration events can
+      // still arrive without holding the chat's generation lock hostage.
+      sendSseEvent(reply, { type: "done", data: "" });
+      releaseActiveGeneration();
+
+      // Wait for illustration to finish before closing the SSE stream.
       if (pendingIllustration) {
         try {
           await pendingIllustration;
@@ -11575,9 +11581,6 @@ export async function generateRoutes(app: FastifyInstance) {
           /* errors already handled inside the promise */
         }
       }
-
-      // Signal completion
-      sendSseEvent(reply, { type: "done", data: "" });
     } catch (err) {
       const message =
         err instanceof Error
@@ -11591,7 +11594,7 @@ export async function generateRoutes(app: FastifyInstance) {
         clearGenerationInProgress(input.chatId, conversationGenerationStartedAt);
       }
       reply.raw.off("close", onClose);
-      if (activeGenerations) activeGenerations.delete(input.chatId);
+      releaseActiveGeneration();
       if (!clientDisconnected && !reply.raw.destroyed) {
         reply.raw.end();
       }
