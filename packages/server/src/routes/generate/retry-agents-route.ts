@@ -471,6 +471,9 @@ async function buildRetryAgentContext(args: {
           : [],
       );
       const restrictToSelectedSprites = selectedSpriteIds.size > 0;
+      const hasPersonaExpressionSource = agentContext.recentMessages.some(
+        (message) => message.role === "user" && message.content.trim(),
+      );
       const perChar: Array<{
         characterId: string;
         characterName: string;
@@ -486,7 +489,8 @@ async function buildRetryAgentContext(args: {
       }
       const includePersonaSprite =
         !!personaContext.personaId &&
-        (!restrictToSelectedSprites ||
+        (hasPersonaExpressionSource ||
+          !restrictToSelectedSprites ||
           selectedSpriteIds.has(personaContext.personaId) ||
           chatMeta.expressionAvatarsEnabled === true);
       if (personaContext.personaId && includePersonaSprite) {

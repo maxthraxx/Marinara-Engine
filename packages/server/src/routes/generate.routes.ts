@@ -5357,6 +5357,12 @@ export async function generateRoutes(app: FastifyInstance) {
           signal: abortController.signal,
         };
 
+        if (personaId) {
+          agentContext.memory._personaId = personaId;
+          agentContext.memory._personaAvatarPath =
+            persona && typeof persona.avatarPath === "string" ? persona.avatarPath : null;
+        }
+
         // ── Interval gating: Narrative Director only intervenes every N assistant messages ──
         const directorAgent = resolvedAgents.find((a) => a.type === "director");
         if (directorAgent) {
@@ -5477,7 +5483,10 @@ export async function generateRoutes(app: FastifyInstance) {
             }
             const includePersonaSprite =
               !!personaId &&
-              (!restrictToSelectedSprites || selectedSpriteIds.has(personaId) || chatMeta.expressionAvatarsEnabled === true);
+              (Boolean(currentTurnUserMessageId) ||
+                !restrictToSelectedSprites ||
+                selectedSpriteIds.has(personaId) ||
+                chatMeta.expressionAvatarsEnabled === true);
             if (personaId && includePersonaSprite) {
               const sprites = listCharacterSprites(personaId);
               if (sprites) {
