@@ -3065,6 +3065,7 @@ function ThemesSettings() {
       let workingThemes = [...latestThemes];
       let imported = 0;
       let skipped = 0;
+      let failed = 0;
 
       if (file.name.endsWith(".json")) {
         const parsed = JSON.parse(text);
@@ -3082,13 +3083,18 @@ function ThemesSettings() {
             skipped++;
             continue;
           }
-          const created = await createTheme.mutateAsync({
-            name: importedThemeName,
-            css: importedThemeCss,
-            installedAt: new Date().toISOString(),
-          });
-          workingThemes = [created, ...workingThemes];
-          imported++;
+          try {
+            const created = await createTheme.mutateAsync({
+              name: importedThemeName,
+              css: importedThemeCss,
+              installedAt: new Date().toISOString(),
+            });
+            workingThemes = [created, ...workingThemes];
+            imported++;
+          } catch (err) {
+            failed++;
+            console.warn("[ThemesSettings] Failed to import theme entry:", importedThemeName, err);
+          }
         }
       } else {
         const importedThemeName = file.name.replace(/\.css$/, "");
@@ -3107,10 +3113,15 @@ function ThemesSettings() {
         }
       }
 
-      if (imported > 0) {
-        toast.success(`Imported ${imported} theme${imported === 1 ? "" : "s"}`);
-      } else if (skipped > 0) {
-        toast.success(`${skipped} theme${skipped === 1 ? "" : "s"} already synced`);
+      if (imported > 0 || skipped > 0 || failed > 0) {
+        const summary = [
+          imported > 0 ? `${imported} imported` : null,
+          skipped > 0 ? `${skipped} already synced` : null,
+          failed > 0 ? `${failed} failed` : null,
+        ].filter(Boolean);
+        const message = `Theme import: ${summary.join(", ")}`;
+        if (failed > 0) toast.warning(message);
+        else toast.success(message);
       } else {
         toast.error("No valid themes found in file.");
       }
@@ -3429,24 +3440,38 @@ function ExtensionsSettings() {
         const parsed = JSON.parse(text);
         const entries = getFolderImportEntries(parsed, ["extensions"]);
         let imported = 0;
+        let failed = 0;
         for (const entry of entries) {
           const source = getFolderManifestConfig(entry);
           if (!source || typeof source !== "object" || Array.isArray(source)) continue;
           const record = source as Record<string, unknown>;
           const name =
             typeof record.name === "string" && record.name.trim() ? record.name : file.name.replace(/\.json$/, "");
-          await createExtension.mutateAsync({
-            name,
-            description: typeof record.description === "string" ? record.description : "",
-            css: typeof record.css === "string" ? record.css : null,
-            js: typeof record.js === "string" ? record.js : null,
-            enabled: typeof record.enabled === "boolean" ? record.enabled : true,
-            installedAt,
-          });
-          imported++;
+          try {
+            await createExtension.mutateAsync({
+              name,
+              description: typeof record.description === "string" ? record.description : "",
+              css: typeof record.css === "string" ? record.css : null,
+              js: typeof record.js === "string" ? record.js : null,
+              enabled: typeof record.enabled === "boolean" ? record.enabled : true,
+              installedAt,
+            });
+            imported++;
+          } catch (err) {
+            failed++;
+            console.warn("[ExtensionsSettings] Failed to import extension entry:", name, err);
+          }
         }
-        if (imported === 0) throw new Error("No valid extensions found in file");
-        toast.success(`Installed ${imported} extension${imported === 1 ? "" : "s"}`);
+        if (imported === 0 && failed === 0) throw new Error("No valid extensions found in file");
+        if (failed > 0) {
+          toast.warning(
+            imported > 0
+              ? `Installed ${imported} extension${imported === 1 ? "" : "s"} (${failed} failed).`
+              : `Failed to install ${failed} extension${failed === 1 ? "" : "s"}.`,
+          );
+        } else {
+          toast.success(`Installed ${imported} extension${imported === 1 ? "" : "s"}`);
+        }
       } else if (file.name.endsWith(".js")) {
         const name = file.name.replace(/\.js$/, "");
         await createExtension.mutateAsync({

@@ -498,6 +498,18 @@ export function ChatSettingsDrawer({
     () => normalizeAgentPromptTemplateSelectionMap(metadata.agentPromptTemplateIds),
     [metadata.agentPromptTemplateIds],
   );
+  const readLatestAgentPromptTemplateSelections = useCallback(() => {
+    const latestChat = qc.getQueryData<Chat>(chatKeys.detail(chat.id));
+    const latestMetadata =
+      latestChat && typeof latestChat.metadata === "string"
+        ? JSON.parse(latestChat.metadata)
+        : (latestChat?.metadata ?? metadata);
+    return normalizeAgentPromptTemplateSelectionMap(
+      latestMetadata && typeof latestMetadata === "object"
+        ? (latestMetadata as { agentPromptTemplateIds?: unknown }).agentPromptTemplateIds
+        : undefined,
+    );
+  }, [chat.id, metadata, qc]);
   const getPromptOptionsForAgent = useCallback(
     (agentId: string) => {
       const cfg = agentConfigsByType.get(agentId);
@@ -1021,10 +1033,11 @@ export function ChatSettingsDrawer({
     const isRemoving = idx >= 0;
     if (isRemoving) current.splice(idx, 1);
     else current.push(agentId);
+    const latestPromptTemplateSelections = readLatestAgentPromptTemplateSelections();
     const nextPromptTemplateSelections =
-      isRemoving && agentPromptTemplateSelections[agentId]
+      isRemoving && latestPromptTemplateSelections[agentId]
         ? (() => {
-            const next = { ...agentPromptTemplateSelections };
+            const next = { ...latestPromptTemplateSelections };
             delete next[agentId];
             return next;
           })()
@@ -1061,7 +1074,7 @@ export function ChatSettingsDrawer({
 
   const updateAgentPromptTemplateSelection = useCallback(
     (agentId: string, promptTemplateId: string) => {
-      const next = { ...agentPromptTemplateSelections };
+      const next = { ...readLatestAgentPromptTemplateSelections() };
       if (!promptTemplateId || promptTemplateId === DEFAULT_AGENT_PROMPT_TEMPLATE_ID) {
         delete next[agentId];
       } else {
@@ -1069,7 +1082,7 @@ export function ChatSettingsDrawer({
       }
       updateMeta.mutate({ id: chat.id, agentPromptTemplateIds: next });
     },
-    [agentPromptTemplateSelections, chat.id, updateMeta],
+    [chat.id, readLatestAgentPromptTemplateSelections, updateMeta],
   );
 
   const handleLorebookKeeperBackfill = useCallback(async () => {

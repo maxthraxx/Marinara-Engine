@@ -4383,6 +4383,13 @@ export async function generateRoutes(app: FastifyInstance) {
                 "settings" in cfg && cfg.settings
                   ? JSON.parse(cfg.settings as string)
                   : getDefaultBuiltInAgentSettings("response-orchestrator");
+              const selectedPromptTemplate = resolveAgentPromptTemplate({
+                agentType: "response-orchestrator",
+                promptTemplate: "promptTemplate" in cfg ? String(cfg.promptTemplate ?? "") : "",
+                fallbackPromptTemplate: getDefaultAgentPrompt("response-orchestrator"),
+                settings,
+                selectedPromptTemplateId: agentPromptTemplateSelections["response-orchestrator"] ?? null,
+              });
               let agentProvider = provider;
               let agentModel = conn.model;
               let agentMaxParallelJobs = chatConnectionMaxParallelJobs;
@@ -4445,7 +4452,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   type: "response-orchestrator",
                   name: "name" in cfg ? String(cfg.name) : "Response Orchestrator",
                   phase: "phase" in cfg ? String(cfg.phase) : "pre_generation",
-                  promptTemplate: "promptTemplate" in cfg ? String(cfg.promptTemplate ?? "") : "",
+                  promptTemplate: selectedPromptTemplate,
                   connectionId: effectiveConnectionId,
                   settings,
                   provider: agentProvider,

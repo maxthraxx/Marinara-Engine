@@ -695,6 +695,20 @@ export async function executeAgentBatch(
   } catch (err) {
     // On failure, return errors for all agents in the batch
     const errMsg = err instanceof Error ? err.message : "Batch execution failed";
+    emitAgentDebug(context, {
+      stage: "error",
+      agentId: "__batch__",
+      agentType: "__batch__",
+      agentName: `Agent Batch (${configs.length})`,
+      phase: "batch",
+      model,
+      temperature: Math.min(...configs.map((c) => (c.settings.temperature as number) ?? 0.3)),
+      maxTokens: 0,
+      messageCount: 0,
+      durationMs: Date.now() - startTime,
+      error: errMsg,
+      batchedAgentTypes: configs.map((config) => config.type),
+    });
     logger.error(err, "[agent-batch] Batch call FAILED: %s", errMsg);
     return configs.map((c) => makeError(c, errMsg, startTime));
   }

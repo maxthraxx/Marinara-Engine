@@ -7,7 +7,13 @@ export const spotifyGetPlaylistsToolManifest = {
   parameters: {
     type: "object",
     properties: {
-      limit: { type: "number", description: "Number of playlists to return (default: 20, max: 50)" },
+      limit: {
+        type: "integer",
+        minimum: 1,
+        maximum: 50,
+        default: 20,
+        description: "Number of playlists to return (default: 20, max: 50)",
+      },
     },
   },
 } satisfies ToolDefinition;

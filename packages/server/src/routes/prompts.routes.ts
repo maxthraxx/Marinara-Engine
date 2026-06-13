@@ -28,6 +28,17 @@ function cardPromptText(value: unknown): string {
   return typeof value === "string" ? stripMacroComments(value).trim() : "";
 }
 
+function safeAsciiDownloadName(value: string): string {
+  const cleaned = value
+    .normalize("NFKD")
+    .replace(/[^\x20-\x7E]/g, "")
+    .replace(/["\\/:*?<>|]+/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return cleaned || "preset";
+}
+
 async function buildPresetExportEnvelope(storage: ReturnType<typeof createPromptsStorage>, id: string) {
   const preset = await storage.getById(id);
   if (!preset) return null;
@@ -118,10 +129,12 @@ export async function promptsRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>("/:id/export", async (req, reply) => {
     const result = await buildPresetExportEnvelope(storage, req.params.id);
     if (!result) return reply.status(404).send({ error: "Preset not found" });
+    const originalFilename = `${result.preset.name || "preset"}.marinara.json`;
+    const fallbackFilename = `${safeAsciiDownloadName(result.preset.name || "preset")}.marinara.json`;
     return reply
       .header(
         "Content-Disposition",
-        `attachment; filename="${encodeURIComponent(result.preset.name || "preset")}.marinara.json"`,
+        `attachment; filename="${fallbackFilename}"; filename*=UTF-8''${encodeURIComponent(originalFilename)}`,
       )
       .send(result.envelope);
   });

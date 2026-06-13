@@ -6,19 +6,24 @@ import { BUILT_IN_TOOL_MANIFESTS } from "./tool-registry.generated.js";
 
 /** JSON Schema subset for tool parameter definitions. */
 export interface ToolParameterSchema {
-  type: "object" | "string" | "number" | "boolean" | "array";
+  type: "object" | "string" | "number" | "integer" | "boolean" | "array";
   description?: string;
   properties?: Record<string, ToolParameterProperty>;
   required?: string[];
+  oneOf?: Array<{ required: string[] }>;
+  additionalProperties?: boolean;
   items?: ToolParameterProperty;
 }
 
 export interface ToolParameterProperty {
-  type: "string" | "number" | "boolean" | "array" | "object";
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
   description?: string;
   enum?: string[];
   items?: ToolParameterProperty;
   default?: unknown;
+  minimum?: number;
+  maximum?: number;
+  multipleOf?: number;
 }
 
 /** Definition of a tool/function that an agent can call. */

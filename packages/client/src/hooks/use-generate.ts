@@ -944,6 +944,7 @@ export function useGenerate() {
       let receivedContent = false; // Whether any actual message content was received
       let receivedThinking = false; // Whether provider-native thinking chunks were received
       let gameTurnLoadedSoundPlayed = false;
+      let sawDoneEvent = false;
       let typingActive = false;
       let typewriterDone: (() => void) | null = null;
       let rafId = 0;
@@ -1807,6 +1808,7 @@ export function useGenerate() {
             }
 
             case "done": {
+              sawDoneEvent = true;
               if (spriteChangeReceived) {
                 qc.invalidateQueries({ queryKey: chatKeys.messages(params.chatId) });
               }
@@ -1928,7 +1930,7 @@ export function useGenerate() {
           // persisted active-swipe row after generation-time SSE patches.
           await refreshVisibleGameStateAfterGeneration(params.chatId);
         }
-        if (isGameGeneration && receivedContent && useUIStore.getState().gameNotificationSound) {
+        if (isGameGeneration && sawDoneEvent && receivedContent && useUIStore.getState().gameNotificationSound) {
           playNotificationPing();
           gameTurnLoadedSoundPlayed = true;
         }
@@ -1968,7 +1970,7 @@ export function useGenerate() {
           const isGame = chat?.mode === "game" || isGameGeneration;
           const uiState = useUIStore.getState();
           const soundEnabled = isGame
-            ? uiState.gameNotificationSound && !gameTurnLoadedSoundPlayed
+            ? sawDoneEvent && uiState.gameNotificationSound && !gameTurnLoadedSoundPlayed
             : isRp
               ? uiState.rpNotificationSound
               : uiState.convoNotificationSound;

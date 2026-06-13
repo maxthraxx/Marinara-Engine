@@ -46,6 +46,7 @@ import {
   ChevronUp,
   ExternalLink,
   BookOpen,
+  Download,
   Upload,
   Loader2,
   ImageIcon,
@@ -751,14 +752,8 @@ export function AgentEditor() {
     );
     const savedAuthor = localAuthor.trim() || (builtIn ? DEFAULT_AGENT_AUTHOR : "Unknown");
     const savedPromptTemplates = normalizeAgentPromptTemplateOptions(localPromptTemplates);
-    const currentSettings: Record<string, unknown> = parseAgentSettingsRecord(dbConfig?.settings);
-    const preservedSpotifyFields: Record<string, unknown> = {};
-    for (const key of ["spotifyAccessToken", "spotifyRefreshToken", "spotifyExpiresAt", "spotifyScope"]) {
-      if (currentSettings[key] !== undefined) preservedSpotifyFields[key] = currentSettings[key];
-    }
     const agentType = dbConfig?.type ?? builtIn?.id ?? createCustomAgentType(localName);
     const settings = {
-      ...preservedSpotifyFields,
       author: savedAuthor,
       promptTemplates: savedPromptTemplates,
       ...(isEditingCustomAgent ? { resultType: localResultType } : {}),
@@ -936,7 +931,7 @@ export function AgentEditor() {
             onClick={handleExportAgent}
             className="flex items-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2 text-xs font-medium text-[var(--secondary-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98]"
           >
-            <Upload size="0.8125rem" /> <span className="max-md:hidden">Export</span>
+            <Download size="0.8125rem" /> <span className="max-md:hidden">Export</span>
           </button>
           <button
             onClick={handleSave}

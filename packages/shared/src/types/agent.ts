@@ -179,7 +179,7 @@ export function normalizeAgentPromptTemplateSelectionMap(value: unknown): Record
   for (const [agentType, promptTemplateId] of Object.entries(value)) {
     if (typeof promptTemplateId !== "string") continue;
     const cleanedType = agentType.trim();
-    const cleanedId = promptTemplateId.trim();
+    const cleanedId = normalizePromptTemplateId(promptTemplateId, "");
     if (!cleanedType || !cleanedId) continue;
     selections[cleanedType] = cleanedId;
   }
@@ -193,7 +193,7 @@ export function resolveAgentPromptTemplate(input: {
   settings?: unknown;
   selectedPromptTemplateId?: string | null;
 }): string {
-  const selectedId = input.selectedPromptTemplateId?.trim();
+  const selectedId = normalizePromptTemplateId(input.selectedPromptTemplateId, "");
   if (!selectedId || selectedId === DEFAULT_AGENT_PROMPT_TEMPLATE_ID) {
     return input.promptTemplate?.trim() ? input.promptTemplate : (input.fallbackPromptTemplate ?? "");
   }

@@ -20,6 +20,7 @@ export const spotifyPlayToolManifest = {
       },
       reason: { type: "string", description: "Why this track fits the current scene mood" },
     },
-    required: [],
+    oneOf: [{ required: ["uri"] }, { required: ["uris"] }],
+    additionalProperties: false,
   },
 } satisfies ToolDefinition;

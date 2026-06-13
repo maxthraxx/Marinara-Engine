@@ -86,7 +86,7 @@ export function AgentDebugPanel() {
               {callEntries.map((entry, i) => {
                 const call = entry.agentCall!;
                 const payload =
-                  call.stage === "request"
+                  call.stage === "request" || call.stage === "retry_request"
                     ? formatAgentCallMessages(call.messages)
                     : call.responsePreview || call.response || call.error || "";
                 return (
