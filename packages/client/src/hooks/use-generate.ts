@@ -17,6 +17,7 @@ import {
   createInlineThinkingStreamFilter,
   EDITABLE_CHARACTER_CARD_FIELDS,
   normalizeThinkingTagPairs,
+  type AgentCallDebugEvent,
   type CharacterCardFieldUpdate,
   type EditableCharacterCardField,
   type ThinkingTagPair,
@@ -942,6 +943,8 @@ export function useGenerate() {
       let pendingText = ""; // Tokens waiting to be typed out
       let receivedContent = false; // Whether any actual message content was received
       let receivedThinking = false; // Whether provider-native thinking chunks were received
+      let gameTurnLoadedSoundPlayed = false;
+      let sawDoneEvent = false;
       let typingActive = false;
       let typewriterDone: (() => void) | null = null;
       let rafId = 0;
@@ -1245,6 +1248,7 @@ export function useGenerate() {
                 agentName: string;
                 resultType: string;
                 data: unknown;
+                tokensUsed?: number;
                 success: boolean;
                 error: string | null;
                 durationMs: number;
@@ -1291,7 +1295,7 @@ export function useGenerate() {
                 agentType: result.agentType,
                 type: result.resultType as any,
                 data: result.data,
-                tokensUsed: 0,
+                tokensUsed: result.tokensUsed ?? 0,
                 durationMs: result.durationMs,
                 success: result.success,
                 error: result.error,
@@ -1376,6 +1380,15 @@ export function useGenerate() {
                   console.warn(`[Agent] Quest agent returned success but 0 updates — data shape:`, Object.keys(qd));
                 }
               }
+              break;
+            }
+
+            case "agent_debug": {
+              if (!debugMode) break;
+              addDebugEntry({
+                phase: "agent_call",
+                agentCall: event.data as AgentCallDebugEvent,
+              });
               break;
             }
 
@@ -1795,6 +1808,7 @@ export function useGenerate() {
             }
 
             case "done": {
+              sawDoneEvent = true;
               if (spriteChangeReceived) {
                 qc.invalidateQueries({ queryKey: chatKeys.messages(params.chatId) });
               }
@@ -1916,6 +1930,10 @@ export function useGenerate() {
           // persisted active-swipe row after generation-time SSE patches.
           await refreshVisibleGameStateAfterGeneration(params.chatId);
         }
+        if (isGameGeneration && sawDoneEvent && receivedContent && useUIStore.getState().gameNotificationSound) {
+          playNotificationPing();
+          gameTurnLoadedSoundPlayed = true;
+        }
         // Re-sort sidebar so this chat floats to the top
         qc.invalidateQueries({ queryKey: chatKeys.list() });
         // If the user navigated away from this chat during generation,
@@ -1949,9 +1967,13 @@ export function useGenerate() {
               .addNotification(params.chatId, identity.name ?? "Character", identity.avatarUrl, identity.avatarCrop);
           }
           const isRp = chat?.mode === "roleplay" || chat?.mode === "visual_novel";
-          const soundEnabled = isRp
-            ? useUIStore.getState().rpNotificationSound
-            : useUIStore.getState().convoNotificationSound;
+          const isGame = chat?.mode === "game" || isGameGeneration;
+          const uiState = useUIStore.getState();
+          const soundEnabled = isGame
+            ? sawDoneEvent && uiState.gameNotificationSound && !gameTurnLoadedSoundPlayed
+            : isRp
+              ? uiState.rpNotificationSound
+              : uiState.convoNotificationSound;
           if (soundEnabled) {
             playNotificationPing();
           }
@@ -2136,6 +2158,7 @@ export function useGenerate() {
             chatId,
             agentTypes,
             streaming: useUIStore.getState().enableStreaming,
+            debugMode: useUIStore.getState().debugMode,
             lorebookKeeperBackfill: options?.lorebookKeeperBackfill === true,
             ...(options?.forMessageId ? { forMessageId: options.forMessageId } : {}),
             ...(options?.secretPlotRerollMode ? { secretPlotRerollMode: options.secretPlotRerollMode } : {}),
@@ -2154,6 +2177,7 @@ export function useGenerate() {
                 agentName: string;
                 resultType: string;
                 data: unknown;
+                tokensUsed?: number;
                 success: boolean;
                 error: string | null;
                 durationMs: number;
@@ -2189,7 +2213,7 @@ export function useGenerate() {
                 agentType: result.agentType,
                 type: result.resultType as any,
                 data: result.data,
-                tokensUsed: 0,
+                tokensUsed: result.tokensUsed ?? 0,
                 durationMs: result.durationMs,
                 success: result.success,
                 error: result.error,
@@ -2262,6 +2286,14 @@ export function useGenerate() {
                   void retryAgentsRef.current?.(chatId, [failure.agentType], options);
                 });
               }
+              break;
+            }
+            case "agent_debug": {
+              if (!useUIStore.getState().debugMode) break;
+              addDebugEntry({
+                phase: "agent_call",
+                agentCall: event.data as AgentCallDebugEvent,
+              });
               break;
             }
             case "agents_retry_failed": {
@@ -2362,6 +2394,7 @@ export function useGenerate() {
     },
     [
       addResult,
+      addDebugEntry,
       addThoughtBubble,
       addEchoMessage,
       enqueuePendingCardUpdate,
