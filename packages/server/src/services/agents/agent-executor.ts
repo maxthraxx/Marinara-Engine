@@ -15,6 +15,7 @@ import {
   DEFAULT_AGENT_MAX_TOKENS,
   MAX_AGENT_MAX_TOKENS,
   MIN_AGENT_MAX_TOKENS,
+  normalizeCustomAgentCapabilities,
   getDefaultAgentPrompt,
 } from "@marinara-engine/shared";
 import { isDebugAgentsEnabled } from "../../config/runtime-config.js";
@@ -919,6 +920,59 @@ function shouldRunAgentIndividually(config: Pick<AgentExecConfig, "type">): bool
   );
 }
 
+function buildCustomAgentCapabilityBlock(config: AgentExecConfig, context: AgentContext): string {
+  const capabilities = normalizeCustomAgentCapabilities(config.settings);
+  const enabled = Object.entries(capabilities)
+    .filter(([, value]) => value === true)
+    .map(([key]) => key);
+  if (enabled.length === 0) return "";
+
+  const parts: string[] = ["<custom_agent_abilities>"];
+  parts.push(`Enabled ability toggles: ${enabled.join(", ")}.`);
+  parts.push(
+    `Only use these abilities when your selected output format or available tools explicitly support the action.`,
+  );
+
+  if (capabilities.edit_messages) {
+    parts.push(
+      `Message editing is enabled. For Text Rewrite, replace only the assistant response provided in <assistant_response>.`,
+    );
+  }
+
+  if (capabilities.edit_trackers) {
+    parts.push(
+      `Tracker editing is enabled. Return a tracker result type only when you intend to update the matching tracker state.`,
+    );
+  }
+
+  if (capabilities.change_frontend_styling) {
+    parts.push(
+      `Frontend styling is enabled. Return CSS in the configured result format only for deliberate temporary visual effects.`,
+    );
+  }
+
+  if (capabilities.edit_main_prompt) {
+    parts.push(
+      `Main prompt editing is enabled. Return prompt patch JSON instead of ordinary prose when you need to alter the outbound prompt.`,
+    );
+    const promptPreview = typeof context.memory._mainPromptPreview === "string" ? context.memory._mainPromptPreview : "";
+    if (promptPreview.trim()) {
+      parts.push(`<main_generation_prompt_preview>`);
+      parts.push(promptPreview);
+      parts.push(`</main_generation_prompt_preview>`);
+    }
+  }
+
+  if (capabilities.access_vectors) {
+    parts.push(
+      `Vector and embedding access is enabled for this agent's configuration. Use available source material and tools rather than inventing vector search results.`,
+    );
+  }
+
+  parts.push("</custom_agent_abilities>");
+  return parts.join("\n");
+}
+
 function buildStandardAgentMessages(config: AgentExecConfig, template: string, context: AgentContext): ChatMessage[] {
   // Build the agent's system prompt with <role> + <lore> + <agents> + extras
   const systemParts: string[] = [];
@@ -937,10 +991,17 @@ function buildStandardAgentMessages(config: AgentExecConfig, template: string, c
     systemParts.push(``);
     systemParts.push(extras);
   }
+  const customCapabilityBlock = buildCustomAgentCapabilityBlock(config, context);
+  if (customCapabilityBlock) {
+    systemParts.push(``);
+    systemParts.push(customCapabilityBlock);
+  }
 
   // Build multi-turn message array for this agent (sliced to its own contextSize)
   const agentContextSize = normalizeAgentContextSize(config.settings.contextSize);
-  return buildAgentMessages(systemParts.join("\n"), context, config.type, agentContextSize);
+  return buildAgentMessages(systemParts.join("\n"), context, config.type, agentContextSize, [config.type], {
+    includeMessageIds: normalizeCustomAgentCapabilities(config.settings).edit_messages === true,
+  });
 }
 
 export function buildKnowledgeRetrievalAgentMessagesForTest(
@@ -1205,6 +1266,7 @@ function buildAgentMessages(
   agentType: string,
   contextSize = 5,
   contextAgentTypes: string[] = [agentType],
+  options: { includeMessageIds?: boolean } = {},
 ): ChatMessage[] {
   // ── 1. System message — already contains <role>, <lore>, <agents>, and extras ──
   const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }];
@@ -1232,6 +1294,9 @@ function buildAgentMessages(
       const msg = recent[msgIdx]!;
       const role: "user" | "assistant" = msg.role === "assistant" ? "assistant" : "user";
       let content = stripHtmlTags(msg.content).slice(0, 2000);
+      if (options.includeMessageIds && msg.id) {
+        content = `<message_id>${msg.id}</message_id>\n${content}`;
+      }
 
       // Append committed tracker data only to the last 3 assistant messages,
       // and only for agents whose output is structured (not text agents — see above).
@@ -1672,6 +1737,8 @@ const AGENT_RESULT_TYPES = new Set<AgentResultType>([
   "party_action",
   "game_map_update",
   "game_state_transition",
+  "prompt_patch",
+  "frontend_theme_update",
 ]);
 
 const TEXT_RESULT_TYPES = new Set<AgentResultType>(["context_injection", "director_event"]);
