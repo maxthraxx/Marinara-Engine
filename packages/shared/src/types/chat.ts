@@ -213,6 +213,12 @@ export interface ChatMetadata {
   spriteDisplayModes?: Array<"expressions" | "full-body">;
   /** Preferred sidebar / default layout side for chat sprites. */
   spritePosition?: SpriteSide;
+  /**
+   * How creator-notes card CSS is applied in this chat:
+   * "disabled" (none), "exclusive" (each character's CSS only styles their own
+   * messages), or "chat" (all card CSS styles the whole chat area — default).
+   */
+  cardCssMode?: "disabled" | "exclusive" | "chat";
   /** Display scale for roleplay Expression Engine sprites. */
   spriteScale?: number;
   /** Display opacity for roleplay Expression Engine sprites. */
