@@ -317,13 +317,13 @@ export function GlobalGalleryPanel() {
 
       {/* Grid */}
       {isLoading ? (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="shimmer aspect-square rounded-xl" />
           ))}
         </div>
       ) : visibleImages.length > 0 ? (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-3">
           {visibleImages.map((image) => (
             <div
               key={image.id}
