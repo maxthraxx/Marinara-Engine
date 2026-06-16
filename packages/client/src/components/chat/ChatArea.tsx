@@ -559,7 +559,7 @@ export function ChatArea() {
   // the chat mode onto the @chat-mode filter surface (visual novel shares the
   // roleplay surface). One injector element, reused across every render path.
   const cardCssMode: CardCssMode =
-    chatMeta.cardCssMode === "disabled" || chatMeta.cardCssMode === "exclusive" ? chatMeta.cardCssMode : "chat";
+    chatMeta.cardCssMode === "exclusive" || chatMeta.cardCssMode === "chat" ? chatMeta.cardCssMode : "disabled";
   const cardCssChatMode: ChatModeFilter =
     chatMode === "conversation" ? "conversation" : chatMode === "game" ? "game" : "roleplay";
   const cardCssInjector = (

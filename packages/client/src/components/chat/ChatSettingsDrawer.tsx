@@ -538,7 +538,7 @@ export function ChatSettingsDrawer({
   // whether any active character actually ships CSS — the Card Theming control
   // only appears when one does, so it never clutters chats it can't affect.
   const cardCssMode: "disabled" | "exclusive" | "chat" =
-    metadata.cardCssMode === "disabled" || metadata.cardCssMode === "exclusive" ? metadata.cardCssMode : "chat";
+    metadata.cardCssMode === "exclusive" || metadata.cardCssMode === "chat" ? metadata.cardCssMode : "disabled";
   const activeCardsHaveCss = useMemo(() => {
     if (!allCharacters) return false;
     const byId = new Map((allCharacters as Array<{ id: string; data: unknown }>).map((c) => [c.id, c]));
