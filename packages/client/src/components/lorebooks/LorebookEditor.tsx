@@ -824,14 +824,26 @@ export function LorebookEditor() {
       if (!canReorderFolders || draggingFolderIdx === null) return;
       const dragged = folders[draggingFolderIdx];
       if (!dragged) return;
-      // Accept only a legal nest; otherwise let the event bubble so an ancestor
-      // body (or nothing) claims it, instead of showing a dead "no-drop" cursor.
-      if (dragged.parentFolderId === folderId || !canReparentFolder(folders, dragged.id, folderId).ok) return;
+      // Dragging a folder down into the body of its OWN parent lifts it out —
+      // "drag it past the parent, out the bottom" un-nests it to the top level.
+      if (dragged.parentFolderId === folderId) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "move";
+        setFolderRootDropActive(true);
+        setFolderNestTargetId(null);
+        setFolderDropIdx(null);
+        return;
+      }
+      // Otherwise nest inside this folder when legal; if not, let the event bubble
+      // so an ancestor body (or nothing) claims it instead of a dead "no-drop".
+      if (!canReparentFolder(folders, dragged.id, folderId).ok) return;
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = "move";
       setFolderNestTargetId(folderId);
       setFolderDropIdx(null);
+      setFolderRootDropActive(false);
     },
     [canReorderFolders, draggingFolderIdx, folders],
   );
@@ -947,6 +959,7 @@ export function LorebookEditor() {
       if (!canReorderFolders || draggingFolderIdx === null) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
+      setFolderRootDropActive(false);
       const dragged = folders[draggingFolderIdx];
       const target = folders[idx];
       const rect = e.currentTarget.getBoundingClientRect();
@@ -979,10 +992,17 @@ export function LorebookEditor() {
       const sourceIdx = draggingFolderIdx;
       const nestTargetId = folderNestTargetId;
       const targetIdx = folderDropIdx;
+      const unnest = folderRootDropActive;
       resetFolderDragState();
       if (!lorebookId || !canReorderFolders || sourceIdx === null) return;
       const dragged = folders[sourceIdx];
       if (!dragged) return;
+      // Un-nest: lift the folder back to the top level.
+      if (unnest) {
+        if (dragged.parentFolderId == null) return;
+        updateFolder.mutate({ lorebookId, folderId: dragged.id, parentFolderId: null });
+        return;
+      }
       // Nest band: reparent the dragged folder under the hovered one. Re-validate
       // at drop time in case the tree shifted mid-drag.
       if (nestTargetId) {
@@ -1008,6 +1028,7 @@ export function LorebookEditor() {
       draggingFolderIdx,
       folderNestTargetId,
       folderDropIdx,
+      folderRootDropActive,
       folders,
       lorebookId,
       reorderFolders,
@@ -1016,8 +1037,8 @@ export function LorebookEditor() {
     ],
   );
 
-  // Root strip: dropping a nested folder here un-nests it back to the top level.
-  // Shown only while a folder that actually has a parent is being dragged.
+  // The folder list's own padding/gaps are the un-nest drop zone: dropping a
+  // nested folder there lifts it back to the top level.
   const handleFolderRootDragOver = useCallback(
     (e: ReactDragEvent<HTMLDivElement>) => {
       if (!canReorderFolders || draggingFolderIdx === null) return;
@@ -1030,19 +1051,6 @@ export function LorebookEditor() {
       setFolderRootDropActive(true);
     },
     [canReorderFolders, draggingFolderIdx, folders],
-  );
-
-  const commitFolderRootDrop = useCallback(
-    (e: ReactDragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      const sourceIdx = draggingFolderIdx;
-      resetFolderDragState();
-      if (!lorebookId || sourceIdx === null) return;
-      const dragged = folders[sourceIdx];
-      if (!dragged || dragged.parentFolderId == null) return;
-      updateFolder.mutate({ lorebookId, folderId: dragged.id, parentFolderId: null });
-    },
-    [draggingFolderIdx, folders, lorebookId, updateFolder, resetFolderDragState],
   );
 
   const handleAddFolder = useCallback(async () => {
@@ -1272,12 +1280,19 @@ export function LorebookEditor() {
                     onDragHandleMouseUp={() => setEntryDragReadyIdx(null)}
                     onDragStart={(e) => handleEntryDragStart(folder.id, eIdx, entry.id, e)}
                     onDragOver={(e) => {
+                      // A folder dragged over an entry is really being dragged over the
+                      // enclosing folder's body — route it there (nest / un-nest).
+                      if (draggingFolderIdx !== null) {
+                        handleFolderBodyFolderDragOver(folder.id, e);
+                        return;
+                      }
                       e.stopPropagation();
                       handleEntryDragOver(folder.id, eIdx, e);
                     }}
                     onDrop={(e) => {
                       e.stopPropagation();
-                      commitEntryDrop(e);
+                      if (draggingFolderIdx !== null) commitFolderDrop(e);
+                      else commitEntryDrop(e);
                     }}
                     onDragEnd={resetEntryDragState}
                     selectionMode={entrySelectionMode}
@@ -2017,7 +2032,7 @@ export function LorebookEditor() {
                         }}
                         onDragLeave={() => setFolderRootDropActive(false)}
                         onDrop={(e) => {
-                          if (draggingFolderIdx !== null) commitFolderRootDrop(e);
+                          if (draggingFolderIdx !== null) commitFolderDrop(e);
                         }}
                       >
                         {folderForest.roots.map((folder) => renderFolder(folder))}
