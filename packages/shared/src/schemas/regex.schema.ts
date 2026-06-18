@@ -2,13 +2,20 @@
 // Regex Script Zod Schemas
 // ──────────────────────────────────────────────
 import { z } from "zod";
+import { isPatternSafe } from "../utils/regex-safety.js";
 
 export const regexPlacementSchema = z.enum(["ai_output", "user_input"]);
 
 export const createRegexScriptSchema = z.object({
   name: z.string().min(1).max(200),
   enabled: z.boolean().default(true),
-  findRegex: z.string().min(1),
+  findRegex: z
+    .string()
+    .min(1)
+    .refine(
+      (pattern) => isPatternSafe(pattern),
+      "Regex pattern is unsafe: it may cause catastrophic backtracking. Avoid nested quantifiers and overly long patterns.",
+    ),
   replaceString: z.string().default(""),
   trimStrings: z.array(z.string()).default([]),
   placement: z.array(regexPlacementSchema).min(1),
