@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, openSync, closeSync, readFileSync, readSync, statSync } from "node:fs";
 import { copyFile, open, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "../lib/logger.js";
 import { getFileStorageDir } from "../config/runtime-config.js";
 import * as schema from "./schema/index.js";
@@ -810,11 +811,12 @@ class FileTableStore {
   private migratedFromSqlite: TableSnapshotManifest["migratedFromSqlite"];
   private legacyRepair: TableSnapshotManifest["legacyRepair"];
   private loadedManifest: TableSnapshotManifest | null = null;
-  // Copy-on-write rollback state for the active transaction: a table is cloned
-  // into activeTxSnapshots the first time the transaction mutates it (tracked in
-  // activeTxDirtyTables). Null when no transaction is in flight.
-  private activeTxSnapshots: Map<string, Row[]> | null = null;
-  private activeTxDirtyTables: Set<string> | null = null;
+  // Rollback state for the active transaction lives in this AsyncLocalStorage so
+  // it is bound to the transaction's own async call path. A concurrent
+  // non-transactional write that interleaves during an await runs OUTSIDE this
+  // context and is therefore never recorded — so it survives a rollback. See
+  // transaction() / recordTxMutation().
+  private readonly txContext = new AsyncLocalStorage<{ snapshots: Map<string, Row[]>; dirtyTables: Set<string> }>();
 
   constructor(
     private readonly rootDir: string,
@@ -851,51 +853,49 @@ class FileTableStore {
   }
 
   async transaction<T>(fn: (tx: FileNativeDB) => Promise<T> | T, tx: FileNativeDB): Promise<T> {
-    // Copy-on-write rollback: instead of cloning every table up front (O(total
-    // rows) per call, on the per-turn setMemories hot path) and restoring the
-    // whole map on throw (which also dropped concurrent writes to untouched
-    // tables), snapshot each table only on its first mutation and restore only
-    // those. Nested calls reuse the outermost call's tracking.
-    const isOutermost = this.activeTxSnapshots === null;
+    // Copy-on-write rollback, isolated to this transaction's async context:
+    // instead of cloning every table up front (O(total rows) per call, on the
+    // per-turn setMemories hot path) and restoring the whole map on throw (which
+    // also dropped concurrent writes), snapshot each table only on its first
+    // mutation by THIS transaction and restore only those. Mutations made on
+    // other async call paths (concurrent non-transactional writes) run outside
+    // the context, are never recorded, and so survive a rollback.
+    if (this.txContext.getStore()) {
+      // Nested call: run inside the outer transaction's context so the whole
+      // nest rolls back together; the outermost owns snapshot/restore.
+      return await fn(tx);
+    }
+    const ctx = { snapshots: new Map<string, Row[]>(), dirtyTables: new Set<string>() };
     const dirtySnapshot = this.dirty;
     const dirtyTablesSnapshot = new Set(this.dirtyTables);
-    if (isOutermost) {
-      this.activeTxSnapshots = new Map();
-      this.activeTxDirtyTables = new Set();
-    }
 
     try {
-      return await fn(tx);
+      return await this.txContext.run(ctx, () => fn(tx));
     } catch (err) {
-      if (isOutermost && this.activeTxDirtyTables && this.activeTxSnapshots) {
-        for (const tableName of this.activeTxDirtyTables) {
-          const snapshot = this.activeTxSnapshots.get(tableName);
-          if (snapshot) this.tables.set(tableName, snapshot);
-        }
+      for (const tableName of ctx.dirtyTables) {
+        const snapshot = ctx.snapshots.get(tableName);
+        if (snapshot) this.tables.set(tableName, snapshot);
       }
       this.dirty = dirtySnapshot;
       this.dirtyTables = dirtyTablesSnapshot;
       throw err;
-    } finally {
-      if (isOutermost) {
-        this.activeTxSnapshots = null;
-        this.activeTxDirtyTables = null;
-      }
     }
   }
 
   /**
    * Snapshot a table's current rows the first time the active transaction mutates
-   * it, so a rollback can restore just that table. No-op outside a transaction or
-   * after the table has already been snapshotted this transaction. Must be called
+   * it, so a rollback can restore just that table. No-op outside a transaction
+   * context (so concurrent non-transactional writes are not captured) or after
+   * the table has already been snapshotted this transaction. Must be called
    * BEFORE the in-place mutation so the snapshot captures the pre-mutation state.
    */
   private recordTxMutation(tableName: string) {
-    if (!this.activeTxSnapshots || !this.activeTxDirtyTables) return;
-    if (this.activeTxDirtyTables.has(tableName)) return;
+    const ctx = this.txContext.getStore();
+    if (!ctx) return;
+    if (ctx.dirtyTables.has(tableName)) return;
     const currentRows = this.tables.get(tableName);
-    this.activeTxSnapshots.set(tableName, currentRows ? currentRows.map((row) => ({ ...row })) : []);
-    this.activeTxDirtyTables.add(tableName);
+    ctx.snapshots.set(tableName, currentRows ? currentRows.map((row) => ({ ...row })) : []);
+    ctx.dirtyTables.add(tableName);
   }
 
   select(projection?: Projection): SelectFromBuilder {
