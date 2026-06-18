@@ -11,6 +11,7 @@ import {
   useUploadCustomEmoji,
   useRenameCustomEmoji,
   useDeleteCustomEmoji,
+  useImportCustomEmojis,
 } from "../../hooks/use-custom-emojis";
 import { useConversationCustomEmojis, type ConversationCustomEmoji } from "../../hooks/use-conversation-custom-emojis";
 import { useChat, useUpdateChatMetadata } from "../../hooks/use-chats";
@@ -25,6 +26,8 @@ import {
   type CustomEmojiSelectionPrefs,
 } from "@marinara-engine/shared";
 import { showPromptDialog, showConfirmDialog } from "../../lib/app-dialogs";
+import { downloadJsonFile } from "../../lib/download-json";
+import { api } from "../../lib/api-client";
 import { cn } from "../../lib/utils";
 
 export function CustomEmojiTab({ onInsert, query }: { onInsert: (token: string) => void; query: string }) {
@@ -32,12 +35,14 @@ export function CustomEmojiTab({ onInsert, query }: { onInsert: (token: string) 
   const upload = useUploadCustomEmoji();
   const rename = useRenameCustomEmoji();
   const remove = useDeleteCustomEmoji();
+  const importEmojis = useImportCustomEmojis();
   const { list: conversationEmojis } = useConversationCustomEmojis();
   const activeChatId = useChatStore((s) => s.activeChatId);
   const { data: activeChat } = useChat(activeChatId);
   const updateMeta = useUpdateChatMetadata();
   const { data: connections } = useConnections();
   const fileRef = useRef<HTMLInputElement>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,17 +161,66 @@ export function CustomEmojiTab({ onInsert, query }: { onInsert: (token: string) 
     [remove],
   );
 
+  const handleExport = useCallback(async () => {
+    setError(null);
+    try {
+      const bundle = await api.post<unknown>("/custom-emojis/export", {});
+      downloadJsonFile(bundle, "marinara-custom-emojis.json");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export emojis.");
+    }
+  }, []);
+
+  const handleImportFile = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
+      setError(null);
+      try {
+        const bundle = JSON.parse(await file.text());
+        await importEmojis.mutateAsync(bundle);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Couldn't import that file — is it a valid emoji set?");
+      }
+    },
+    [importEmojis],
+  );
+
   return (
     <div className="px-1">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          className="inline-flex items-center gap-1.5 rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/70 ring-1 ring-foreground/10 transition-colors hover:bg-foreground/10 hover:text-foreground/90"
-        >
-          <ImagePlus size="0.875rem" /> Upload
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="inline-flex items-center gap-1.5 rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/70 ring-1 ring-foreground/10 transition-colors hover:bg-foreground/10 hover:text-foreground/90"
+          >
+            <ImagePlus size="0.875rem" /> Upload
+          </button>
+          {editing && (
+            <>
+              <button
+                type="button"
+                onClick={() => importFileRef.current?.click()}
+                className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/70 ring-1 ring-foreground/10 transition-colors hover:bg-foreground/10 hover:text-foreground/90"
+              >
+                Import
+              </button>
+              {list.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void handleExport()}
+                  className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/70 ring-1 ring-foreground/10 transition-colors hover:bg-foreground/10 hover:text-foreground/90"
+                >
+                  Export
+                </button>
+              )}
+            </>
+          )}
+        </div>
         <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
+        <input ref={importFileRef} type="file" accept=".json,application/json" className="hidden" onChange={handleImportFile} />
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -182,20 +236,18 @@ export function CustomEmojiTab({ onInsert, query }: { onInsert: (token: string) 
           >
             <Settings size="0.875rem" />
           </button>
-          {list.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setEditing((v) => !v)}
-              className={cn(
-                "rounded-md px-2 py-1 text-xs transition-colors",
-                editing
-                  ? "bg-foreground/10 text-foreground/80 ring-1 ring-foreground/15"
-                  : "text-foreground/45 hover:bg-foreground/10 hover:text-foreground/70",
-              )}
-            >
-              {editing ? "Done" : "Edit"}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setEditing((v) => !v)}
+            className={cn(
+              "rounded-md px-2 py-1 text-xs transition-colors",
+              editing
+                ? "bg-foreground/10 text-foreground/80 ring-1 ring-foreground/15"
+                : "text-foreground/45 hover:bg-foreground/10 hover:text-foreground/70",
+            )}
+          >
+            {editing ? "Done" : "Edit"}
+          </button>
         </div>
       </div>
 
