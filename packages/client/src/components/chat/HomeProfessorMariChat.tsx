@@ -868,7 +868,7 @@ function ToolGlyph({ tool, tone }: { tool: WorkspaceToolCall; tone: ToolTone }) 
   if (tone === "wiki" || tone === "skill") return <BookOpen size="0.72rem" />;
   if (tone === "search") return <Search size="0.72rem" />;
   if (tone === "shell") return <Terminal size="0.72rem" />;
-  if (tone === "file" || tone === "write" || tone === "search") return <FileText size="0.72rem" />;
+  if (tone === "file" || tone === "write") return <FileText size="0.72rem" />;
   return <Wrench size="0.72rem" />;
 }
 
