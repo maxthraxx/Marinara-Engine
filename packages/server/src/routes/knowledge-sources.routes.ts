@@ -102,8 +102,9 @@ async function writeMeta(mutator: MetaStoreUpdater) {
 }
 
 /**
- * Look up a knowledge-source file by its ID.
- * Returns the resolved file path and original name, or null if not found.
+ * Look up a knowledge-source file by its ID. Returns its resolved path, original
+ * name, and the size/uploadedAt used as the extracted-text cache key, or null if
+ * not found.
  */
 export function getSourceFilePath(
   id: string,
@@ -222,8 +223,8 @@ export async function knowledgeSourcesRoutes(app: FastifyInstance) {
       current[id] = entry;
       return current;
     });
-    // A re-upload reuses the id; drop any stale extracted text for it.
-    deleteCachedText(id);
+    // No cache invalidation needed: each upload mints a fresh nanoid, so there is
+    // never a prior extracted-text entry for this id. (Delete invalidates on removal.)
 
     return entry;
   });

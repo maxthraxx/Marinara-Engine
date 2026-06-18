@@ -376,10 +376,13 @@ export function sanitizeProfileTableRows(tableName: string, rows: Array<Record<s
   return rows;
 }
 
-// Columns blanked by sanitizeProfileTableRows on export. On the conflict-UPDATE
-// path these must be omitted from the `set` object so an existing row keeps its
-// stored secret (Drizzle leaves an unmentioned column untouched) — only the
-// fresh-insert path carries the blanks.
+// Secret-bearing columns to omit on the conflict-UPDATE path so an existing row
+// keeps its stored secret (Drizzle leaves an unmentioned column untouched); only
+// the fresh-insert path carries the export's redacted values. For
+// api_connections/custom_tools the export blanks the whole column; for
+// agent_configs the export redacts secret keys *inside* the settings JSON, so we
+// omit the entire settings column on update rather than overwrite live secrets
+// with the redacted blob (an existing row's non-secret settings are left as-is).
 const REDACTED_UPDATE_COLUMNS: Record<string, string> = {
   api_connections: "apiKeyEncrypted",
   agent_configs: "settings",
