@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
 import { join, extname, basename } from "path";
-import { mkdir, readFile, unlink, writeFile, stat } from "fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile, stat } from "fs/promises";
 import { createWriteStream, existsSync, mkdirSync, readFileSync } from "fs";
 import { pipeline } from "stream/promises";
 import { nanoid } from "nanoid";
@@ -37,7 +37,30 @@ interface CacheEntry {
   uploadedAt: string;
   text: string;
 }
+// Bounded by total cached characters so a few large PDFs / many sources can't
+// grow the process heap without limit. Map iteration order is insertion order,
+// so eviction of the first key is an approximate-LRU (entries re-insert on
+// refresh). All insert/delete paths route through the helpers below.
 const textCache = new Map<string, CacheEntry>();
+const MAX_TEXT_CACHE_CHARS = 25_000_000;
+let textCacheChars = 0;
+
+function deleteCachedText(fileId: string) {
+  const existing = textCache.get(fileId);
+  if (existing) textCacheChars -= existing.text.length;
+  textCache.delete(fileId);
+}
+
+function setCachedText(fileId: string, entry: CacheEntry) {
+  deleteCachedText(fileId);
+  textCache.set(fileId, entry);
+  textCacheChars += entry.text.length;
+  while (textCacheChars > MAX_TEXT_CACHE_CHARS) {
+    const oldestKey = textCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    deleteCachedText(oldestKey);
+  }
+}
 
 function ensureDir() {
   if (!existsSync(SOURCES_DIR)) {
@@ -66,7 +89,10 @@ async function writeMeta(mutator: MetaStoreUpdater) {
   // upload/delete calls each persist their own stale view (lost update / TOCTOU).
   const apply = async () => {
     const next = await mutator(readMeta());
-    await writeFile(META_FILE, JSON.stringify(next, null, 2), "utf-8");
+    // Atomic write: a crash mid-write must not leave a truncated meta.json.
+    const tmp = `${META_FILE}.tmp`;
+    await writeFile(tmp, JSON.stringify(next, null, 2), "utf-8");
+    await rename(tmp, META_FILE);
   };
   // Run the mutation whether the previous link resolved or rejected, but keep
   // propagating failures to this call's awaiter.
@@ -126,20 +152,30 @@ export async function extractFileText(
   if (TEXT_EXTS.has(ext)) {
     text = await readFile(filePath, "utf-8");
   } else if (PDF_EXTS.has(ext)) {
+    let pdf: { getText: () => Promise<{ text: string }>; destroy: () => Promise<void> | void } | undefined;
     try {
       const { PDFParse } = await import("pdf-parse");
       const buf = await readFile(filePath);
-      const pdf = new PDFParse({ data: new Uint8Array(buf) });
+      pdf = new PDFParse({ data: new Uint8Array(buf) });
       const result = await pdf.getText();
-      await pdf.destroy();
       text = result.text;
     } catch {
       text = "[PDF text extraction failed]";
+    } finally {
+      // Always free the parser's workers/memory, even on a getText() failure,
+      // and never let a destroy() error mask a successful extraction.
+      if (pdf) {
+        try {
+          await pdf.destroy();
+        } catch {
+          /* ignore cleanup failure */
+        }
+      }
     }
   }
 
   if (fileId && metadata) {
-    textCache.set(fileId, { size: metadata.size, uploadedAt: metadata.uploadedAt, text });
+    setCachedText(fileId, { size: metadata.size, uploadedAt: metadata.uploadedAt, text });
   }
 
   return text;
@@ -187,7 +223,7 @@ export async function knowledgeSourcesRoutes(app: FastifyInstance) {
       return current;
     });
     // A re-upload reuses the id; drop any stale extracted text for it.
-    textCache.delete(id);
+    deleteCachedText(id);
 
     return entry;
   });
@@ -211,7 +247,7 @@ export async function knowledgeSourcesRoutes(app: FastifyInstance) {
       delete current[id];
       return current;
     });
-    textCache.delete(id);
+    deleteCachedText(id);
     return { success: true };
   });
 
