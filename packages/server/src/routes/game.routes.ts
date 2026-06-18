@@ -806,6 +806,9 @@ export interface MergeRecruitResult {
   };
   /** Library-character (non-NPC) party ids to mirror onto the denormalized `characterIds` column. */
   mergedChatCharacterIds: string[];
+  /** True when this recruit was newly added to the fresh party; false if it was already present
+   *  (e.g. a concurrent recruit committed the same member during this request's LLM window). */
+  added: boolean;
 }
 
 /**
@@ -824,7 +827,8 @@ export function mergeRecruitIntoGameMetadata(input: MergeRecruitInput): MergeRec
   const freshCards = (current.gameCharacterCards as Array<Record<string, unknown>>) ?? [];
   const freshPartyIds = getStoredPartyCharacterIds(current, freshSetupConfig, chatCharacterIds);
 
-  const mergedPartyIds = freshPartyIds.includes(recruitId) ? freshPartyIds : [...freshPartyIds, recruitId];
+  const alreadyInFreshParty = freshPartyIds.includes(recruitId);
+  const mergedPartyIds = alreadyInFreshParty ? freshPartyIds : [...freshPartyIds, recruitId];
 
   const freshExistingCardIndex = findExistingGameCharacterCardIndex(freshCards, recruitName);
   const mergedCards = [...freshCards];
@@ -844,6 +848,7 @@ export function mergeRecruitIntoGameMetadata(input: MergeRecruitInput): MergeRec
       gameCharacterCards: mergedCards,
     },
     mergedChatCharacterIds: mergedPartyIds.filter((id) => !isPartyNpcId(id)),
+    added: !alreadyInFreshParty,
   };
 }
 
@@ -5188,8 +5193,11 @@ export async function gameRoutes(app: FastifyInstance) {
     // section as the metadata patch, so both are written under the per-chat queue and the returned
     // chat reflects both — a concurrent party op can neither interleave between the two writes nor
     // leave characterIds out of sync with the queued-final gamePartyCharacterIds.
+    // `added` reflects the fresh party state inside the queue, not the pre-LLM `alreadyInParty`
+    // snapshot, so a concurrent recruit of the same member during the LLM window is reported honestly.
+    let added = false;
     const updatedSession = await chats.patchMetadataWithCharacterIds(chat.id, (current) => {
-      const { patch, mergedChatCharacterIds } = mergeRecruitIntoGameMetadata({
+      const { patch, mergedChatCharacterIds, added: didAdd } = mergeRecruitIntoGameMetadata({
         current,
         recruitId,
         recruitName,
@@ -5198,13 +5206,14 @@ export async function gameRoutes(app: FastifyInstance) {
         fallbackSetupConfig: setupConfig,
         chatCharacterIds,
       });
+      added = didAdd;
       return { metadata: patch, characterIds: mergedChatCharacterIds };
     });
     if (!updatedSession) throw new Error("Failed to update game session");
 
     return {
       sessionChat: updatedSession,
-      added: !alreadyInParty,
+      added,
       characterName: recruitName,
       cardCreated: existingCardIndex < 0,
     };
