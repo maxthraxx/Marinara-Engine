@@ -18,6 +18,14 @@ const customEmojiStyle: CSSProperties = {
   objectFit: "contain",
 };
 
+// Discord-style: a segment that is ONLY custom emojis (+ whitespace) renders them large.
+const customEmojiJumboStyle: CSSProperties = {
+  ...customEmojiStyle,
+  height: "2.5em",
+  verticalAlign: "-0.45em",
+  margin: "0.05em 0.1em",
+};
+
 /**
  * Replace known `:name:` tokens in `text` with their custom-emoji image, passing
  * everything else through `baseRender` (markdown / mentions). Unknown `:tokens:`
@@ -32,6 +40,17 @@ export function renderInlineWithCustomEmojis(
 ): ReactNode[] {
   if (emojiMap.size === 0 || !text.includes(":")) return baseRender(text, keyPrefix);
 
+  // Jumbo when the whole segment is only known custom emojis (+ whitespace).
+  let knownCount = 0;
+  const remainder = text.replace(new RegExp(CUSTOM_EMOJI_TOKEN_RE.source, CUSTOM_EMOJI_TOKEN_RE.flags), (full, name) => {
+    if (name && emojiMap.has(name)) {
+      knownCount++;
+      return "";
+    }
+    return full;
+  });
+  const style = knownCount > 0 && remainder.trim().length === 0 ? customEmojiJumboStyle : customEmojiStyle;
+
   const parts: ReactNode[] = [];
   const re = new RegExp(CUSTOM_EMOJI_TOKEN_RE.source, CUSTOM_EMOJI_TOKEN_RE.flags);
   let lastIndex = 0;
@@ -45,7 +64,7 @@ export function renderInlineWithCustomEmojis(
       parts.push(baseRender(text.slice(lastIndex, match.index), `${keyPrefix}-t${segment}`));
     }
     parts.push(
-      <img key={`${keyPrefix}-e${segment}`} src={url} alt={match[0]} title={match[0]} style={customEmojiStyle} />,
+      <img key={`${keyPrefix}-e${segment}`} src={url} alt={match[0]} title={match[0]} style={style} />,
     );
     lastIndex = match.index + match[0].length;
     segment++;
