@@ -153,6 +153,7 @@ export function UnoBoard({ chatId }: Props) {
           style={{ background: CARD_FILL[view.activeColor] }}
           title={`Active color: ${view.activeColor}`}
         />
+        <span className="capitalize">{view.activeColor}</span>
         <RotateCw className={`h-3.5 w-3.5 ${view.direction === -1 ? "-scale-x-100" : ""}`} />
         <span>Draw pile: {view.drawPileCount}</span>
         {view.pendingDraw > 0 && (
@@ -162,7 +163,7 @@ export function UnoBoard({ chatId }: Props) {
         )}
         <div className="ml-auto flex items-center gap-2">
           {view.status !== "finished" && (
-            <span className={isMyTurn ? "font-semibold text-[var(--primary)]" : ""}>
+            <span className={isMyTurn ? "font-semibold text-[var(--primary)] animate-pulse" : ""}>
               {isMyTurn
                 ? "Your turn"
                 : `${view.seats.find((s) => s.seatId === view.currentSeatId)?.displayName ?? "…"}'s turn`}
@@ -180,6 +181,13 @@ export function UnoBoard({ chatId }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Last action ticker (the literal board move; narration messages stay in-character) */}
+      {view.lastAction && view.status !== "finished" && (
+        <div className="mb-1.5 truncate text-[0.7rem] text-[var(--muted-foreground)]">
+          {view.seats.find((s) => s.seatId === view.lastAction!.seatId)?.displayName ?? "—"} {view.lastAction.summary}
+        </div>
+      )}
 
       {/* Opponents + discard */}
       <div className="mb-2 flex items-center gap-3">

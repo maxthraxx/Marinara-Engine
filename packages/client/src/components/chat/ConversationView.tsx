@@ -29,6 +29,7 @@ import {
 } from "./ChatToolbarControls";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { useChatStore } from "../../stores/chat.store";
+import { useUnoGameStore } from "../../stores/uno-game.store";
 import { useUIStore } from "../../stores/ui.store";
 import { playNotificationPing } from "../../lib/notification-sound";
 import { getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
@@ -279,6 +280,7 @@ export function ConversationView({
   const qc = useQueryClient();
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreaming = useChatStore((s) => s.isStreaming) && streamingChatId === chatId;
+  const unoGameActive = useUnoGameStore((s) => s.current?.chatId === chatId && s.current?.status !== "finished");
   const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(chatId));
   const hasLiveStream = isStreaming && !isStreamCommitted;
   const streamBuffer = useChatStore((s) => s.streamBuffer);
@@ -1221,8 +1223,8 @@ export function ConversationView({
           </div>
         )}
 
-        {/* Scene banner — inline at bottom of messages (origin variant only) */}
-        {sceneInfo?.variant === "origin" && (
+        {/* Scene banner — inline at bottom of messages (origin variant only); hidden during a turn-game */}
+        {sceneInfo?.variant === "origin" && !unoGameActive && (
           <SceneBanner variant="origin" sceneChatId={sceneInfo.sceneChatId} sceneChatName={sceneInfo.sceneChatName} />
         )}
 

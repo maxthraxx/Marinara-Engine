@@ -167,7 +167,8 @@ export async function runTurnGameBotTurns(args: RunBotTurnsArgs): Promise<void> 
         role: "system",
         content:
           `${persona}\n\nYou are playing a friendly game of UNO. Choose exactly ONE legal move by calling the matching tool. ` +
-          `Never invent cards or board state. If you play a Wild or Wild Draw Four you MUST set declared_color.`,
+          `Never invent cards or board state. If you play a Wild or Wild Draw Four you MUST set declared_color. ` +
+          `Call the tool ONLY — do not write any words, reasoning, or narration; your spoken reaction is handled separately.`,
       },
       { role: "system", content: `${view.boardSummary}\n\n${view.instructions ?? ""}` },
       ...(recent ? [{ role: "user" as const, content: `Recent table talk:\n${recent}` }] : []),
@@ -176,7 +177,6 @@ export async function runTurnGameBotTurns(args: RunBotTurnsArgs): Promise<void> 
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let proposed: any = null;
-    let moveContent = "";
     try {
       const res = await provider.chatComplete(moveMessages, {
         model,
@@ -185,7 +185,6 @@ export async function runTurnGameBotTurns(args: RunBotTurnsArgs): Promise<void> 
         maxTokens: 220,
         ...(signal ? { signal } : {}),
       });
-      moveContent = (res.content ?? "").trim();
       const call = res.toolCalls.find((c) => UNO_TOOL_NAMES.includes(c.function.name));
       if (call) {
         let parsedArgs: Record<string, unknown> = {};
@@ -204,9 +203,7 @@ export async function runTurnGameBotTurns(args: RunBotTurnsArgs): Promise<void> 
 
     // ── Apply (engine-authoritative) with deterministic fallback ──
     let applied = proposed ? engine.applyMove(state, seatId, proposed) : { ok: false as const };
-    let usedFallback = false;
     if (!applied || !applied.ok) {
-      usedFallback = true;
       const fallback = engine.pickFallbackMove(state, seatId);
       applied = engine.applyMove(state, seatId, fallback);
     }
@@ -223,13 +220,8 @@ export async function runTurnGameBotTurns(args: RunBotTurnsArgs): Promise<void> 
       .filter(Boolean)
       .join(" ");
 
-    // ── Narration: prefer the model's own line when it played legally, else generate one ──
-    let narration = "";
-    if (!usedFallback && moveContent.length >= 8) {
-      narration = moveContent;
-    } else {
-      narration = await narrateOutcome(provider, model, seatName, eventSummary, signal);
-    }
+    // ── Narration: a natural in-character turn — may banter with the table AND flavor the move ──
+    let narration = await narrateOutcome(provider, model, persona, seatName, eventSummary, recent, signal);
     if (!narration) narration = eventSummary || `${seatName} makes a move.`;
 
     // ── Persist narration message + per-message engine snapshot ──
@@ -267,22 +259,27 @@ async function narrateOutcome(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   provider: any,
   model: string,
+  persona: string,
   name: string,
   eventSummary: string,
+  recent: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  if (!eventSummary) return "";
+  const did = eventSummary.startsWith(`${name} `) ? eventSummary.slice(name.length + 1) : eventSummary || "made your move";
   try {
-    const res = await provider.chatComplete(
-      [
-        {
-          role: "system",
-          content: `You are ${name}, playing a casual game of UNO with friends. In ONE or TWO short sentences, react in character to what just happened. Do not restate rules or invent extra moves.`,
-        },
-        { role: "user", content: `What just happened: ${eventSummary}` },
-      ],
-      { model, temperature: 0.85, maxTokens: 120, ...(signal ? { signal } : {}) },
-    );
+    const messages: ChatMessage[] = [
+      {
+        role: "system",
+        content:
+          `${persona}\n\n` +
+          `You are playing UNO with friends. Speak ONE short, natural line as ${name}, fully in character. ` +
+          `You may react to the table talk and/or to your own move — like a real person at the table (a quip, a taunt, a groan, a little flourish). ` +
+          `Hard rules: do NOT list your cards, do NOT name colors or say "active color"/"matches"/"value", do NOT explain UNO rules or your strategy, do NOT describe the board state. Just talk.`,
+      },
+      ...(recent ? [{ role: "user" as const, content: `Recent table talk:\n${recent}` }] : []),
+      { role: "user", content: `(You just ${did}.) Say your one line.` },
+    ];
+    const res = await provider.chatComplete(messages, { model, temperature: 0.9, maxTokens: 100, ...(signal ? { signal } : {}) });
     return (res.content ?? "").trim();
   } catch {
     return "";
