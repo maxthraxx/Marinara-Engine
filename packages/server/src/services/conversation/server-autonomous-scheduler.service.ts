@@ -132,6 +132,7 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
         userStatus: "idle",
         userActivity: "away or offline",
         autonomous: true,
+        skipPresenceDelay: true,
         autonomousIntentKey: intent ?? "",
         autonomousIntent,
       },
