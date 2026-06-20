@@ -875,6 +875,17 @@ export class OpenAIProvider extends BaseLLMProvider {
         ) {
           body.top_k = Math.round(options.topK);
         }
+        // min_p, like top_k, is a non-standard sampler only sent where the backend
+        // is known to accept it (the bundled local model); other backends can use
+        // the customParameters escape hatch. minP=0 means "disabled" → omit it.
+        if (
+          this.shouldSendTopK() &&
+          typeof options.minP === "number" &&
+          Number.isFinite(options.minP) &&
+          options.minP > 0
+        ) {
+          body.min_p = options.minP;
+        }
         if (this.shouldSendPenaltyParams(options.model)) {
           if (options.frequencyPenalty) body.frequency_penalty = options.frequencyPenalty;
           if (options.presencePenalty) body.presence_penalty = options.presencePenalty;
@@ -1108,6 +1119,17 @@ export class OpenAIProvider extends BaseLLMProvider {
           options.topK > 0
         ) {
           body.top_k = Math.round(options.topK);
+        }
+        // min_p, like top_k, is a non-standard sampler only sent where the backend
+        // is known to accept it (the bundled local model); other backends can use
+        // the customParameters escape hatch. minP=0 means "disabled" → omit it.
+        if (
+          this.shouldSendTopK() &&
+          typeof options.minP === "number" &&
+          Number.isFinite(options.minP) &&
+          options.minP > 0
+        ) {
+          body.min_p = options.minP;
         }
         if (this.shouldSendPenaltyParams(options.model)) {
           if (options.frequencyPenalty) body.frequency_penalty = options.frequencyPenalty;
