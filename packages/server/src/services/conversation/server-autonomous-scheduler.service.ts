@@ -168,6 +168,39 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
     return true;
   };
 
+  // Runs after a busy delay on a per-chat timer so the poll loop isn't blocked.
+  // Owns the runningChats slot until it finishes.
+  const scheduleDelayedGeneration = (
+    chatId: string,
+    characterId: string,
+    schedule: WeekSchedule | null,
+    chatMeta: Record<string, unknown>,
+    claimedAt: number | undefined,
+    delayMs: number,
+  ) => {
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          if (stopped) return;
+          if (getRecentAutonomousClientPresence(chatId, RECENT_CLIENT_PRESENCE_MS)) {
+            clearGenerationInProgress(chatId, claimedAt);
+            return;
+          }
+          const generated = await generateAutonomousMessage(chatId, characterId, schedule, chatMeta, claimedAt);
+          if (generated) {
+            logger.info("[autonomous-scheduler] Generated autonomous message for chat %s (after delay)", chatId);
+          }
+        } catch (err) {
+          clearGenerationInProgress(chatId, claimedAt);
+          logger.warn(err, "[autonomous-scheduler] Failed during delayed generation for chat %s", chatId);
+        } finally {
+          runningChats.delete(chatId);
+        }
+      })();
+    }, delayMs);
+    timer.unref?.();
+  };
+
   const evaluateChat = async (chat: RawChat) => {
     if (runningChats.has(chat.id)) return;
     const activeGenerations = (app as unknown as { activeGenerations?: Map<string, unknown> }).activeGenerations;
@@ -178,6 +211,7 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
 
     runningChats.add(chat.id);
     let generationStartedAt: number | undefined;
+    let handedOffToTimer = false;
     try {
       const checkResponse = await app.inject({
         method: "POST",
@@ -220,12 +254,9 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
         }
         const delayMs = getBusyDelay(status, schedule);
         if (delayMs > 0) {
-          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-          const recentPresenceAfterDelay = getRecentAutonomousClientPresence(chat.id, RECENT_CLIENT_PRESENCE_MS);
-          if (recentPresenceAfterDelay) {
-            clearGenerationInProgress(chat.id, generationStartedAt);
-            return;
-          }
+          handedOffToTimer = true;
+          scheduleDelayedGeneration(chat.id, characterId, schedule, freshMeta, generationStartedAt, delayMs);
+          return;
         }
       }
 
@@ -237,7 +268,7 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
       clearGenerationInProgress(chat.id, generationStartedAt);
       logger.warn(err, "[autonomous-scheduler] Failed while evaluating chat %s", chat.id);
     } finally {
-      runningChats.delete(chat.id);
+      if (!handedOffToTimer) runningChats.delete(chat.id);
     }
   };
 
