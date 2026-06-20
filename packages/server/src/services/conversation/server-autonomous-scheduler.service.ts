@@ -280,7 +280,7 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
       for (const chat of allChats) {
         if (stopped) return;
         if (!shouldConsiderChat(chat)) continue;
-        await evaluateChat(chat);
+        void evaluateChat(chat);
       }
     } catch (err) {
       logger.warn(err, "[autonomous-scheduler] Poll failed");

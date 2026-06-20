@@ -854,8 +854,8 @@ export async function conversationRoutes(app: FastifyInstance) {
 
     const schedules: CharacterSchedules = await chats.inheritFreshConversationSchedules(chatId);
     const schedule = schedules[characterId];
-    const parsedMeta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
-    const statusOverrides = parseConversationStatusOverrides(parsedMeta.conversationStatusOverrides);
+    const meta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
+    const statusOverrides = parseConversationStatusOverrides(meta.conversationStatusOverrides);
 
     if (!schedule) {
       const { status, activity } = getEffectiveCurrentStatus(null, statusOverrides[characterId], undefined, "");

@@ -181,7 +181,7 @@ export function useAutonomousMessaging(
     const triggerAutonomousGeneration = async (
       characterId: string,
       autonomousIntentKey?: string,
-      skipPresenceDelay?: boolean,
+      skipPresenceDelay = false,
     ) => {
       generatingRef.current = true;
       let produced: boolean | undefined = false;

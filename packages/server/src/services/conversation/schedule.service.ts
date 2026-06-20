@@ -322,9 +322,9 @@ export function getActiveStatusOverride(
   now: Date = new Date(),
 ): ConversationStatusOverride | null {
   if (!override || !isManualPresenceStatus(override.status)) return null;
-  if (override.expiresAt) {
+  if (typeof override.expiresAt === "string") {
     const expiresAt = new Date(override.expiresAt).getTime();
-    if (!Number.isFinite(expiresAt) || expiresAt <= now.getTime()) return null;
+    if (!override.expiresAt.trim() || !Number.isFinite(expiresAt) || expiresAt <= now.getTime()) return null;
   }
   return override;
 }
@@ -458,10 +458,6 @@ export function getAdjacentBlocks(
   const todayName = DAYS[(now.getDay() + 6) % 7]!;
   const yesterdayName = DAYS[(now.getDay() + 5) % 7]!;
   const tomorrowName = DAYS[now.getDay() % 7]!;
-
-  const yesterdayBlocks = (schedule.days[yesterdayName] ?? []).slice(-3);
-  const todayBlocks = schedule.days[todayName] ?? [];
-  const tomorrowBlocks = (schedule.days[tomorrowName] ?? []).slice(0, 3);
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
   function parseBlockMinutes(block: ScheduleBlock): { start: number; end: number } | null {
@@ -469,61 +465,47 @@ export function getAdjacentBlocks(
     if (!startStr || !endStr) return null;
     const [sh, sm] = startStr.split(":").map(Number);
     const [eh, em] = endStr.split(":").map(Number);
-    return { start: (sh ?? 0) * 60 + (sm ?? 0), end: (eh ?? 0) * 60 + (em ?? 0) };
+    const start = (sh ?? 0) * 60 + (sm ?? 0);
+    const end = (eh ?? 0) * 60 + (em ?? 0);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    return { start, end };
   }
 
-  function endsBeforeCurrentTime(start: number, end: number): boolean {
-    return start <= end ? end <= currentMinutes : start > currentMinutes && end <= currentMinutes;
-  }
+  const candidates: Array<{ block: ScheduleBlock; start: number; end: number }> = [];
+  const addBlocks = (blocks: ScheduleBlock[] | undefined, dayOffset: number) => {
+    for (const block of blocks ?? []) {
+      const range = parseBlockMinutes(block);
+      if (!range) continue;
+      const start = dayOffset * 1440 + range.start;
+      let end = dayOffset * 1440 + range.end;
+      if (range.end <= range.start) end += 1440;
+      candidates.push({ block, start, end });
+    }
+  };
 
-  function startsAfterCurrentTime(start: number, end: number): boolean {
-    return start <= end ? start > currentMinutes : start > currentMinutes && end > currentMinutes;
-  }
+  addBlocks(schedule.days[yesterdayName], -1);
+  addBlocks(schedule.days[todayName], 0);
+  addBlocks(schedule.days[tomorrowName], 1);
+  candidates.sort((a, b) => a.start - b.start);
 
-  let currentIndex = -1;
-  let previousIndex = -1;
-  let nextIndex = -1;
-  for (let i = 0; i < todayBlocks.length; i++) {
-    const range = parseBlockMinutes(todayBlocks[i]!);
-    if (!range) continue;
-    const { start, end } = range;
-    if (start <= end) {
-      if (currentMinutes >= start && currentMinutes < end) {
-        currentIndex = i;
-        break;
-      }
-      if (endsBeforeCurrentTime(start, end)) {
-        previousIndex = i;
-      } else if (nextIndex === -1 && startsAfterCurrentTime(start, end)) {
-        nextIndex = i;
-      }
-    } else {
-      if (currentMinutes >= start || currentMinutes < end) {
-        currentIndex = i;
-        break;
-      }
-      // Daytime gap for a midnight-crossing block: it ended this morning and starts tonight.
-      // Treat it as both previous (most recent ended block) and next (upcoming tonight).
-      if (end <= currentMinutes && currentMinutes < start) {
-        previousIndex = i;
-        if (nextIndex === -1) nextIndex = i;
-      }
+  let previous: ScheduleBlock | null = null;
+  let current: ScheduleBlock | null = null;
+  let next: ScheduleBlock | null = null;
+  for (const candidate of candidates) {
+    if (candidate.start <= currentMinutes && currentMinutes < candidate.end) {
+      current = candidate.block;
+      continue;
+    }
+    if (candidate.end <= currentMinutes) {
+      previous = candidate.block;
+      continue;
+    }
+    if (!next && candidate.start > currentMinutes) {
+      next = candidate.block;
     }
   }
 
-  if (currentIndex === -1) {
-    return {
-      previous: previousIndex >= 0 ? (todayBlocks[previousIndex] ?? null) : (yesterdayBlocks.at(-1) ?? null),
-      current: null,
-      next: nextIndex >= 0 ? (todayBlocks[nextIndex] ?? null) : (tomorrowBlocks[0] ?? null),
-    };
-  }
-
-  const previous = currentIndex > 0 ? (todayBlocks[currentIndex - 1] ?? null) : (yesterdayBlocks.at(-1) ?? null);
-  const next =
-    currentIndex < todayBlocks.length - 1 ? (todayBlocks[currentIndex + 1] ?? null) : (tomorrowBlocks[0] ?? null);
-
-  return { previous, current: todayBlocks[currentIndex] ?? null, next };
+  return { previous, current, next };
 }
 
 export function blockDurationMinutes(block: ScheduleBlock): number {

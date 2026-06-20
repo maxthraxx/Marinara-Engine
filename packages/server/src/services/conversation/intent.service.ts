@@ -24,6 +24,7 @@ const INTENT_HINTS: Record<MessageIntent, string> = {
 
 const MEAL_KEYWORDS = ["eating", "lunch", "dinner", "breakfast", "brunch", "meal", "food"];
 const LONG_ABSENCE_MS = 18 * 60 * 60 * 1000;
+const GOOD_NIGHT_WINDOW_MINUTES = 90;
 
 const MESSAGE_INTENTS = new Set<MessageIntent>([
   "check_in",
@@ -51,6 +52,19 @@ function hasStatus(block: ScheduleBlock | null, status: ScheduleBlock["status"])
   return block?.status === status;
 }
 
+function minutesUntilBlockStart(block: ScheduleBlock, now: Date): number {
+  const [startStr] = block.time.split("-");
+  if (!startStr) return Infinity;
+  const [hourRaw, minuteRaw] = startStr.split(":");
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return Infinity;
+
+  const startMinutes = hour * 60 + minute;
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  return startMinutes >= currentMinutes ? startMinutes - currentMinutes : 1440 - currentMinutes + startMinutes;
+}
+
 export function resolveIntent(
   schedule: WeekSchedule,
   msSinceUserLastSpoke: number,
@@ -72,15 +86,13 @@ export function resolveIntent(
     return "good_morning";
   }
 
-  if (next && next.status === "offline" && blockDurationMinutes(next) >= 360) {
-    const [startStr] = next.time.split("-");
-    if (startStr) {
-      const [sh, sm] = startStr.split(":").map(Number);
-      const nextStartMinutes = (sh ?? 0) * 60 + (sm ?? 0);
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
-      const minutesUntilNext = (nextStartMinutes - currentMinutes + 1440) % 1440;
-      if (minutesUntilNext <= 90) return "good_night";
-    }
+  if (
+    next &&
+    next.status === "offline" &&
+    blockDurationMinutes(next) >= 360 &&
+    minutesUntilBlockStart(next, now) <= GOOD_NIGHT_WINDOW_MINUTES
+  ) {
+    return "good_night";
   }
 
   if (hasStatus(previous, "dnd") && (current?.status === "online" || current?.status === "idle")) {

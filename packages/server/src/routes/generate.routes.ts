@@ -137,6 +137,8 @@ import {
 import {
   buildAutonomousDailyBudgetPatch,
   clearGenerationInProgress,
+  dailyCapForCharacter,
+  getAutonomousDailyBudget,
   markGenerationInProgress,
   recordAssistantActivity,
   recordUserActivity,
@@ -2107,7 +2109,23 @@ export async function generateRoutes(app: FastifyInstance) {
             : requestedMentionNames.size > 0
               ? convoCharInfo.filter((c) => requestedMentionNames.has(c.name.toLowerCase()))
               : convoCharInfo;
-          const respondingConvoCharInfo = scopedConvoCharInfo.length > 0 ? scopedConvoCharInfo : convoCharInfo;
+          let respondingConvoCharInfo = scopedConvoCharInfo.length > 0 ? scopedConvoCharInfo : convoCharInfo;
+
+          if (shouldAccountAutonomousGeneration && !input.regenerateMessageId && !input.impersonate) {
+            const budget = getAutonomousDailyBudget(chatMeta);
+            respondingConvoCharInfo = respondingConvoCharInfo.filter((character) => {
+              const count = budget.counts[character.charId] ?? 0;
+              const cap = dailyCapForCharacter(schedules[character.charId], chatMeta);
+              return count < cap;
+            });
+
+            if (respondingConvoCharInfo.length === 0) {
+              reply.raw.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+              reply.raw.end();
+              return;
+            }
+          }
+
           const respondingConvoCharNames = respondingConvoCharInfo.map((c) => c.name);
 
           // ── Offline skip: if ALL characters are offline, don't generate ──
@@ -8795,25 +8813,6 @@ export async function generateRoutes(app: FastifyInstance) {
                         schedule.days[dayName] = daySchedule;
                         schedules[characterId] = schedule;
                         await chats.updateMetadata(input.chatId, { ...freshMeta, characterSchedules: schedules });
-
-                        // Update character's conversationStatus
-                        const charRow = await chars.getById(characterId);
-                        if (charRow) {
-                          const charData = JSON.parse(charRow.data as string);
-                          const schedSvc = await import("../services/conversation/schedule.service.js");
-                          const statusOverrides = parseConversationStatusOverrides(freshMeta.conversationStatusOverrides);
-                          const derived = schedSvc.getEffectiveCurrentStatus(
-                            schedule,
-                            statusOverrides[characterId],
-                          );
-                          const newStatus = derived.status;
-                          const extensions = {
-                            ...(charData.extensions ?? {}),
-                            conversationStatus: newStatus,
-                            conversationActivity: derived.activity,
-                          };
-                          await chars.update(characterId, { extensions } as any);
-                        }
 
                         reply.raw.write(
                           `data: ${JSON.stringify({

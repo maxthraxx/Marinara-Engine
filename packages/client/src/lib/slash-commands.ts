@@ -569,7 +569,7 @@ const COMMANDS: SlashCommand[] = [
 
       const characters = ctx.characters ?? [];
       if (characters.length === 0) {
-        return { handled: true, feedback: "No characters found in this chat." };
+        return { handled: true, feedback: "No character metadata found for this chat." };
       }
 
       const tokens = parseCommandTokens(args);

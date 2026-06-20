@@ -16,7 +16,14 @@ export interface AutonomousCheckResult {
   /** Which character(s) should send a message */
   characterIds: string[];
   /** Why this was triggered */
-  reason: "user_inactivity" | "user_reaction" | "character_exchange" | "none" | "generation_in_progress" | "daily_budget_exhausted" | "intent_cooldown";
+  reason:
+    | "user_inactivity"
+    | "user_reaction"
+    | "character_exchange"
+    | "none"
+    | "generation_in_progress"
+    | "daily_budget_exhausted"
+    | "intent_cooldown";
   /** How long the user has been inactive (ms) */
   inactivityMs: number;
   /** Timestamp when a generation claim started, if one was created */
@@ -65,6 +72,13 @@ export function getActivityState(chatId: string): ChatActivityState | undefined 
   return activityStates.get(chatId);
 }
 
+function toScheduleDateKey(now: Date): string {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function readDailyBudgetMeta(value: unknown): DailyBudgetMeta | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -84,7 +98,7 @@ export function getAutonomousDailyBudget(
   chatMeta: Record<string, unknown>,
   now: Date = new Date(),
 ): DailyBudgetMeta {
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const today = toScheduleDateKey(now);
   const budget = readDailyBudgetMeta(chatMeta.autonomousDailyBudget);
   return budget?.date === today ? budget : { date: today, counts: {} };
 }

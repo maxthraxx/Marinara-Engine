@@ -2053,7 +2053,7 @@ export function ChatSettingsDrawer({
           scheduleGenerationPreferences,
         });
         await qc.refetchQueries({ queryKey: chatKeys.detail(chat.id) });
-        qc.invalidateQueries({ queryKey: chatKeys.list() });
+        await qc.invalidateQueries({ queryKey: chatKeys.list() });
 
         const statuses = Object.values(result.results ?? {}).map((entry) => entry.status);
         const generatedCount = statuses.filter((status) => status === "generated").length;

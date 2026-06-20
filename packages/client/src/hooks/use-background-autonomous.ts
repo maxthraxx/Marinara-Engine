@@ -25,7 +25,6 @@ interface AutonomousCheckResult {
   reason: string;
   inactivityMs: number;
   generationStartedAt?: number;
-  autonomousIntent?: string;
   autonomousIntentKey?: string;
 }
 

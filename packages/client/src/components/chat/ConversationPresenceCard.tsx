@@ -427,6 +427,21 @@ export function ConversationPresenceCard({
     return latestByCharacterId;
   }, [messages]);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshStatuses = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      if (statusesQuery.data?.needsRefresh) {
+        await api.post("/conversation/schedule/generate", { chatId, characterIds: chatCharIds });
+        await queryClient.refetchQueries({ queryKey: ["chat", chatId] });
+      }
+      await statusesQuery.refetch();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   if (characters.length === 0) return <div />;
 
   const identityPillClass = getChatToolbarButtonClass({
@@ -486,21 +501,6 @@ export function ConversationPresenceCard({
     }
   };
 
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const refreshStatuses = async () => {
-    if (isRefreshing) return;
-    setIsRefreshing(true);
-    try {
-      if (statusesQuery.data?.needsRefresh) {
-        await api.post("/conversation/schedule/generate", { chatId, characterIds: chatCharIds });
-        await queryClient.refetchQueries({ queryKey: ["chat", chatId] });
-      }
-      await statusesQuery.refetch();
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
   const replyNow = async (characterId: string) => {
     if (replyNowCharacterId || !delayedInfo?.characterIds?.includes(characterId)) return;
     setReplyNowCharacterId(characterId);
@@ -539,8 +539,7 @@ export function ConversationPresenceCard({
       return;
     }
 
-    const ok = await saveOverride(character.id, character.status, nextActivity);
-    if (ok) {
+    if (await saveOverride(character.id, character.status, nextActivity)) {
       setEditingCharacterId(null);
       setDraftActivity("");
     }
@@ -555,8 +554,9 @@ export function ConversationPresenceCard({
       return;
     }
 
-    const ok = await saveOverride(character.id, status, nextActivity);
-    if (ok) setStatusMenuCharacterId(null);
+    if (await saveOverride(character.id, status, nextActivity)) {
+      setStatusMenuCharacterId(null);
+    }
   };
 
   const restoreSchedule = async (characterId: string) => {
