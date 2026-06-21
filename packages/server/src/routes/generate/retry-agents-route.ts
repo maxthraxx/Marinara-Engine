@@ -1449,6 +1449,7 @@ async function attachRetrySpotifyToolContexts(args: {
       (entry.resolved as any).__spotifyToolCalls = new Set<string>();
       (entry.resolved as any).__spotifyPlayApplied = false;
       (entry.resolved as any).__spotifyPlayError = null;
+      (entry.resolved as any).__spotifyToolError = spotifyError;
       (entry.resolved as any).__spotifyPlaybackPending = false;
     }
     entry.resolved.toolContext = {
@@ -1465,6 +1466,8 @@ async function attachRetrySpotifyToolContexts(args: {
           });
         }
         if (!spotifyAccessToken) {
+          (entry.resolved as any).__spotifyToolError =
+            spotifyError ?? "Spotify is not connected. Open the Music DJ agent and connect your account.";
           return JSON.stringify({
             error: spotifyError ?? "Spotify is not connected. Open the Music DJ agent and connect your account.",
           });
@@ -1600,6 +1603,12 @@ function buildSpotifyRetryQuery(result: AgentResult, context: AgentContext): { q
   };
 }
 
+function isBlockingSpotifyRetryToolError(error: string | null | undefined): error is string {
+  return (
+    !!error && /(not configured|not connected|token|scope|premium|active spotify device|playback failed)/i.test(error)
+  );
+}
+
 async function applyDeterministicSpotifyRetryFallback(args: {
   entry: ResolvedRetryAgent;
   result: AgentResult;
@@ -1701,6 +1710,10 @@ async function validateSpotifyRetryPlayback(
 ): Promise<AgentResult> {
   if (entry.resolved.type !== "spotify") return result;
   if (result.type !== "spotify_control") return result;
+  const spotifyToolError = (entry.resolved as any).__spotifyToolError;
+  if (isBlockingSpotifyRetryToolError(spotifyToolError)) {
+    return { ...result, success: false, error: spotifyToolError };
+  }
 
   const constraints =
     context.memory._spotifyDjConstraints && typeof context.memory._spotifyDjConstraints === "object"

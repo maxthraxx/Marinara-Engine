@@ -18,6 +18,29 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+function normalizeSourceContextBudget(value: unknown, fallback = 6000): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  if (!Number.isFinite(parsed) || parsed < 256) return fallback;
+  return Math.max(256, Math.floor(parsed));
+}
+
+function splitOversizedEntry(text: string, maxTokens: number): string[] {
+  const maxChars = Math.max(1024, maxTokens * 4);
+  const chunks: string[] = [];
+  let remaining = text.trim();
+
+  while (remaining.length > maxChars) {
+    const window = remaining.slice(0, maxChars);
+    const splitAt = Math.max(window.lastIndexOf("\n"), window.lastIndexOf(". "), window.lastIndexOf("; "));
+    const cut = splitAt > maxChars * 0.5 ? splitAt + 1 : maxChars;
+    chunks.push(remaining.slice(0, cut).trim());
+    remaining = remaining.slice(cut).trim();
+  }
+
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
 /**
  * Split text into chunks of approximately `maxTokens` tokens each.
  * Splits on double-newlines (entry boundaries) to keep entries intact.
@@ -28,6 +51,15 @@ function chunkText(text: string, maxTokens: number): string[] {
   let current = "";
 
   for (const entry of entries) {
+    if (estimateTokens(entry) > maxTokens) {
+      if (current.trim()) {
+        chunks.push(current.trim());
+        current = "";
+      }
+      chunks.push(...splitOversizedEntry(entry, maxTokens));
+      continue;
+    }
+
     const combined = current ? current + "\n\n" + entry : entry;
     if (estimateTokens(combined) > maxTokens && current) {
       chunks.push(current.trim());
@@ -61,7 +93,11 @@ export async function executeKnowledgeRetrieval(
 ): Promise<AgentResult> {
   // Reserve tokens for system prompt (~600) and context block (~1500).
   // Rough budget for source material: whatever's left
-  const contextBudget = (config.settings.sourceContextBudget as number) ?? 6000;
+  const requestedContextBudget = normalizeSourceContextBudget(config.settings.sourceContextBudget);
+  const providerContextBudget = provider.maxContextValue
+    ? Math.max(256, provider.maxContextValue - 2500)
+    : requestedContextBudget;
+  const contextBudget = Math.min(requestedContextBudget, providerContextBudget);
 
   const materialTokens = estimateTokens(sourceMaterial);
 
@@ -83,6 +119,7 @@ export async function executeKnowledgeRetrieval(
   let consolidatedText: string | null = null;
   let totalTokens = 0;
   let totalDuration = 0;
+  const failures: string[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
     const isLastChunk = i === chunks.length - 1;
@@ -102,6 +139,11 @@ export async function executeKnowledgeRetrieval(
     const result = await executeAgent(config, chunkContext, provider, model);
     totalTokens += result.tokensUsed;
     totalDuration += result.durationMs;
+
+    if (!result.success) {
+      failures.push(result.error || `chunk ${i + 1} failed`);
+      continue;
+    }
 
     if (result.success && result.data) {
       const text = typeof result.data === "string" ? result.data : ((result.data as { text?: string })?.text ?? "");
@@ -125,7 +167,9 @@ export async function executeKnowledgeRetrieval(
   // covers the case where a middle chunk returned "No relevant information found.":
   // `extractions.length < chunks.length` no longer forces a partial concatenation
   // that would duplicate the facts the final pass already consolidated.
-  const finalText = consolidatedText && consolidatedText.length > 0 ? consolidatedText : extractions.filter(Boolean).join("\n\n");
+  const finalText =
+    consolidatedText && consolidatedText.length > 0 ? consolidatedText : extractions.filter(Boolean).join("\n\n");
+  const failedPasses = failures.length;
   return {
     agentId: config.id,
     agentType: config.type,
@@ -133,7 +177,10 @@ export async function executeKnowledgeRetrieval(
     data: { text: finalText },
     tokensUsed: totalTokens,
     durationMs: totalDuration,
-    success: true,
-    error: null,
+    success: failedPasses === 0,
+    error:
+      failedPasses > 0
+        ? `${failedPasses}/${chunks.length} knowledge retrieval extraction passes failed: ${failures[0]}`
+        : null,
   };
 }

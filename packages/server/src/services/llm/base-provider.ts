@@ -568,6 +568,13 @@ export abstract class BaseLLMProvider {
     return this.maxTokensOverride ?? null;
   }
 
+  /** Returns the configured context window for this provider connection, if known. */
+  public get maxContextValue(): number | null {
+    return typeof this.defaultMaxContext === "number" && Number.isFinite(this.defaultMaxContext)
+      ? this.defaultMaxContext
+      : null;
+  }
+
   protected fitMessagesToContext(messages: ChatMessage[], options: ContextFitOptions) {
     return fitMessagesToContext(messages, options, this.defaultMaxContext);
   }
