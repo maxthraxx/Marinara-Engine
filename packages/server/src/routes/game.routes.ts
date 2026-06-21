@@ -1667,6 +1667,8 @@ const SESSION_SUMMARY_MIN_TRANSCRIPT_CHARS = 256;
 const SESSION_CONCLUSION_MIN_OUTPUT_TOKENS = 8192;
 const CAMPAIGN_PROGRESSION_MIN_OUTPUT_TOKENS = SESSION_CONCLUSION_MIN_OUTPUT_TOKENS;
 const GAME_GENERATION_TIMEOUT_MS = 4 * 60 * 1000;
+const GAME_ASSET_GENERATION_TIMEOUT_MS = 220 * 1000;
+const GAME_ASSET_PORTRAIT_CONCURRENCY = 2;
 
 class GameGenerationTimeoutError extends Error {
   constructor(label: string, timeoutMs: number) {
@@ -1706,6 +1708,36 @@ async function runGameChatComplete(
     clearTimeout(timeout);
     parentSignal?.removeEventListener("abort", abortFromParent);
   }
+}
+
+function createResponseAbortSignal(reply: FastifyReply, timeoutMs: number, label: string): AbortSignal {
+  const controller = new AbortController();
+  let finished = false;
+  const abort = (reason: Error) => {
+    if (!controller.signal.aborted) controller.abort(reason);
+  };
+  const timeout = setTimeout(() => {
+    abort(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds`));
+  }, timeoutMs);
+  timeout.unref?.();
+
+  const cleanup = () => {
+    clearTimeout(timeout);
+    reply.raw.off("finish", onFinish);
+    reply.raw.off("close", onClose);
+  };
+  const onFinish = () => {
+    finished = true;
+    cleanup();
+  };
+  const onClose = () => {
+    if (!finished) abort(new Error(`${label} cancelled because the client disconnected`));
+    cleanup();
+  };
+
+  reply.raw.once("finish", onFinish);
+  reply.raw.once("close", onClose);
+  return controller.signal;
 }
 const GAME_LOREBOOK_KEEPER_MIN_OUTPUT_TOKENS = 16_384;
 const GAME_LOREBOOK_KEEPER_MAX_ENTRIES = 32;
@@ -7418,8 +7450,13 @@ export async function gameRoutes(app: FastifyInstance) {
     return { items };
   });
 
-  app.post("/generate-assets", async (req) => {
+  app.post("/generate-assets", async (req, reply) => {
     const input = generateAssetsSchema.parse(req.body);
+    const assetAbortSignal = createResponseAbortSignal(
+      reply,
+      GAME_ASSET_GENERATION_TIMEOUT_MS,
+      "Game asset generation",
+    );
     const requestDebug = input.debugMode === true;
     const debugOverrideEnabled = requestDebug || isDebugAgentsEnabled();
     const debugLogsEnabled = debugOverrideEnabled || logger.isLevelEnabled("debug");
@@ -7528,7 +7565,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const generatedNpcAvatars: Array<{ name: string; avatarUrl: string }> = [];
 
     // ── Generate background ──
-    if (input.backgroundTag) {
+    if (!assetAbortSignal.aborted && input.backgroundTag) {
       const slug = generatedBackgroundSlug(input.backgroundTag);
       const promptOverride = promptOverrideById.get(gameImagePromptReviewId("background", slug));
 
@@ -7558,6 +7595,7 @@ export async function gameRoutes(app: FastifyInstance) {
         size: backgroundSize,
         promptOverride: promptOverride?.prompt,
         negativePromptOverride: promptOverride?.negativePrompt,
+        signal: assetAbortSignal,
       });
       if (tag) {
         generatedBackground = tag;
@@ -7579,7 +7617,7 @@ export async function gameRoutes(app: FastifyInstance) {
     }
 
     // ── Generate rare VN illustration ──
-    if (input.illustration) {
+    if (!assetAbortSignal.aborted && input.illustration) {
       const allMsgs = await chats.listMessages(input.chatId);
       const approxTurnNumber = Math.max(1, allMsgs.filter((message) => message.role === "user").length + 1);
       const sessionNumber = currentGameSessionNumber(meta);
@@ -7652,6 +7690,7 @@ export async function gameRoutes(app: FastifyInstance) {
           size: backgroundSize,
           promptOverride: promptOverride?.prompt,
           negativePromptOverride: promptOverride?.negativePrompt,
+          signal: assetAbortSignal,
         });
 
         if (tag) {
@@ -7681,7 +7720,7 @@ export async function gameRoutes(app: FastifyInstance) {
     }
 
     // ── Generate NPC avatars ──
-    if (input.npcsNeedingAvatars?.length) {
+    if (!assetAbortSignal.aborted && input.npcsNeedingAvatars?.length) {
       const forceNpcAvatarNames = new Set(
         (input.forceNpcAvatarNames ?? []).map((name) => normalizeJournalMatch(name)).filter(Boolean),
       );
@@ -7719,54 +7758,63 @@ export async function gameRoutes(app: FastifyInstance) {
         }
       }
 
-      for (const npc of input.npcsNeedingAvatars) {
-        const normalizedNpcName = normalizeJournalMatch(npc.name);
-        const forceNpcAvatar = forceNpcAvatarNames.has(normalizedNpcName);
-        const existingAvatarUrl = existingNpcAvatarByName.get(normalizeJournalMatch(npc.name));
-        if (!forceNpcAvatar && existingAvatarUrl) {
-          logger.info('[game/generate-assets] NPC avatar exists, skipping generation: "%s"', npc.name);
-          generatedNpcAvatars.push({ name: npc.name, avatarUrl: existingAvatarUrl });
-          continue;
-        }
+      let nextNpcIndex = 0;
+      const runPortraitWorker = async () => {
+        while (!assetAbortSignal.aborted) {
+          const npc = input.npcsNeedingAvatars?.[nextNpcIndex++];
+          if (!npc) return;
 
-        const libAvatar = findCharAvatarFuzzy(npc.name, charAvatarByName);
-        if (!forceNpcAvatar && libAvatar) {
-          generatedNpcAvatars.push({ name: npc.name, avatarUrl: libAvatar });
-          continue;
-        }
-        const metadataNpc = findNpcRecordByName(currentNpcs, npc.name);
-        const presentCharacter = findRecordByName(presentCharacters, npc.name);
-        const avatarUrl = await generateNpcPortrait({
-          chatId: input.chatId,
-          npcName: npc.name,
-          appearance: npc.description,
-          gender: npc.gender ?? metadataNpc?.gender ?? optionalTrimmedString(presentCharacter?.gender),
-          pronouns: npc.pronouns ?? metadataNpc?.pronouns ?? optionalTrimmedString(presentCharacter?.pronouns),
-          artStyle,
-          imgSource,
-          imgModel,
-          imgBaseUrl,
-          imgApiKey,
-          imgService: imgServiceHint,
-          imgEndpointId,
-          imgComfyWorkflow,
-          imgDefaults,
-          styleProfiles,
-          styleProfileId,
-          debugLog: debugLogsEnabled ? debugLog : undefined,
-          promptOverridesStorage: createPromptOverridesStorage(app.db),
-          size: portraitSize,
-          promptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name))?.prompt,
-          negativePromptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name))?.negativePrompt,
-          force: forceNpcAvatar,
-        });
-        if (avatarUrl) {
-          generatedNpcAvatars.push({
-            name: npc.name,
-            avatarUrl: `${avatarUrl.split("?")[0]}?v=${Date.now()}`,
+          const normalizedNpcName = normalizeJournalMatch(npc.name);
+          const forceNpcAvatar = forceNpcAvatarNames.has(normalizedNpcName);
+          const existingAvatarUrl = existingNpcAvatarByName.get(normalizeJournalMatch(npc.name));
+          if (!forceNpcAvatar && existingAvatarUrl) {
+            logger.info('[game/generate-assets] NPC avatar exists, skipping generation: "%s"', npc.name);
+            generatedNpcAvatars.push({ name: npc.name, avatarUrl: existingAvatarUrl });
+            continue;
+          }
+
+          const libAvatar = findCharAvatarFuzzy(npc.name, charAvatarByName);
+          if (!forceNpcAvatar && libAvatar) {
+            generatedNpcAvatars.push({ name: npc.name, avatarUrl: libAvatar });
+            continue;
+          }
+          const metadataNpc = findNpcRecordByName(currentNpcs, npc.name);
+          const presentCharacter = findRecordByName(presentCharacters, npc.name);
+          const avatarUrl = await generateNpcPortrait({
+            chatId: input.chatId,
+            npcName: npc.name,
+            appearance: npc.description,
+            gender: npc.gender ?? metadataNpc?.gender ?? optionalTrimmedString(presentCharacter?.gender),
+            pronouns: npc.pronouns ?? metadataNpc?.pronouns ?? optionalTrimmedString(presentCharacter?.pronouns),
+            artStyle,
+            imgSource,
+            imgModel,
+            imgBaseUrl,
+            imgApiKey,
+            imgService: imgServiceHint,
+            imgEndpointId,
+            imgComfyWorkflow,
+            imgDefaults,
+            styleProfiles,
+            styleProfileId,
+            debugLog: debugLogsEnabled ? debugLog : undefined,
+            promptOverridesStorage: createPromptOverridesStorage(app.db),
+            size: portraitSize,
+            promptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name))?.prompt,
+            negativePromptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name))?.negativePrompt,
+            force: forceNpcAvatar,
+            signal: assetAbortSignal,
           });
+          if (avatarUrl) {
+            generatedNpcAvatars.push({
+              name: npc.name,
+              avatarUrl: `${avatarUrl.split("?")[0]}?v=${Date.now()}`,
+            });
+          }
         }
-      }
+      };
+      const portraitWorkerCount = Math.min(GAME_ASSET_PORTRAIT_CONCURRENCY, input.npcsNeedingAvatars.length);
+      await Promise.all(Array.from({ length: portraitWorkerCount }, () => runPortraitWorker()));
 
       // Persist avatar URLs to NPC list in metadata
       if (generatedNpcAvatars.length > 0) {

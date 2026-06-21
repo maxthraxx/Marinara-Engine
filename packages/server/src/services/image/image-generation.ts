@@ -94,6 +94,8 @@ export interface ImageGenRequest {
   referenceImages?: string[];
   /** Request a transparent image background when the provider/model supports it. */
   transparentBackground?: boolean;
+  /** Optional caller-owned abort signal for cancelling long image requests. */
+  signal?: AbortSignal;
 }
 
 export interface ImageGenResult {
@@ -244,6 +246,11 @@ function withImageGenerationDeadline<T>(promise: Promise<T>): Promise<T> {
   return Promise.race([promise, deadline]).finally(() => {
     if (timeout) clearTimeout(timeout);
   });
+}
+
+function imageRequestSignal(request: Pick<ImageGenRequest, "signal">): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(IMAGE_GEN_TIMEOUT);
+  return request.signal ? AbortSignal.any([request.signal, timeoutSignal]) : timeoutSignal;
 }
 
 function normalizeImageUrl(url: string | URL): string {
@@ -549,9 +556,7 @@ async function readOpenAIImageResult(
   };
   const item = data.data?.[0];
   const b64 = item?.b64_json ?? item?.image_base64;
-  if (!b64 && item?.url) {
-    return downloadImageUrl(item.url, request.allowLocalUrls);
-  }
+  if (!b64 && item?.url) return downloadImageUrl(item.url, request.allowLocalUrls, request.signal);
   if (!b64) {
     const fields = item
       ? Object.keys(item).join(", ")
@@ -564,7 +569,11 @@ async function readOpenAIImageResult(
   return { base64: b64, mimeType: "image/png", ext: "png" };
 }
 
-async function downloadImageUrl(imageUrl: string, allowLocalUrls = false): Promise<ImageGenResult> {
+async function downloadImageUrl(
+  imageUrl: string,
+  allowLocalUrls = false,
+  signal?: AbortSignal,
+): Promise<ImageGenResult> {
   if (imageUrl.trim().startsWith("data:")) {
     return decodeImageDataUrl(imageUrl);
   }
@@ -572,7 +581,7 @@ async function downloadImageUrl(imageUrl: string, allowLocalUrls = false): Promi
   const normalizedImageUrl = normalizeImageUrl(imageUrl);
   const imgResp = await imageFetch(
     normalizedImageUrl,
-    { signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT) },
+    { signal: imageRequestSignal({ signal }) },
     { allowLocal: allowLocalUrls },
   );
   if (!imgResp.ok) {
@@ -635,7 +644,7 @@ async function generateOpenAI(baseUrl: string, apiKey: string, request: ImageGen
           Authorization: `Bearer ${apiKey}`,
         },
         body: formData,
-        signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+        signal: imageRequestSignal(request),
       },
       { allowLocal: request.allowLocalUrls },
     );
@@ -670,7 +679,7 @@ async function generateOpenAI(baseUrl: string, apiKey: string, request: ImageGen
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -704,7 +713,7 @@ async function generateXAI(baseUrl: string, apiKey: string, request: ImageGenReq
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -717,7 +726,7 @@ async function generateXAI(baseUrl: string, apiKey: string, request: ImageGenReq
   const data = (await resp.json()) as { data?: Array<{ b64_json?: string; url?: string }> };
   const result = data.data?.[0];
   if (result?.b64_json) return { base64: result.b64_json, mimeType: "image/png", ext: "png" };
-  if (result?.url) return downloadImageUrl(result.url, request.allowLocalUrls);
+  if (result?.url) return downloadImageUrl(result.url, request.allowLocalUrls, request.signal);
 
   throw new Error("No image data in xAI response");
 }
@@ -759,7 +768,7 @@ async function generateNanoGPT(baseUrl: string, apiKey: string, request: ImageGe
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -772,7 +781,7 @@ async function generateNanoGPT(baseUrl: string, apiKey: string, request: ImageGe
   const data = (await resp.json()) as { data?: Array<{ b64_json?: string; url?: string }> };
   const result = data.data?.[0];
   if (result?.b64_json) return { base64: result.b64_json, mimeType: "image/png", ext: "png" };
-  if (result?.url) return downloadImageUrl(result.url, request.allowLocalUrls);
+  if (result?.url) return downloadImageUrl(result.url, request.allowLocalUrls, request.signal);
 
   throw new Error("No image data in NanoGPT response");
 }
@@ -787,7 +796,7 @@ async function generatePollinations(request: ImageGenRequest): Promise<ImageGenR
   if (request.negativePrompt) params.set("negative", request.negativePrompt);
 
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(request.prompt)}?${params}`;
-  const resp = await imageFetch(url, { signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT) });
+  const resp = await imageFetch(url, { signal: imageRequestSignal(request) });
 
   if (!resp.ok) {
     throw new Error(`Pollinations image generation failed (${resp.status})`);
@@ -860,7 +869,7 @@ async function generateHorde(baseUrl: string, apiKey: string, request: ImageGenR
       method: "POST",
       headers: hordeHeaders(apiKey),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -881,7 +890,7 @@ async function generateHorde(baseUrl: string, apiKey: string, request: ImageGenR
       hordeUrl(baseUrl, `generate/check/${encodeURIComponent(jobId)}`),
       {
         headers: hordeHeaders(apiKey),
-        signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+        signal: imageRequestSignal(request),
       },
       { allowLocal: request.allowLocalUrls },
     );
@@ -913,7 +922,7 @@ async function generateHorde(baseUrl: string, apiKey: string, request: ImageGenR
     hordeUrl(baseUrl, `generate/status/${encodeURIComponent(jobId)}`),
     {
       headers: hordeHeaders(apiKey),
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -933,7 +942,7 @@ async function generateHorde(baseUrl: string, apiKey: string, request: ImageGenR
 
   const image = generation.img.trim();
   if (image.startsWith("data:")) return decodeImageDataUrl(image);
-  if (/^https?:\/\//i.test(image)) return downloadImageUrl(image, request.allowLocalUrls);
+  if (/^https?:\/\//i.test(image)) return downloadImageUrl(image, request.allowLocalUrls, request.signal);
 
   const mimeType = detectImageMimeType(image);
   return { base64: image, mimeType, ext: imageExtensionFromMimeType(mimeType) };
@@ -1058,7 +1067,7 @@ async function generateStability(baseUrl: string, apiKey: string, request: Image
         Accept: "image/*",
       },
       body: formData,
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -1099,7 +1108,7 @@ async function generateStabilityV1(baseUrl: string, apiKey: string, request: Ima
         Accept: "application/json",
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -1137,7 +1146,7 @@ async function generateTogetherAI(baseUrl: string, apiKey: string, request: Imag
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -1271,7 +1280,7 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -1551,7 +1560,7 @@ async function generateOpenRouter(baseUrl: string, apiKey: string, request: Imag
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -1616,7 +1625,7 @@ async function generateOpenRouter(baseUrl: string, apiKey: string, request: Imag
     );
   }
 
-  return downloadImageUrl(imageUrl, request.allowLocalUrls);
+  return downloadImageUrl(imageUrl, request.allowLocalUrls, request.signal);
 }
 
 /**
@@ -1646,7 +1655,7 @@ async function generateViaChatCompletions(
         stream: false,
         temperature: 0.7,
       }),
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
   );
@@ -1670,7 +1679,7 @@ async function generateViaChatCompletions(
     throw new Error(`No image URL found in proxy response: ${content.slice(0, 200)}`);
   }
 
-  return downloadImageUrl(imageUrl, request.allowLocalUrls);
+  return downloadImageUrl(imageUrl, request.allowLocalUrls, request.signal);
 }
 
 // ── ComfyUI ──
@@ -1799,7 +1808,7 @@ function replaceComfyUiPlaceholders(value: unknown, replacements: Record<string,
   return value;
 }
 
-async function uploadComfyReferenceImage(base: string, reference: string): Promise<string> {
+async function uploadComfyReferenceImage(base: string, reference: string, signal?: AbortSignal): Promise<string> {
   const decoded = decodeReferenceImage(reference);
   const imageBytes = Buffer.from(decoded.base64, "base64");
   const hash = createHash("sha256").update(imageBytes).digest("hex").slice(0, 16);
@@ -1812,7 +1821,7 @@ async function uploadComfyReferenceImage(base: string, reference: string): Promi
   const resp = await localImageBackendFetch(`${base}/upload/image`, {
     method: "POST",
     body: formData,
-    signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+    signal: imageRequestSignal({ signal }),
   });
 
   if (!resp.ok) {
@@ -1892,7 +1901,7 @@ async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promi
     if (i === 0) replacements["%reference_image%"] = reference;
 
     if (workflowJson.includes(namePlaceholder) || (i === 0 && workflowJson.includes("%reference_image_name%"))) {
-      const uploadedName = await uploadComfyReferenceImage(base, reference);
+      const uploadedName = await uploadComfyReferenceImage(base, reference, request.signal);
       replacements[namePlaceholder] = uploadedName;
       if (i === 0) replacements["%reference_image_name%"] = uploadedName;
     }
@@ -1904,7 +1913,7 @@ async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promi
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt: resolvedWorkflow }),
-    signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+    signal: imageRequestSignal(request),
   });
 
   if (!queueResp.ok) {
@@ -1919,7 +1928,7 @@ async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promi
     await new Promise((r) => setTimeout(r, 1000));
 
     const historyResp = await localImageBackendFetch(`${base}/history/${prompt_id}`, {
-      signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+      signal: imageRequestSignal(request),
     });
     if (!historyResp.ok) continue;
 
@@ -1941,7 +1950,7 @@ async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promi
           });
 
           const imgResp = await localImageBackendFetch(`${base}/view?${params}`, {
-            signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+            signal: imageRequestSignal(request),
           });
           if (!imgResp.ok) {
             throw new Error(`ComfyUI image fetch failed (${imgResp.status})`);
@@ -2026,7 +2035,7 @@ async function generateAutomatic1111(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT),
+    signal: imageRequestSignal(request),
   });
 
   if (!resp.ok) {

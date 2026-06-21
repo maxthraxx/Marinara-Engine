@@ -369,6 +369,8 @@ export interface NpcPortraitRequest {
   negativePromptOverride?: string;
   /** When true, overwrite an existing generated NPC portrait instead of reusing it. */
   force?: boolean;
+  /** Optional request-scoped abort signal. */
+  signal?: AbortSignal;
 }
 
 export type CompiledGameImagePrompt = {
@@ -480,6 +482,7 @@ export async function generateNpcPortrait(req: NpcPortraitRequest): Promise<stri
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        signal: req.signal,
       },
     );
 
@@ -545,6 +548,8 @@ export interface BackgroundGenRequest {
   size?: ImageGenerationSize;
   promptOverride?: string;
   negativePromptOverride?: string;
+  /** Optional request-scoped abort signal. */
+  signal?: AbortSignal;
 }
 
 export interface ChatBackgroundGenRequest extends BackgroundGenRequest {
@@ -582,6 +587,8 @@ export interface SceneIllustrationGenRequest {
   size?: ImageGenerationSize;
   promptOverride?: string;
   negativePromptOverride?: string;
+  /** Optional request-scoped abort signal. */
+  signal?: AbortSignal;
 }
 
 async function buildBackgroundRawPrompt(req: BackgroundGenRequest): Promise<string> {
@@ -786,6 +793,7 @@ export async function generateBackground(req: BackgroundGenRequest): Promise<str
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        signal: req.signal,
       },
     );
 
@@ -854,6 +862,7 @@ export async function generateChatBackground(req: ChatBackgroundGenRequest): Pro
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        signal: req.signal,
       },
     );
 
@@ -919,6 +928,7 @@ export async function generateSceneIllustration(req: SceneIllustrationGenRequest
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        signal: req.signal,
         referenceImages: req.referenceImages?.length ? req.referenceImages.slice(0, 4) : undefined,
       },
     );
