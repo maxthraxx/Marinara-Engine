@@ -2593,7 +2593,9 @@ export function ChatSettingsDrawer({
           </div>
         ) : (
           <p className="px-1 text-[0.625rem] text-[var(--muted-foreground)]">
-            All custom agents are active. Configure them below the other agent menus.
+            {isGame && !metadata.enableAgents
+              ? "All custom agents are already attached. Enable Agents to configure or run them."
+              : "All custom agents are active. Configure them below the other agent menus."}
           </p>
         )}
       </AgentCategorySection>
@@ -4864,6 +4866,7 @@ export function ChatSettingsDrawer({
                     />
                   </div>
                 </button>
+                {isGame && renderCustomAgentPicker()}
                 <AgentSettingsToggle
                   label="Review Agent Outputs"
                   description={
@@ -6217,7 +6220,6 @@ export function ChatSettingsDrawer({
                             })}
                           </div>
                         )}
-                        {renderCustomAgentPicker()}
                         {renderActiveCustomAgentSettingsCard()}
                       </div>
                     ) : (
