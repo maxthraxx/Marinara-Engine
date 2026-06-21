@@ -8,5 +8,5 @@ export const combatAgentManifest = {
   enabledByDefault: false,
   category: "misc",
   modeAllowlist: ["roleplay", "visual_novel"],
-  defaultTools: ["roll_dice", "update_game_state"],
+  defaultTools: ["roll_dice"],
 } satisfies BuiltInAgentManifest;

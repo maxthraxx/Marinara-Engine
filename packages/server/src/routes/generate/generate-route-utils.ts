@@ -123,21 +123,27 @@ export function buildLockedPersonaTrackerPatch({
   stats,
   status,
   inventory,
+  hasStats,
+  hasStatus,
+  hasInventory,
   snapshot,
   lockState,
 }: {
   stats: CharacterStat[];
   status: string;
   inventory: InventoryItem[];
+  hasStats?: boolean;
+  hasStatus?: boolean;
+  hasInventory?: boolean;
   snapshot: { personaStats?: unknown; playerStats?: unknown } | null | undefined;
   lockState: GameState | null | undefined;
 }) {
   const rawPatch: Record<string, unknown> = {};
-  if (stats.length > 0) rawPatch.personaStats = stats;
+  if (hasStats ?? stats.length > 0) rawPatch.personaStats = stats;
 
   const rawPlayerStatsPatch: Record<string, unknown> = {};
-  if (status) rawPlayerStatsPatch.status = status;
-  if (inventory.length > 0) rawPlayerStatsPatch.inventory = inventory;
+  if (hasStatus ?? !!status) rawPlayerStatsPatch.status = status;
+  if (hasInventory ?? inventory.length > 0) rawPlayerStatsPatch.inventory = inventory;
   if (Object.keys(rawPlayerStatsPatch).length > 0) rawPatch.playerStats = rawPlayerStatsPatch;
 
   const patch = applyTrackerFieldLocksToGameStatePatch(rawPatch, lockState);

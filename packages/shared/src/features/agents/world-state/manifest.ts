@@ -9,5 +9,5 @@ export const worldStateAgentManifest = {
   defaultInjectAsSection: true,
   category: "tracker",
   modeAllowlist: ["roleplay", "visual_novel"],
-  defaultTools: ["update_game_state"],
+  defaultTools: [],
 } satisfies BuiltInAgentManifest;

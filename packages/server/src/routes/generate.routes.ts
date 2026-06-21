@@ -426,6 +426,7 @@ function customAgentCanEmitResult(
     case "character_tracker_update":
     case "persona_stats_update":
     case "custom_tracker_update":
+    case "quest_update":
       return customAgentCanApplyResult(result, agents, builtInAgentTypes, "edit_trackers");
     case "image_prompt":
       return customAgentCanApplyResult(result, agents, builtInAgentTypes, "trigger_image_generation");
@@ -7804,6 +7805,7 @@ export async function generateRoutes(app: FastifyInstance) {
             if (
               result.success &&
               result.type === "game_state_update" &&
+              result.agentType !== "combat" &&
               result.data &&
               typeof result.data === "object" &&
               customAgentCanApplyResult(result, resolvedAgents, builtInAgentTypes, "edit_trackers")
@@ -7942,7 +7944,11 @@ export async function generateRoutes(app: FastifyInstance) {
             ) {
               try {
                 const ctData = result.data as Record<string, unknown>;
-                let chars = (ctData.presentCharacters as any[]) ?? [];
+                if (!Array.isArray(ctData.presentCharacters) || ctData.presentCharacters.length === 0) {
+                  logger.debug("[generate] character-tracker emitted no presentCharacters; keeping existing snapshot");
+                  continue;
+                }
+                let chars = ctData.presentCharacters as any[];
                 const snapBeforeUpdate = await gameStateStore.getByMessage(messageId, targetSwipeIndex);
                 const previousCharacterSnapshot =
                   snapBeforeUpdate ??
@@ -8211,9 +8217,12 @@ export async function generateRoutes(app: FastifyInstance) {
             ) {
               try {
                 const psData = result.data as Record<string, unknown>;
-                const bars = (psData.stats as any[]) ?? [];
-                const status = (psData.status as string) ?? "";
-                const inventory = (psData.inventory as any[]) ?? [];
+                const hasStats = Array.isArray(psData.stats);
+                const hasStatus = typeof psData.status === "string";
+                const hasInventory = Array.isArray(psData.inventory);
+                const bars = hasStats ? (psData.stats as any[]) : [];
+                const status = hasStatus ? psData.status : "";
+                const inventory = hasInventory ? (psData.inventory as any[]) : [];
 
                 // Ensure a snapshot exists for this (messageId, swipeIndex).
                 // If world-state didn't create one, updateByMessage clones the
@@ -8230,6 +8239,9 @@ export async function generateRoutes(app: FastifyInstance) {
                   stats: bars,
                   status,
                   inventory,
+                  hasStats,
+                  hasStatus,
+                  hasInventory,
                   snapshot: snap,
                   lockState: personaLockState,
                 });
@@ -8277,8 +8289,9 @@ export async function generateRoutes(app: FastifyInstance) {
             ) {
               try {
                 const ctData = result.data as Record<string, unknown>;
-                const rawFields = (ctData.fields as any[]) ?? [];
-                if (rawFields.length > 0) {
+                const hasFields = Array.isArray(ctData.fields);
+                const rawFields = hasFields ? (ctData.fields as any[]) : [];
+                if (hasFields) {
                   // Ensure a snapshot exists for this (messageId, swipeIndex)
                   let snap = await gameStateStore.getByMessage(messageId, targetSwipeIndex);
                   if (!snap) {

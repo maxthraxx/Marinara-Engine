@@ -2183,7 +2183,13 @@ async function applyRetryResultEffects(args: {
       }
     }
 
-    if (result.success && result.type === "game_state_update" && result.data && typeof result.data === "object") {
+    if (
+      result.success &&
+      result.type === "game_state_update" &&
+      result.agentType !== "combat" &&
+      result.data &&
+      typeof result.data === "object"
+    ) {
       try {
         const gs = result.data as Record<string, unknown>;
         const worldStatePatch: Record<string, unknown> = {};
@@ -2270,7 +2276,11 @@ async function applyRetryResultEffects(args: {
     ) {
       try {
         const ctData = result.data as Record<string, unknown>;
-        let presentCharacters = (ctData.presentCharacters as any[]) ?? [];
+        if (!Array.isArray(ctData.presentCharacters) || ctData.presentCharacters.length === 0) {
+          logger.debug("[retry-agents] character-tracker emitted no presentCharacters; keeping existing snapshot");
+          continue;
+        }
+        let presentCharacters = ctData.presentCharacters as any[];
         const previousSnapshot = await loadRetryTargetGameStateSnapshot();
         let previousCharacters: any[] = [];
         if (previousSnapshot?.presentCharacters) {
@@ -2311,14 +2321,20 @@ async function applyRetryResultEffects(args: {
     if (result.success && result.type === "persona_stats_update" && result.data && typeof result.data === "object") {
       try {
         const psData = result.data as Record<string, unknown>;
-        const bars = (psData.stats as any[]) ?? [];
-        const status = (psData.status as string) ?? "";
-        const inventory = (psData.inventory as any[]) ?? [];
+        const hasStats = Array.isArray(psData.stats);
+        const hasStatus = typeof psData.status === "string";
+        const hasInventory = Array.isArray(psData.inventory);
+        const bars = hasStats ? (psData.stats as any[]) : [];
+        const status = hasStatus ? psData.status : "";
+        const inventory = hasInventory ? (psData.inventory as any[]) : [];
         const latest = await loadRetryTargetGameStateSnapshot();
         const personaPatch = buildLockedPersonaTrackerPatch({
           stats: bars,
           status,
           inventory,
+          hasStats,
+          hasStatus,
+          hasInventory,
           snapshot: latest,
           lockState: latest ? parseGameStateRow(latest as Record<string, unknown>) : null,
         });
@@ -2451,8 +2467,9 @@ async function applyRetryResultEffects(args: {
     if (result.success && result.type === "custom_tracker_update" && result.data && typeof result.data === "object") {
       try {
         const ctData = result.data as Record<string, unknown>;
-        const rawFields = (ctData.fields as any[]) ?? [];
-        if (rawFields.length > 0) {
+        const hasFields = Array.isArray(ctData.fields);
+        const rawFields = hasFields ? (ctData.fields as any[]) : [];
+        if (hasFields) {
           const snap = await loadRetryTargetGameStateSnapshot();
           const customTrackerPatch = buildLockedPlayerStatsArrayPatch<any>({
             field: "customTrackerFields",

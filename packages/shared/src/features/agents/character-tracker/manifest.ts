@@ -9,5 +9,5 @@ export const characterTrackerAgentManifest = {
   enabledByDefault: false,
   defaultInjectAsSection: true,
   category: "tracker",
-  defaultTools: ["update_game_state"],
+  defaultTools: [],
 } satisfies BuiltInAgentManifest;

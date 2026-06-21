@@ -486,6 +486,7 @@ const CUSTOM_AGENT_RESULT_CAPABILITY: Partial<Record<AgentResultType, CustomAgen
   character_tracker_update: "edit_trackers",
   persona_stats_update: "edit_trackers",
   custom_tracker_update: "edit_trackers",
+  quest_update: "edit_trackers",
   game_state_update: "edit_trackers",
   image_prompt: "trigger_image_generation",
   prompt_patch: "edit_main_prompt",
