@@ -1625,6 +1625,7 @@ export async function generateRoutes(app: FastifyInstance) {
         let maxTokens = 4096;
         let topP: number | undefined = 1;
         let topK = 0;
+        let minP = 0;
         let frequencyPenalty = 0;
         let presencePenalty = 0;
         let showThoughts = true;
@@ -2016,6 +2017,7 @@ export async function generateRoutes(app: FastifyInstance) {
           maxTokens = assembled.parameters.maxTokens;
           topP = assembled.parameters.topP ?? 1;
           topK = assembled.parameters.topK ?? 0;
+          minP = assembled.parameters.minP ?? 0;
           frequencyPenalty = assembled.parameters.frequencyPenalty ?? 0;
           presencePenalty = assembled.parameters.presencePenalty ?? 0;
           showThoughts = assembled.parameters.showThoughts ?? true;
@@ -3375,6 +3377,7 @@ export async function generateRoutes(app: FastifyInstance) {
           if (typeof params.maxTokens === "number") maxTokens = params.maxTokens;
           topP = normalizeChatTopP(params.topP) ?? topP;
           if (typeof params.topK === "number") topK = params.topK;
+          if (typeof params.minP === "number") minP = params.minP;
           if (typeof params.frequencyPenalty === "number") frequencyPenalty = params.frequencyPenalty;
           if (typeof params.presencePenalty === "number") presencePenalty = params.presencePenalty;
           if (typeof params.showThoughts === "boolean") showThoughts = params.showThoughts;
@@ -3412,6 +3415,7 @@ export async function generateRoutes(app: FastifyInstance) {
           maxTokens = 16384;
           topP = 1;
           topK = 0;
+          minP = 0;
           frequencyPenalty = 0;
           presencePenalty = 0;
           reasoningEffort = "maximum";
@@ -5966,6 +5970,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     topK: providerTopK,
                     frequencyPenalty: frequencyPenalty || undefined,
                     presencePenalty: presencePenalty || undefined,
+                    minP: minP || undefined,
                     stop: stopSequences.length ? stopSequences : undefined,
                     tools: toolDefs,
                     enableCaching: conn.enableCaching === "true",
@@ -6122,6 +6127,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     topK: providerTopK,
                     frequencyPenalty: frequencyPenalty || undefined,
                     presencePenalty: presencePenalty || undefined,
+                    minP: minP || undefined,
                     stop: stopSequences.length ? stopSequences : undefined,
                     enableCaching: conn.enableCaching === "true",
                     cachingAtDepth: conn.cachingAtDepth ?? 5,
@@ -6178,6 +6184,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 topK: providerTopK,
                 frequencyPenalty: frequencyPenalty || undefined,
                 presencePenalty: presencePenalty || undefined,
+                minP: minP || undefined,
                 stop: stopSequences.length ? stopSequences : undefined,
                 stream: input.streaming,
                 enableCaching: conn.enableCaching === "true",

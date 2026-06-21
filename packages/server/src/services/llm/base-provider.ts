@@ -90,6 +90,7 @@ export interface ChatOptions {
   maxContext?: number;
   topP?: number;
   topK?: number;
+  minP?: number;
   frequencyPenalty?: number;
   presencePenalty?: number;
   stream?: boolean;
