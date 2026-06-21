@@ -51,6 +51,7 @@ interface STWorldInfoEntry {
   useRegex?: boolean;
   preventRecursion?: boolean;
   excludeRecursion?: boolean;
+  delayUntilRecursion?: boolean;
   locked?: boolean;
   extensions?: Record<string, unknown>;
 }
@@ -206,9 +207,9 @@ function resolveProbability(entry: STWorldInfoEntry): number | null {
 }
 
 export function resolveSelectiveLogic(value: unknown): "and" | "or" | "not" {
-  const logicMap: Record<number, "and" | "or" | "not"> = { 0: "and", 1: "or", 2: "not" };
+  const logicMap: Record<number, "and" | "or" | "not"> = { 0: "or", 1: "not", 2: "not", 3: "and" };
   if (typeof value === "string" && ["and", "or", "not"].includes(value)) return value as "and" | "or" | "not";
-  return logicMap[typeof value === "number" ? value : 0] ?? "and";
+  return logicMap[typeof value === "number" ? value : 0] ?? "or";
 }
 
 export function resolvePosition(value: unknown): number {
@@ -217,8 +218,45 @@ export function resolvePosition(value: unknown): number {
     if (value === "at_depth" || value === "depth") return 2;
     return 0;
   }
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2) return value;
+  const positionMap: Record<number, number> = {
+    0: 0, // ST before_char
+    1: 1, // ST after_char
+    2: 0, // ST ANTop
+    3: 1, // ST ANBottom
+    4: 2, // ST @D / at-depth
+    5: 0, // ST EMTop
+    6: 1, // ST EMBottom
+  };
+  if (typeof value === "number" && Number.isInteger(value)) return positionMap[value] ?? 0;
   return 0;
+}
+
+function escapeRegexLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parseSlashDelimitedRegex(value: string): { source: string } | null {
+  const match = value.match(/^\/(.+)\/([dgimsuvy]*)$/u);
+  const source = match?.[1];
+  return source ? { source } : null;
+}
+
+function hasSlashDelimitedRegex(keys: string[]): boolean {
+  return keys.some((key) => parseSlashDelimitedRegex(key) !== null);
+}
+
+function normalizeRegexKeys(
+  keys: string[],
+  options: { useRegex: boolean; entryUsesRegex: boolean; matchWholeWords: boolean },
+): string[] {
+  if (!options.useRegex) return keys;
+  return keys.map((key) => {
+    const parsed = parseSlashDelimitedRegex(key);
+    if (parsed) return parsed.source;
+    if (options.entryUsesRegex) return key;
+    const escaped = escapeRegexLiteral(key);
+    return options.matchWholeWords ? `\\b${escaped}\\b` : escaped;
+  });
 }
 
 function detectCategory(entries: STWorldInfoEntry[], name?: string): LorebookCategory {
@@ -369,19 +407,37 @@ export async function importSTLorebook(
   for (const entry of entryList) {
     // Resolve fields that differ between ST World Info format and V2 Character Book format
     const rawKeys = entry.key ?? entry.keys;
-    const resolvedKeys = asStringArray(rawKeys);
+    const rawResolvedKeys = asStringArray(rawKeys);
     const rawSecondary = entry.keysecondary ?? entry.secondary_keys;
-    const resolvedSecondaryKeys = asStringArray(rawSecondary);
+    const rawResolvedSecondaryKeys = asStringArray(rawSecondary);
     const resolvedName = nonEmptyString(entry.comment, entry.name) ?? `Entry ${imported + 1}`;
     // ST uses `disable` (inverted), V2 uses `enabled`
     const resolvedEnabled = entry.disable != null ? !entry.disable : (entry.enabled ?? true);
-    const resolvedOrder = asNumber(entry.order ?? entry.insertion_order ?? entry.uid ?? entry.id, 100);
+    const resolvedOrder = asNumber(entry.order ?? entry.insertion_order, 100);
     // V2 position can be string ("before_char"/"after_char") — map to number
     const resolvedPosition = resolvePosition(entry.position);
     // Role can be a number (ST) or string (V2)
     const resolvedRole = resolveLorebookEntryRole(entry.role);
     const resolvedCaseSensitive = entry.caseSensitive ?? entry.case_sensitive ?? false;
     const resolvedMatchWholeWords = entry.matchWholeWords ?? entry.match_whole_words ?? false;
+    const entryUsesRegex = Boolean(entry.useRegex ?? entry.regex ?? false);
+    const resolvedUseRegex =
+      entryUsesRegex || hasSlashDelimitedRegex(rawResolvedKeys) || hasSlashDelimitedRegex(rawResolvedSecondaryKeys);
+    const vectorizedOnly = entry.vectorized === true;
+    const resolvedKeys = vectorizedOnly
+      ? []
+      : normalizeRegexKeys(rawResolvedKeys, {
+          useRegex: resolvedUseRegex,
+          entryUsesRegex,
+          matchWholeWords: resolvedMatchWholeWords,
+        });
+    const resolvedSecondaryKeys = vectorizedOnly
+      ? []
+      : normalizeRegexKeys(rawResolvedSecondaryKeys, {
+          useRegex: resolvedUseRegex,
+          entryUsesRegex,
+          matchWholeWords: resolvedMatchWholeWords,
+        });
     const sanitizedContent = normalizeString(entry.content);
     const sanitizedDescription = normalizeString(entry.description);
 
@@ -400,7 +456,7 @@ export async function importSTLorebook(
       scanDepth: asNullableNumber(entry.scanDepth ?? entry.scan_depth),
       matchWholeWords: resolvedMatchWholeWords,
       caseSensitive: resolvedCaseSensitive,
-      useRegex: Boolean(entry.useRegex ?? entry.regex ?? false),
+      useRegex: resolvedUseRegex,
       position: resolvedPosition,
       depth: asNumber(entry.depth, 4),
       order: resolvedOrder,
@@ -416,7 +472,9 @@ export async function importSTLorebook(
       dynamicState: {},
       activationConditions: [],
       schedule: null,
-      preventRecursion: Boolean(entry.preventRecursion ?? entry.excludeRecursion ?? false),
+      preventRecursion: Boolean(entry.preventRecursion ?? false),
+      excludeRecursion: Boolean(entry.excludeRecursion ?? false),
+      delayUntilRecursion: Boolean(entry.delayUntilRecursion ?? false),
       locked: Boolean(entry.locked ?? false),
     };
 

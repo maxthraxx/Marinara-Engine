@@ -15,11 +15,23 @@ import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
 import { createPromptsStorage } from "../storage/prompts.storage.js";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "./import-timestamps.js";
 import { resolveLorebookEntryRole } from "./lorebook-role.js";
-import { resolvePosition, resolveSelectiveLogic } from "./st-lorebook.importer.js";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from "../../utils/security.js";
+
+function resolveNativeSelectiveLogic(value: unknown): "and" | "or" | "not" {
+  return value === "or" || value === "not" ? value : "and";
+}
+
+function resolveNativePosition(value: unknown): number {
+  if (typeof value === "string") {
+    if (value === "after_char") return 1;
+    if (value === "at_depth" || value === "depth") return 2;
+    return 0;
+  }
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2 ? value : 0;
+}
 
 // Decode a base64 data URL into validated image bytes. Returns null if the
 // payload is missing, malformed, or not a recognized image type — so callers
@@ -465,11 +477,11 @@ async function importLorebook(data: unknown, db: DB) {
       return {
         name: String(e.name ?? ""),
         content: String(e.content ?? ""),
-        // CodeRabbit-flagged: description, ephemeral, locked, and preventRecursion
+        // CodeRabbit-flagged: description, ephemeral, locked, and recursion flags
         // were absent from the previous map, so an exported lorebook would lose
         // these fields on re-import. Knowledge-router matching uses description,
         // ephemeral controls auto-disable countdown, locked protects entries
-        // from the Lorebook Keeper agent, and preventRecursion gates recursive
+        // from the Lorebook Keeper agent, and recursion flags gate recursive
         // scanning — all behaviors that should round-trip.
         description: String(e.description ?? ""),
         keys: Array.isArray(e.keys) ? e.keys.map(String) : [],
@@ -477,7 +489,7 @@ async function importLorebook(data: unknown, db: DB) {
         enabled: e.enabled !== false,
         constant: Boolean(e.constant),
         selective: Boolean(e.selective),
-        selectiveLogic: resolveSelectiveLogic(e.selectiveLogic),
+        selectiveLogic: resolveNativeSelectiveLogic(e.selectiveLogic),
         probability: e.probability != null ? Number(e.probability) : null,
         scanDepth: e.scanDepth != null ? Number(e.scanDepth) : null,
         matchWholeWords: Boolean(e.matchWholeWords),
@@ -492,7 +504,7 @@ async function importLorebook(data: unknown, db: DB) {
           ? e.generationTriggerFilters.map(String)
           : [],
         additionalMatchingSources: readMatchingSources(e.additionalMatchingSources),
-        position: resolvePosition(e.position),
+        position: resolveNativePosition(e.position),
         depth: Number(e.depth ?? 4),
         order: Number(e.order ?? 100),
         role: resolveLorebookEntryRole(e.role),
@@ -505,6 +517,8 @@ async function importLorebook(data: unknown, db: DB) {
         folderId: newFolderId,
         locked: Boolean(e.locked),
         preventRecursion: Boolean(e.preventRecursion),
+        excludeRecursion: Boolean(e.excludeRecursion),
+        delayUntilRecursion: Boolean(e.delayUntilRecursion),
         excludeFromVectorization: Boolean(e.excludeFromVectorization),
         tag: String(e.tag ?? ""),
         relationships: (e.relationships as any) ?? {},

@@ -203,6 +203,8 @@ const CREATE_TABLES: string[] = [
     activation_conditions TEXT NOT NULL DEFAULT '[]',
     schedule TEXT,
     prevent_recursion TEXT NOT NULL DEFAULT 'false',
+    exclude_recursion TEXT NOT NULL DEFAULT 'false',
+    delay_until_recursion TEXT NOT NULL DEFAULT 'false',
     exclude_from_vectorization TEXT NOT NULL DEFAULT 'false',
     embedding TEXT,
     created_at TEXT NOT NULL,
@@ -628,6 +630,16 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
   {
     table: "lorebook_entries",
     column: "prevent_recursion",
+    definition: "TEXT NOT NULL DEFAULT 'false'",
+  },
+  {
+    table: "lorebook_entries",
+    column: "exclude_recursion",
+    definition: "TEXT NOT NULL DEFAULT 'false'",
+  },
+  {
+    table: "lorebook_entries",
+    column: "delay_until_recursion",
     definition: "TEXT NOT NULL DEFAULT 'false'",
   },
   {

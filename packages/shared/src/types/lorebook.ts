@@ -191,6 +191,10 @@ export interface LorebookEntry {
   locked: boolean;
   /** When true, this entry's content won't trigger further entries during recursive scanning */
   preventRecursion: boolean;
+  /** When true, this entry cannot be activated by recursive scanning */
+  excludeRecursion: boolean;
+  /** When true, this entry only activates during recursive scanning */
+  delayUntilRecursion: boolean;
   /** Sub-category tag for the entry (e.g. "location", "item", "lore", "quest") */
   tag: string;
   /** Relationships to other entries: { entryId: relationshipType } */

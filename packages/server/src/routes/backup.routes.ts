@@ -197,7 +197,16 @@ function asStringArray(value: unknown): string[] {
 }
 
 function stSelectiveLogic(value: unknown): number {
-  return value === "or" ? 1 : value === "not" ? 2 : 0;
+  if (value === "or") return 0;
+  if (value === "not") return 2;
+  return 3;
+}
+
+function stPosition(value: unknown): number {
+  const position = Number(value ?? 0);
+  if (position === 2) return 4;
+  if (position === 1) return 1;
+  return 0;
 }
 
 function stRole(value: unknown): number {
@@ -218,7 +227,7 @@ function buildCompatibleLorebookExport(lb: Record<string, any>) {
       selective: entry.selective === true,
       selectiveLogic: stSelectiveLogic(entry.selectiveLogic),
       order: Number(entry.order ?? 100),
-      position: Number(entry.position ?? 0),
+      position: stPosition(entry.position),
       depth: Number(entry.depth ?? 4),
       probability: entry.probability ?? null,
       scanDepth: entry.scanDepth ?? null,
@@ -230,6 +239,10 @@ function buildCompatibleLorebookExport(lb: Record<string, any>) {
       sticky: entry.sticky ?? null,
       cooldown: entry.cooldown ?? null,
       delay: entry.delay ?? null,
+      useRegex: entry.useRegex === true,
+      preventRecursion: entry.preventRecursion === true,
+      excludeRecursion: entry.excludeRecursion === true,
+      delayUntilRecursion: entry.delayUntilRecursion === true,
     };
   });
 

@@ -157,6 +157,8 @@ function parseEntryRow(row: Record<string, unknown>) {
     useRegex: row.useRegex === "true",
     locked: row.locked === "true",
     preventRecursion: row.preventRecursion === "true",
+    excludeRecursion: row.excludeRecursion === "true",
+    delayUntilRecursion: row.delayUntilRecursion === "true",
     excludeFromVectorization: row.excludeFromVectorization === "true",
     folderId: (row.folderId as string | null | undefined) ?? null,
     keys: parseStringArray(row.keys),
@@ -565,6 +567,8 @@ export function createLorebooksStorage(db: DB) {
         schedule: input.schedule ? JSON.stringify(input.schedule) : null,
         locked: String(input.locked ?? false),
         preventRecursion: String(input.preventRecursion ?? false),
+        excludeRecursion: String(input.excludeRecursion ?? false),
+        delayUntilRecursion: String(input.delayUntilRecursion ?? false),
         excludeFromVectorization: String(input.excludeFromVectorization ?? false),
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -647,6 +651,9 @@ export function createLorebooksStorage(db: DB) {
       if (input.schedule !== undefined) updates.schedule = input.schedule ? JSON.stringify(input.schedule) : null;
       if (input.locked !== undefined) updates.locked = String(input.locked);
       if (input.preventRecursion !== undefined) updates.preventRecursion = String(input.preventRecursion);
+      if (input.excludeRecursion !== undefined) updates.excludeRecursion = String(input.excludeRecursion);
+      if (input.delayUntilRecursion !== undefined)
+        updates.delayUntilRecursion = String(input.delayUntilRecursion);
       if (input.excludeFromVectorization !== undefined)
         updates.excludeFromVectorization = String(input.excludeFromVectorization);
       if (shouldClearEmbedding) updates.embedding = null;

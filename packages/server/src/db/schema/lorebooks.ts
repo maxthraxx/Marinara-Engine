@@ -164,6 +164,12 @@ export const lorebookEntries = sqliteTable("lorebook_entries", {
   /** When true, this entry's content won't trigger further entries during recursive scanning */
   preventRecursion: text("prevent_recursion").notNull().default("false"),
 
+  /** When true, recursive scanning cannot activate this entry */
+  excludeRecursion: text("exclude_recursion").notNull().default("false"),
+
+  /** When true, only recursive scanning can activate this entry */
+  delayUntilRecursion: text("delay_until_recursion").notNull().default("false"),
+
   /** When true, bulk vectorization skips this entry and semantic matching ignores stored vectors */
   excludeFromVectorization: text("exclude_from_vectorization").notNull().default("false"),
 

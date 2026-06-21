@@ -373,6 +373,8 @@ export interface ScanOptions {
   additionalMatchingSourceText?: Partial<Record<LorebookMatchingSource, string>>;
   /** Ignore sticky/cooldown/delay runtime state for preview/debug scans. */
   ignoreTiming?: boolean;
+  /** True while scanning content surfaced by a prior lorebook activation. */
+  recursionPass?: boolean;
   /** Random source for probability gates; injectable for deterministic tests. */
   random?: () => number;
 }
@@ -398,6 +400,7 @@ export function scanForActivatedEntries(
     generationTriggers = ["chat"],
     additionalMatchingSourceText = {},
     ignoreTiming = false,
+    recursionPass = false,
     random = Math.random,
   } = options;
   const filterContext: LorebookFilterValueContext = {
@@ -424,6 +427,9 @@ export function scanForActivatedEntries(
   };
 
   for (const entry of entries) {
+    if (entry.delayUntilRecursion && !recursionPass) continue;
+    if (entry.excludeRecursion && recursionPass) continue;
+
     const timingState = timingStates.get(entry.id);
 
     if (!ignoreTiming && timingState?.stickyCount && timingState.stickyCount > 0) {
@@ -504,6 +510,8 @@ export function scanForActivatedEntries(
   if (chatEmbedding && chatEmbedding.length > 0) {
     for (const entry of entries) {
       if (!entry.enabled || entry.constant || activatedIds.has(entry.id)) continue;
+      if (entry.delayUntilRecursion && !recursionPass) continue;
+      if (entry.excludeRecursion && recursionPass) continue;
       if (entry.excludeFromVectorization) continue;
       if (!entry.embedding || entry.embedding.length === 0) continue;
       const timingState = timingStates.get(entry.id);
@@ -554,9 +562,9 @@ export function recursiveScan(
     if (!newContent) break;
 
     // Scan remaining entries against the content of activated entries
-    const remaining = entries.filter((e) => !activatedIds.has(e.id));
+    const remaining = entries.filter((e) => !activatedIds.has(e.id) && !e.excludeRecursion);
     const newMessages: ScanMessage[] = [{ role: "system", content: newContent }];
-    const newActivated = scanForActivatedEntries(newMessages, remaining, options);
+    const newActivated = scanForActivatedEntries(newMessages, remaining, { ...options, recursionPass: true });
 
     if (newActivated.length === 0) break;
 

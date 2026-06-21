@@ -734,10 +734,15 @@ export function resolveBudgetAndRecursivelyActivateLorebookEntriesWithDiagnostic
     const recursiveContent = recursiveContentParts.join("\n");
     if (!recursiveContent) break;
 
-    const remaining = entries.filter((entry) => !processedIds.has(entry.id) && !state.selectedIds.has(entry.id));
+    const remaining = entries.filter(
+      (entry) => !processedIds.has(entry.id) && !state.selectedIds.has(entry.id) && !entry.excludeRecursion,
+    );
     if (remaining.length === 0) break;
 
-    frontier = scanForActivatedEntries([{ role: "system", content: recursiveContent }], remaining, options);
+    frontier = scanForActivatedEntries([{ role: "system", content: recursiveContent }], remaining, {
+      ...options,
+      recursionPass: true,
+    });
   }
 
   return {

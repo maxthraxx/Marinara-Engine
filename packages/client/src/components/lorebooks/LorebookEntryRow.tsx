@@ -1117,6 +1117,8 @@ function buildEntrySavePayload(form: Partial<LorebookEntry>) {
     tag: form.tag,
     locked: form.locked,
     preventRecursion: form.preventRecursion,
+    excludeRecursion: form.excludeRecursion,
+    delayUntilRecursion: form.delayUntilRecursion,
     excludeFromVectorization: form.excludeFromVectorization,
   };
 }
