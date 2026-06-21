@@ -343,15 +343,26 @@ function handlePlay(
 ): MoveResult<UnoState, UnoMove> {
   const hand = state.hands[seatId];
   if (!hand) return fail("You are not seated in this game.");
+  if (state.status === "awaiting_post_draw") {
+    // After a voluntary draw the only playable card is the one just drawn. The
+    // model selects by face (color+value), so a hand holding duplicate faces
+    // could otherwise resolve to the wrong copy and be rejected — match the
+    // request against the drawn card directly and play that exact card.
+    const drawn = state.drawnCardId ? hand.find((c) => c.id === state.drawnCardId) : null;
+    const matchesDrawn =
+      !!drawn &&
+      (move.cardId
+        ? move.cardId === drawn.id
+        : !move.card || (move.card.color === drawn.color && move.card.value === drawn.value));
+    if (!drawn || !matchesDrawn) return fail("After drawing you may only play the card you drew, or pass.");
+    state.status = "awaiting_move";
+    state.drawnCardId = null;
+    return resolvePlay(state, seatId, drawn, move, events);
+  }
+
   const card = findHandCard(hand, move.cardId, move.card);
   if (!card) return fail("That card isn't in your hand.");
 
-  if (state.status === "awaiting_post_draw") {
-    if (card.id !== state.drawnCardId) return fail("After drawing you may only play the card you drew, or pass.");
-    state.status = "awaiting_move";
-    state.drawnCardId = null;
-    return resolvePlay(state, seatId, card, move, events);
-  }
   if (state.pendingDraw > 0) {
     if (!isStackable(card, state)) {
       const stackHint = state.config.stacking
@@ -740,13 +751,17 @@ function buildBoardSummary(state: UnoState, seatId: string): string {
     lines.push(`  • ${nameOf(state, s)}: ${state.hands[s]?.length ?? 0} cards${uno}${here}`);
   }
   lines.push(`Your hand: ${hand.length ? hand.map(cardLabel).join(", ") : "(empty)"}.`);
+  if (state.status === "awaiting_post_draw" && state.drawnCardId) {
+    const drawn = hand.find((c) => c.id === state.drawnCardId);
+    if (drawn) lines.push(`You just drew ${cardLabel(drawn)} — it's the only card you may play right now (or pass to keep it).`);
+  }
   return lines.join("\n");
 }
 
 function buildInstructions(state: UnoState, seatId: string): string {
   const parts: string[] = [];
   if (state.status === "awaiting_post_draw") {
-    parts.push("You just drew. Either play_card with the drawn card or pass_turn to keep it.");
+    parts.push("You just drew (see 'You just drew …' above). Either play_card with that exact card or pass_turn to keep it.");
   } else if (state.pendingDraw > 0) {
     parts.push("Resolve the draw penalty: draw_card to take it" + (state.config.stacking ? ", or stack a matching draw card with play_card." : "."));
   } else {

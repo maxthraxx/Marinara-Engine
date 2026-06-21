@@ -76,7 +76,12 @@ export async function turnGamesRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "Invalid move payload", details: parsed.error.flatten() });
     }
     const result = await applyTurnGameMove(app.db, chatId, parsed.data.move);
-    if (!result.ok) return reply.status(409).send(result);
+    if (!result.ok) {
+      // "No active game" is a missing resource (404, matching GET /state); an
+      // illegal move against a live game is a genuine conflict (409) and carries
+      // the legal moves the client can retry with.
+      return reply.status(result.legalMoves ? 409 : 404).send(result);
+    }
     return result;
   });
 
