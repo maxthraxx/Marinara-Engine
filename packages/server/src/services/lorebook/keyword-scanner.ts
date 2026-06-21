@@ -425,6 +425,23 @@ export function scanForActivatedEntries(
     probabilityDecisions.set(entry.id, passes);
     return passes;
   };
+  const getEntryScanText = (entry: LorebookEntry) => {
+    // Per-entry scan depth:
+    //   0    = explicit "scan all" (deliberate user choice) — scan full history
+    //   > 0  = scan that many recent messages
+    //   null = inherit the bounded global default (combinedText)
+    const baseEntryScanText =
+      entry.scanDepth === 0
+        ? messages.map((m) => m.content).join("\n")
+        : entry.scanDepth !== null && entry.scanDepth > 0
+          ? messages
+              .slice(-entry.scanDepth)
+              .map((m) => m.content)
+              .join("\n")
+          : combinedText;
+    const extraMatchingText = getAdditionalMatchingText(entry, additionalMatchingSourceText);
+    return extraMatchingText ? `${baseEntryScanText}\n${extraMatchingText}` : baseEntryScanText;
+  };
 
   for (const entry of entries) {
     if (entry.delayUntilRecursion && !recursionPass) continue;
@@ -459,22 +476,7 @@ export function scanForActivatedEntries(
       continue;
     }
 
-    // Per-entry scan depth:
-    //   0    = explicit "scan all" (deliberate user choice) — scan full history
-    //   > 0  = scan that many recent messages
-    //   null = inherit the bounded global default (combinedText)
-    const baseEntryScanText =
-      entry.scanDepth === 0
-        ? messages.map((m) => m.content).join("\n")
-        : entry.scanDepth !== null && entry.scanDepth > 0
-          ? messages
-              .slice(-entry.scanDepth)
-              .map((m) => m.content)
-              .join("\n")
-          : combinedText;
-    const extraMatchingText = getAdditionalMatchingText(entry, additionalMatchingSourceText);
-    const entryScanText = extraMatchingText ? `${baseEntryScanText}\n${extraMatchingText}` : baseEntryScanText;
-
+    const entryScanText = getEntryScanText(entry);
     const matchOptions = {
       useRegex: entry.useRegex,
       matchWholeWords: entry.matchWholeWords,
@@ -519,6 +521,20 @@ export function scanForActivatedEntries(
 
       const similarity = cosineSimilarity(chatEmbedding, entry.embedding);
       if (similarity >= semanticThreshold) {
+        const entryScanText = getEntryScanText(entry);
+        const matchOptions = {
+          useRegex: entry.useRegex,
+          matchWholeWords: entry.matchWholeWords,
+          caseSensitive: entry.caseSensitive,
+          regexExecutor: vmRegexExecutor,
+        };
+        if (
+          entry.selective &&
+          entry.secondaryKeys.length > 0 &&
+          !testSecondaryKeys(entry.secondaryKeys, entryScanText, entry.selectiveLogic, matchOptions)
+        ) {
+          continue;
+        }
         if (!passesEntryProbability(entry)) continue;
         activated.push({
           entry,

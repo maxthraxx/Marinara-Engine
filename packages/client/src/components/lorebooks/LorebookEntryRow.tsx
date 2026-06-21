@@ -44,6 +44,7 @@ import type {
   LorebookFilterMode,
   LorebookFolder,
   LorebookMatchingSource,
+  SelectiveLogic,
 } from "@marinara-engine/shared";
 import {
   ExpandableTextarea,
@@ -122,6 +123,13 @@ const STATUS_DOT_COLOR: Record<EntryStatus, string> = {
   selective: "bg-violet-400",
   normal: "bg-emerald-400",
 };
+
+const SELECTIVE_LOGIC_OPTIONS: Array<{ value: SelectiveLogic; label: string }> = [
+  { value: "and", label: "AND Any" },
+  { value: "and_all", label: "AND All" },
+  { value: "not", label: "NOT Any" },
+  { value: "not_all", label: "NOT All" },
+];
 
 const STATUS_GUIDE: Array<{ status: EntryStatus; description: string }> = [
   { status: "normal", description: "Triggers when primary keys match the scanned text." },
@@ -1371,23 +1379,23 @@ function ExpandedDrawer({
         <FieldGroup
           label="Secondary Keys"
           icon={Key}
-          help="Additional keywords used with AND/OR/NOT logic. 'AND' means both primary AND secondary must match. 'NOT' means primary must match but secondary must NOT."
+          help="Additional keywords used with SillyTavern-style selective logic. Any means at least one secondary key; All means every secondary key."
         >
           <KeysEditor keys={form.secondaryKeys ?? []} onChange={(keys) => update({ secondaryKeys: keys })} />
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <label className="text-[0.6875rem] text-[var(--muted-foreground)]">Logic:</label>
-            {(["and", "or", "not"] as const).map((logic) => (
+            {SELECTIVE_LOGIC_OPTIONS.map((option) => (
               <button
-                key={logic}
-                onClick={() => update({ selectiveLogic: logic })}
+                key={option.value}
+                onClick={() => update({ selectiveLogic: option.value })}
                 className={cn(
                   "rounded-md px-2 py-0.5 text-[0.6875rem] font-medium transition-colors",
-                  form.selectiveLogic === logic
+                  (form.selectiveLogic === "or" ? "and" : form.selectiveLogic) === option.value
                     ? "bg-[var(--accent)] text-[var(--accent-foreground)]"
                     : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)]",
                 )}
               >
-                {logic.toUpperCase()}
+                {option.label}
               </button>
             ))}
           </div>

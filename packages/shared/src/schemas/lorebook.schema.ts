@@ -13,7 +13,7 @@ export const lorebookScopeSchema = z.object({
   chatIds: z.array(z.string()).default([]),
 });
 
-export const selectiveLogicSchema = z.enum(["and", "or", "not"]);
+export const selectiveLogicSchema = z.enum(["and", "and_all", "or", "not", "not_all"]);
 
 export const lorebookFilterModeSchema = z.enum(["any", "include", "exclude"]);
 

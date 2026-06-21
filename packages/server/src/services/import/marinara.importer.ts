@@ -20,8 +20,8 @@ import { join } from "path";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from "../../utils/security.js";
 
-function resolveNativeSelectiveLogic(value: unknown): "and" | "or" | "not" {
-  return value === "or" || value === "not" ? value : "and";
+function resolveNativeSelectiveLogic(value: unknown): "and" | "and_all" | "or" | "not" | "not_all" {
+  return value === "and_all" || value === "or" || value === "not" || value === "not_all" ? value : "and";
 }
 
 function resolveNativePosition(value: unknown): number {

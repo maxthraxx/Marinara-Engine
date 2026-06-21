@@ -197,9 +197,11 @@ function asStringArray(value: unknown): string[] {
 }
 
 function stSelectiveLogic(value: unknown): number {
-  if (value === "or") return 0;
+  if (value === "and" || value === "or") return 0;
+  if (value === "not_all") return 1;
   if (value === "not") return 2;
-  return 3;
+  if (value === "and_all") return 3;
+  return 0;
 }
 
 function stPosition(value: unknown): number {

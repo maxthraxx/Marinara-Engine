@@ -14,7 +14,7 @@ export interface LorebookScope {
 }
 
 /** Selective logic operators. */
-export type SelectiveLogic = "and" | "or" | "not";
+export type SelectiveLogic = "and" | "and_all" | "or" | "not" | "not_all";
 
 /** Role for injected lorebook content. */
 export type LorebookRole = "system" | "user" | "assistant";

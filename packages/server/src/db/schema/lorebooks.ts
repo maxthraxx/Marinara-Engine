@@ -108,7 +108,7 @@ export const lorebookEntries = sqliteTable("lorebook_entries", {
   enabled: text("enabled").notNull().default("true"),
   constant: text("constant").notNull().default("false"),
   selective: text("selective").notNull().default("false"),
-  selectiveLogic: text("selective_logic", { enum: ["and", "or", "not"] })
+  selectiveLogic: text("selective_logic", { enum: ["and", "and_all", "or", "not", "not_all"] })
     .notNull()
     .default("and"),
   probability: integer("probability"),

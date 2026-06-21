@@ -206,10 +206,17 @@ function resolveProbability(entry: STWorldInfoEntry): number | null {
   return asNullablePercentage(entry.probability);
 }
 
-export function resolveSelectiveLogic(value: unknown): "and" | "or" | "not" {
-  const logicMap: Record<number, "and" | "or" | "not"> = { 0: "or", 1: "not", 2: "not", 3: "and" };
-  if (typeof value === "string" && ["and", "or", "not"].includes(value)) return value as "and" | "or" | "not";
-  return logicMap[typeof value === "number" ? value : 0] ?? "or";
+export function resolveSelectiveLogic(value: unknown): "and" | "and_all" | "or" | "not" | "not_all" {
+  const logicMap: Record<number, "and" | "and_all" | "not" | "not_all"> = {
+    0: "and",
+    1: "not_all",
+    2: "not",
+    3: "and_all",
+  };
+  if (typeof value === "string" && ["and", "and_all", "or", "not", "not_all"].includes(value)) {
+    return value as "and" | "and_all" | "or" | "not" | "not_all";
+  }
+  return logicMap[typeof value === "number" ? value : 0] ?? "and";
 }
 
 export function resolvePosition(value: unknown): number {
