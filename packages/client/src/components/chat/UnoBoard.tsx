@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // UnoBoard — live, interactive UNO board (conversation mode)
 // ──────────────────────────────────────────────
-// A real React component driven by the turn-game store (fed by uno_state_patch
+// A real React component driven by the turn-game store (fed by turn_game_state_patch
 // SSE + an initial fetch). Renders the discard, active color, direction, each
 // seat's count, and the player's own hand with legal-move gating. Cards are
 // pure CSS/SVG (no image assets), so they scale crisply and theme cleanly.

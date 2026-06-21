@@ -24,6 +24,16 @@ const moveSchema = z.object({
   move: z.record(z.string(), z.unknown()),
 });
 
+// True while `/api/generate` is actively running for this chat (it owns the
+// bot-turn loop). State-mutating game endpoints must defer to it: the bot loop
+// and a route handler both read-modify-write the same snapshot across awaits,
+// so letting them interleave races the runner and loses updates. Mirrors the
+// guard in generate.routes.ts and the autonomous scheduler.
+function generationInProgress(app: FastifyInstance, chatId: string): boolean {
+  const active = (app as unknown as { activeGenerations?: Map<string, unknown> }).activeGenerations;
+  return active?.has(chatId) ?? false;
+}
+
 export async function turnGamesRoutes(app: FastifyInstance) {
   // Catalog of available games (for the client picker).
   app.get("/catalog", async () => ({ games: listTurnGames() }));
@@ -41,6 +51,9 @@ export async function turnGamesRoutes(app: FastifyInstance) {
   // Start a game.
   app.post("/:chatId/start", async (req, reply) => {
     const { chatId } = req.params as { chatId: string };
+    if (generationInProgress(app, chatId)) {
+      return reply.status(409).send({ error: "A turn is being generated for this chat — try again once it finishes." });
+    }
     const parsed = startSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return reply.status(400).send({ error: "Invalid start payload", details: parsed.error.flatten() });
@@ -55,6 +68,9 @@ export async function turnGamesRoutes(app: FastifyInstance) {
   // seats are advanced only by the server-authoritative bot loop.
   app.post("/:chatId/move", async (req, reply) => {
     const { chatId } = req.params as { chatId: string };
+    if (generationInProgress(app, chatId)) {
+      return reply.status(409).send({ error: "A turn is being generated for this chat — try again once it finishes." });
+    }
     const parsed = moveSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return reply.status(400).send({ error: "Invalid move payload", details: parsed.error.flatten() });
