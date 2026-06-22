@@ -2,6 +2,7 @@ import { createPortal } from "react-dom";
 import {
   Suspense,
   lazy,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -1118,19 +1119,20 @@ export function ChatRoleplaySurface({
   const topChromeRef = useRef<HTMLDivElement>(null);
   const inputChromeRef = useRef<HTMLDivElement>(null);
   const [chromeHeights, setChromeHeights] = useState({ top: 0, bottom: 0 });
-  const [authorNotesOpen, setAuthorNotesOpen] = useState(false);
+  const [authorNotesOpenOwner, setAuthorNotesOpenOwner] = useState<"expanded" | "compact" | null>(null);
   const isMobileToolbarViewport = useIsMobileToolbarViewport();
   const compactToolbarOwnsAuthorNotes = centerCompact || isMobileToolbarViewport;
-  const authorNotesOwnerRef = useRef(compactToolbarOwnsAuthorNotes);
+  const authorNotesOwner = compactToolbarOwnsAuthorNotes ? "compact" : "expanded";
+  const authorNotesOpen = authorNotesOpenOwner === authorNotesOwner;
+  const setAuthorNotesOpen = useCallback(
+    (open: boolean) => {
+      setAuthorNotesOpenOwner(open ? authorNotesOwner : null);
+    },
+    [authorNotesOwner],
+  );
   const hideEchoChamberOnMobile =
     sidebarOpen || rightPanelOpen || settingsOpen || filesOpen || galleryOpen || wizardOpen;
   const showSpriteOverlay = expressionAgentEnabled && spriteCharacterIds.length > 0 && spriteDisplayModes.length > 0;
-
-  useEffect(() => {
-    if (authorNotesOwnerRef.current === compactToolbarOwnsAuthorNotes) return;
-    authorNotesOwnerRef.current = compactToolbarOwnsAuthorNotes;
-    setAuthorNotesOpen(false);
-  }, [compactToolbarOwnsAuthorNotes]);
 
   useLayoutEffect(() => {
     const measure = () => {
@@ -1150,7 +1152,7 @@ export function ChatRoleplaySurface({
   useEffect(() => {
     initialLoadSettledRef.current = false;
     prevMessageKeysRef.current = new Set();
-    setAuthorNotesOpen(false);
+    setAuthorNotesOpenOwner(null);
   }, [activeChatId]);
 
   const [transcriptWindowStart, setTranscriptWindowStart] = useState<number | null>(null);

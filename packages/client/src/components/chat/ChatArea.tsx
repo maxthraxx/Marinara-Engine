@@ -100,30 +100,70 @@ const BUILT_IN_TRACKER_AGENT_ID_SET = new Set(
   BUILT_IN_AGENTS.filter((agent) => agent.category === "tracker" && !agent.libraryHidden).map((agent) => agent.id),
 );
 
-const NEWEST_MESSAGE_PAGE_INDEX = 0;
+function compareMessagesByCursor(left: MessageWithSwipes, right: MessageWithSwipes): number {
+  const createdAtCompare = left.createdAt.localeCompare(right.createdAt);
+  if (createdAtCompare !== 0) return createdAtCompare;
+  const leftRowid = typeof left.rowid === "number" ? left.rowid : 0;
+  const rightRowid = typeof right.rowid === "number" ? right.rowid : 0;
+  if (leftRowid !== rightRowid) return leftRowid - rightRowid;
+  return left.id.localeCompare(right.id);
+}
 
-// useChatMessages stores pages newest-first; individual pages remain chronological.
-function flattenNewestFirstMessagePages<T>(pages: T[][] | undefined, pageSize: number): T[] | undefined {
+function getPageNewestMessage(page: MessageWithSwipes[]): MessageWithSwipes | null {
+  return page[page.length - 1] ?? null;
+}
+
+function getNewestLoadedMessagePageIndex(pages: MessageWithSwipes[][] | undefined): number {
+  if (!pages?.length) return -1;
+  let newestIndex = 0;
+  for (let index = 1; index < pages.length; index += 1) {
+    const newest = getPageNewestMessage(pages[newestIndex] ?? []);
+    const candidate = getPageNewestMessage(pages[index] ?? []);
+    if (!newest || (candidate && compareMessagesByCursor(candidate, newest) > 0)) {
+      newestIndex = index;
+    }
+  }
+  return newestIndex;
+}
+
+function sortLoadedMessagePagesChronologically(pages: MessageWithSwipes[][]): MessageWithSwipes[][] {
+  return [...pages].sort((left, right) => {
+    const leftNewest = getPageNewestMessage(left);
+    const rightNewest = getPageNewestMessage(right);
+    if (!leftNewest && !rightNewest) return 0;
+    if (!leftNewest) return -1;
+    if (!rightNewest) return 1;
+    return compareMessagesByCursor(leftNewest, rightNewest);
+  });
+}
+
+function flattenLoadedMessagePages(
+  pages: MessageWithSwipes[][] | undefined,
+  pageSize: number,
+): MessageWithSwipes[] | undefined {
   if (!pages) return undefined;
-  const newestPage = pages[NEWEST_MESSAGE_PAGE_INDEX];
+  const newestPageIndex = getNewestLoadedMessagePageIndex(pages);
+  const newestPage = newestPageIndex >= 0 ? pages[newestPageIndex] : undefined;
   if (pageSize > 0 && pages.length === 1 && newestPage && newestPage.length > pageSize) {
     return newestPage.slice(-pageSize);
   }
-  return [...pages].reverse().flat();
+  return sortLoadedMessagePagesChronologically(pages).flat();
 }
 
-function getNewestLoadedMessagePageLength<T>(pages: T[][] | undefined): number {
-  return pages?.[NEWEST_MESSAGE_PAGE_INDEX]?.length ?? 0;
+function getNewestLoadedMessagePageLength(pages: MessageWithSwipes[][] | undefined): number {
+  const newestPageIndex = getNewestLoadedMessagePageIndex(pages);
+  return newestPageIndex >= 0 ? (pages?.[newestPageIndex]?.length ?? 0) : 0;
 }
 
-function trimNewestLoadedMessagePage<T>(
-  data: InfiniteData<T[]> | undefined,
+function trimNewestLoadedMessagePage(
+  data: InfiniteData<MessageWithSwipes[]> | undefined,
   pageSize: number,
-): InfiniteData<T[]> | undefined {
-  const newestPage = data?.pages[NEWEST_MESSAGE_PAGE_INDEX];
+): InfiniteData<MessageWithSwipes[]> | undefined {
+  const newestPageIndex = getNewestLoadedMessagePageIndex(data?.pages);
+  const newestPage = newestPageIndex >= 0 ? data?.pages[newestPageIndex] : undefined;
   if (!data || !newestPage || newestPage.length <= pageSize) return data;
   const pages = [...data.pages];
-  pages[NEWEST_MESSAGE_PAGE_INDEX] = newestPage.slice(-pageSize);
+  pages[newestPageIndex] = newestPage.slice(-pageSize);
   return { ...data, pages };
 }
 
@@ -448,7 +488,7 @@ export function ChatArea() {
     refetch: refetchMessages,
   } = useChatMessages(activeChatId, messagePageSize, !!chat);
   const messages = useMemo<MessageWithSwipes[] | undefined>(
-    () => flattenNewestFirstMessagePages(msgData?.pages, messagePageSize),
+    () => flattenLoadedMessagePages(msgData?.pages, messagePageSize),
     [messagePageSize, msgData?.pages],
   );
   const newestMessagePageLength = getNewestLoadedMessagePageLength(msgData?.pages);
