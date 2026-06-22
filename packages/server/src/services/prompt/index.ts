@@ -7,11 +7,16 @@ export { expandMarker, type MarkerContext, type ExpandedMarker } from "./marker-
 export {
   buildPromptMacroContext,
   collectCharacterDepthPromptEntries,
+  collectCharacterPostHistoryEntries,
+  resolvePromptMessageMacros,
+  resolvePromptIdleDuration,
+  resolvePromptLastGenerationType,
   resolveMacrosWithVariableSnapshot,
   resolveCharacterMacroData,
   type CharacterMacroData,
   type MacroResolutionTransaction,
+  type PromptMacroActivityMessage,
+  type PromptMacroMessage,
   type PromptDepthEntry,
 } from "./macro-context.js";
 export { mergeAdjacentMessages, squashLeadingSystemMessages } from "./merger.js";
-export { getCharacterDescriptionWithExtensions } from "./character-description-extensions.js";

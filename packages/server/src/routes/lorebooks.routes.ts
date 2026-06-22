@@ -5,6 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { existsSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { extname, join } from "path";
+import { logger } from "../lib/logger.js";
 import {
   createLorebookSchema,
   updateLorebookSchema,
@@ -14,18 +15,26 @@ import {
   updateLorebookFolderSchema,
   LOCAL_SIDECAR_CONNECTION_ID,
   stripMacroComments,
+  canReparentFolder,
   type CreateLorebookEntryInput,
   type LorebookEntryTimingState,
   type LorebookEntry,
+  type LorebookFolder,
 } from "@marinara-engine/shared";
 import type { ExportEnvelope } from "@marinara-engine/shared";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
+import { createGameStateStorage } from "../services/storage/game-state.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { processLorebooks } from "../services/lorebook/index.js";
 import { resolveGameLorebookScopeExclusions } from "../services/lorebook/game-lorebook-scope.js";
-import { buildPromptMacroContext, resolveMacrosWithVariableSnapshot } from "../services/prompt/index.js";
+import {
+  buildPromptMacroContext,
+  resolveMacrosWithVariableSnapshot,
+  resolvePromptIdleDuration,
+} from "../services/prompt/index.js";
+import { parseGameStateRow, resolveVisibleGameStateAnchor } from "./generate/generate-route-utils.js";
 import {
   syncCharacterBookFromLorebook,
   clearCharacterEmbeddedLorebook,
@@ -98,7 +107,18 @@ function asStringArray(value: unknown): string[] {
 }
 
 function stSelectiveLogic(value: unknown): number {
-  return value === "or" ? 1 : value === "not" ? 2 : 0;
+  if (value === "and" || value === "or") return 0;
+  if (value === "not_all") return 1;
+  if (value === "not") return 2;
+  if (value === "and_all") return 3;
+  return 0;
+}
+
+function stPosition(value: unknown): number {
+  const position = Number(value ?? 0);
+  if (position === 2) return 4;
+  if (position === 1) return 1;
+  return 0;
 }
 
 function stRole(value: unknown): number {
@@ -131,13 +151,14 @@ function buildCompatibleLorebookExport(lb: Record<string, unknown>, entries: Arr
       key: asStringArray(entry.keys),
       keysecondary: asStringArray(entry.secondaryKeys),
       comment: String(entry.name ?? `Entry ${index + 1}`),
+      description: String(entry.description ?? ""),
       content: String(entry.content ?? ""),
       disable: entry.enabled === false,
       constant: entry.constant === true,
       selective: entry.selective === true,
       selectiveLogic: stSelectiveLogic(entry.selectiveLogic),
       order: Number(entry.order ?? 100),
-      position: Number(entry.position ?? 0),
+      position: stPosition(entry.position),
       depth: Number(entry.depth ?? 4),
       probability: entry.probability ?? null,
       scanDepth: entry.scanDepth ?? null,
@@ -149,6 +170,14 @@ function buildCompatibleLorebookExport(lb: Record<string, unknown>, entries: Arr
       sticky: entry.sticky ?? null,
       cooldown: entry.cooldown ?? null,
       delay: entry.delay ?? null,
+      ephemeral: entry.ephemeral ?? null,
+      locked: entry.locked === true,
+      useRegex: entry.useRegex === true,
+      regex: entry.useRegex === true,
+      preventRecursion: entry.preventRecursion === true,
+      excludeRecursion: entry.excludeRecursion === true,
+      delayUntilRecursion: entry.delayUntilRecursion === true,
+      vectorized: entry.excludeFromVectorization !== true,
     };
   });
 
@@ -204,6 +233,8 @@ function buildTransferredEntryInput(
     groupWeight: entry.groupWeight,
     folderId: null,
     preventRecursion: entry.preventRecursion,
+    excludeRecursion: entry.excludeRecursion,
+    delayUntilRecursion: entry.delayUntilRecursion,
     excludeFromVectorization: entry.excludeFromVectorization,
     locked: entry.locked,
     tag: entry.tag,
@@ -547,17 +578,27 @@ export async function lorebooksRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>("/:id/folders", async (req, reply) => {
     const input = createLorebookFolderSchema.parse(req.body);
     if (input.parentFolderId !== null) {
-      // v1 reserves nesting for a follow-up PR. Accept the field shape but
-      // refuse to persist non-null values rather than silently dropping them.
-      return reply.status(400).send({ error: "Nested folders are not supported in this version" });
+      // Nesting under a parent: the parent must exist in this lorebook. A brand-new
+      // folder has no descendants, so a missing/foreign parent is the only risk
+      // here — the full descendant-cycle check runs on move (PATCH) below.
+      const parent = await storage.getFolder(input.parentFolderId, req.params.id);
+      if (!parent) {
+        return reply.status(400).send({ error: "Parent folder not found in this lorebook" });
+      }
     }
     return storage.createFolder(req.params.id, input);
   });
 
   app.patch<{ Params: { id: string; folderId: string } }>("/:id/folders/:folderId", async (req, reply) => {
     const input = updateLorebookFolderSchema.parse(req.body);
-    if (input.parentFolderId !== undefined && input.parentFolderId !== null) {
-      return reply.status(400).send({ error: "Nested folders are not supported in this version" });
+    // Re-parenting: validate against the lorebook's folder set (no self-parent,
+    // same lorebook, no descendant cycle) before persisting.
+    if (input.parentFolderId !== undefined) {
+      const folders = (await storage.listFolders(req.params.id)) as LorebookFolder[];
+      const check = canReparentFolder(folders, req.params.folderId, input.parentFolderId);
+      if (!check.ok) {
+        return reply.status(400).send({ error: check.reason });
+      }
     }
     // Scope by lorebookId so /lorebooks/A/folders/B can't update folder B if
     // it actually belongs to lorebook X.
@@ -566,11 +607,26 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.delete<{ Params: { id: string; folderId: string } }>("/:id/folders/:folderId", async (req, reply) => {
-    // Scope by lorebookId so a request to /lorebooks/A/folders/B cannot
-    // reach a folder belonging to lorebook X and reparent its entries.
-    await storage.removeFolder(req.params.folderId, req.params.id);
-    return reply.status(204).send();
+  app.delete<{ Params: { id: string; folderId: string }; Querystring: { cascade?: string } }>(
+    "/:id/folders/:folderId",
+    async (req, reply) => {
+      // Scope by lorebookId so a request to /lorebooks/A/folders/B cannot
+      // reach a folder belonging to lorebook X and reparent its entries.
+      // `?cascade=true` deletes the folder's whole subtree instead of promoting it.
+      const cascade = req.query.cascade === "true";
+      await storage.removeFolder(req.params.folderId, req.params.id, cascade);
+      return reply.status(204).send();
+    },
+  );
+
+  app.post<{ Params: { id: string; folderId: string } }>("/:id/folders/:folderId/clone", async (req, reply) => {
+    // Deep-clone the folder, its entries, and its whole sub-folder subtree into
+    // the same lorebook. Scoped by lorebookId so /lorebooks/A/folders/B can't
+    // clone a folder that belongs to lorebook X.
+    const existing = await storage.getFolder(req.params.folderId, req.params.id);
+    if (!existing) return reply.status(404).send({ error: "Folder not found" });
+    const created = await storage.cloneFolder(req.params.folderId, req.params.id);
+    return reply.status(201).send(created);
   });
 
   app.put<{ Params: { id: string } }>("/:id/folders/reorder", async (req, reply) => {
@@ -650,6 +706,23 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       content: typeof m.content === "string" ? m.content : "",
     }));
     const lastInput = [...scanMessages].reverse().find((message) => message.role === "user")?.content;
+    const gameStateForScan =
+      chat?.mode === "game"
+        ? await (async () => {
+            try {
+              const visibleAnchor = resolveVisibleGameStateAnchor(chatMessages);
+              const row = await createGameStateStorage(app.db).getForGeneration(chatId, {
+                preferLatestVisible: true,
+                visibleAnchor,
+              });
+              return row
+                ? (parseGameStateRow(row as Record<string, unknown>) as unknown as Record<string, unknown>)
+                : null;
+            } catch {
+              return null;
+            }
+          })()
+        : null;
 
     const lorebookMacroResolvers = await (async () => {
       try {
@@ -679,6 +752,8 @@ export async function lorebooksRoutes(app: FastifyInstance) {
           variables: {},
           lastInput,
           chatId,
+          lastGenerationType: "lorebook_scan",
+          idleDuration: resolvePromptIdleDuration(scanSourceMessages),
         });
         return {
           resolveContent: (value: string) => resolveMacrosWithVariableSnapshot(value, macroContext),
@@ -688,7 +763,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       }
     })();
 
-    const result = await processLorebooks(app.db, scanMessages, null, {
+    const result = await processLorebooks(app.db, scanMessages, gameStateForScan, {
       chatId,
       characterIds,
       personaId,
@@ -737,6 +812,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
         lorebookId: (e as Record<string, unknown>).lorebookId,
         order: (e as Record<string, unknown>).order,
         constant: (e as Record<string, unknown>).constant,
+        selective: (e as Record<string, unknown>).selective === true,
       })),
       totalTokens: result.totalTokensEstimate,
       totalEntries: result.totalEntries,
@@ -804,6 +880,11 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       ].join(", ");
       return `${e.name ?? ""}${keys ? ` [${keys}]` : ""}\n${e.content ?? ""}`.trim();
     });
+    const existingEmbeddingDimension = body.onlyMissing
+      ? ((allEntries as Array<Record<string, unknown>>)
+          .map((entry) => entry.embedding)
+          .find((embedding): embedding is unknown[] => Array.isArray(embedding) && embedding.length > 0)?.length ?? null)
+      : null;
 
     // Batch embed (most APIs support multiple texts per call)
     const BATCH_SIZE = 50;
@@ -811,7 +892,34 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
       const batchTexts = texts.slice(i, i + BATCH_SIZE);
       const batchEntries = entries.slice(i, i + BATCH_SIZE);
-      const embeddings = await provider.embed(batchTexts, embeddingModel);
+      let embeddings: number[][];
+      try {
+        embeddings = await provider.embed(batchTexts, embeddingModel);
+      } catch (error) {
+        logger.warn(error, "[lorebooks] Embedding batch failed");
+        return reply.status(502).send({
+          error: error instanceof Error ? error.message : "Lorebook embedding request failed",
+        });
+      }
+      const usableEmbeddingCount = embeddings.filter(
+        (embedding) => Array.isArray(embedding) && embedding.length > 0,
+      ).length;
+      if (embeddings.length !== batchTexts.length || usableEmbeddingCount !== batchTexts.length) {
+        return reply.status(502).send({
+          error: `Lorebook embedding request returned ${usableEmbeddingCount}/${batchTexts.length} usable vectors.`,
+        });
+      }
+      const batchEmbeddingDimension = embeddings.find((embedding) => embedding.length > 0)?.length ?? null;
+      if (
+        existingEmbeddingDimension &&
+        batchEmbeddingDimension &&
+        existingEmbeddingDimension !== batchEmbeddingDimension
+      ) {
+        return reply.status(409).send({
+          error:
+            "Embedding dimensions changed. Re-vectorize all entries instead of only missing entries before switching embedding models.",
+        });
+      }
       for (let j = 0; j < batchEntries.length; j++) {
         const entry = batchEntries[j] as Record<string, unknown>;
         if (embeddings[j]) {

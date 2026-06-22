@@ -68,10 +68,21 @@ function normalizePositiveInteger(value: unknown, fallback: number): number {
   return Math.max(1, Math.trunc(numeric));
 }
 
+function getExistingEmbeddingDimension(entries: LorebookEntry[]): number | null {
+  for (const entry of entries) {
+    if (entry.excludeFromVectorization) continue;
+    if (entry.embedding && entry.embedding.length > 0) {
+      return entry.embedding.length;
+    }
+  }
+  return null;
+}
+
 async function embedLorebookTexts(texts: string[], options: LorebookEmbeddingOptions): Promise<number[][]> {
   return embedMemoryRecallTexts(texts, {
     localEmbedder: options.localEmbedder ?? localEmbed,
     embeddingSource: options.embeddingSource,
+    signal: options.signal,
   });
 }
 
@@ -82,13 +93,24 @@ export async function warmLorebookEntryEmbeddings(
 ): Promise<LorebookEmbeddingWarmupResult> {
   const batchSize = normalizePositiveInteger(options.batchSize, DEFAULT_WARMUP_BATCH_SIZE);
   const candidates = entries
-    .filter((entry) => entry.enabled && (!entry.embedding || entry.embedding.length === 0))
+    .filter((entry) => entry.enabled && !entry.excludeFromVectorization && (!entry.embedding || entry.embedding.length === 0))
     .slice(0, batchSize);
   if (candidates.length === 0) return { attempted: 0, embedded: 0 };
 
   const texts = candidates.map(buildLorebookEntryEmbeddingText);
   const embeddings = await embedLorebookTexts(texts, options);
   if (embeddings.length === 0) return { attempted: candidates.length, embedded: 0 };
+
+  const embeddingDimension = embeddings.find((embedding) => embedding.length > 0)?.length ?? null;
+  const existingDimension = getExistingEmbeddingDimension(entries);
+  if (embeddingDimension && existingDimension && embeddingDimension !== existingDimension) {
+    logger.warn(
+      "[lorebook-embeddings] Skipping warmup because embedding dimension changed from %d to %d. Refresh lorebook embeddings before mixing embedding models.",
+      existingDimension,
+      embeddingDimension,
+    );
+    return { attempted: candidates.length, embedded: 0 };
+  }
 
   const storage = createLorebooksStorage(db);
   let embedded = 0;

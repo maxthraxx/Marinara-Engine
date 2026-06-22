@@ -72,6 +72,7 @@ type RelevantLorebook = Pick<
   | "enabled"
   | "scanDepth"
   | "tokenBudget"
+  | "entryLimit"
   | "recursiveScanning"
   | "maxRecursionDepth"
   | "isGlobal"
@@ -80,6 +81,7 @@ type RelevantLorebook = Pick<
   | "personaId"
   | "personaIds"
   | "chatId"
+  | "scope"
   | "sourceAgentId"
 >;
 
@@ -112,6 +114,27 @@ function safeJsonParse<T>(value: unknown, fallback: T): T {
 function readStringArray(value: unknown): string[] {
   if (Array.isArray(value)) return uniqueStrings(value.map(String));
   return uniqueStrings(safeJsonParse<string[]>(value, []));
+}
+
+function resolveLorebookCharacterIds(book: Pick<RelevantLorebook, "characterId" | "characterIds">): string[] {
+  return uniqueStrings([...(book.characterIds ?? []), book.characterId]);
+}
+
+function resolveLorebookPersonaIds(book: Pick<RelevantLorebook, "personaId" | "personaIds">): string[] {
+  return uniqueStrings([...(book.personaIds ?? []), book.personaId]);
+}
+
+function activeLorebookMatchesFilters(book: RelevantLorebook, filters: LorebookFilters): boolean {
+  if (!filters.activeLorebookIds?.includes(book.id)) return false;
+
+  const characterIds = resolveLorebookCharacterIds(book);
+  if (characterIds.length > 0) return characterIds.some((id) => filters.characterIds?.includes(id));
+
+  const personaIds = resolveLorebookPersonaIds(book);
+  if (personaIds.length > 0) return !!filters.personaId && personaIds.includes(filters.personaId);
+
+  if (book.chatId) return book.chatId === filters.chatId;
+  return true;
 }
 
 function pushSourceText(
@@ -176,7 +199,9 @@ async function buildLorebookMatchingContext(
 }
 
 export function filterRelevantLorebooks(lorebooks: RelevantLorebook[], filters?: LorebookFilters): RelevantLorebook[] {
-  const enabledBooks = lorebooks.filter((book) => book.enabled);
+  const enabledBooks = lorebooks.filter(
+    (book) => book.enabled && isLorebookScopeActiveForChat(book.scope, filters?.chatId),
+  );
   if (!filters) return enabledBooks;
 
   const excludedLorebookIds = new Set(filters.excludedLorebookIds ?? []);
@@ -186,7 +211,7 @@ export function filterRelevantLorebooks(lorebooks: RelevantLorebook[], filters?:
     if (excludedLorebookIds.has(book.id)) return false;
     if (book.sourceAgentId && excludedSourceAgentIds.has(book.sourceAgentId)) return false;
     if (book.isGlobal) return true;
-    if (filters.activeLorebookIds?.includes(book.id)) return true;
+    if (activeLorebookMatchesFilters(book, filters)) return true;
     if ((book.characterIds ?? []).some((id) => filters.characterIds?.includes(id))) return true;
     if (book.characterId && filters.characterIds?.includes(book.characterId)) return true;
     if (filters.personaId && (book.personaIds ?? []).includes(filters.personaId)) return true;
@@ -194,6 +219,24 @@ export function filterRelevantLorebooks(lorebooks: RelevantLorebook[], filters?:
     if (book.chatId && book.chatId === filters.chatId) return true;
     return false;
   });
+}
+
+function readLorebookScope(value: unknown): { mode: "all" | "disabled" | "specific"; chatIds: string[] } {
+  if (value && typeof value === "object") {
+    const raw = value as Record<string, unknown>;
+    return {
+      mode: raw.mode === "disabled" || raw.mode === "specific" ? raw.mode : "all",
+      chatIds: uniqueStrings(Array.isArray(raw.chatIds) ? raw.chatIds.map(String) : []),
+    };
+  }
+  return { mode: "all", chatIds: [] };
+}
+
+function isLorebookScopeActiveForChat(value: unknown, chatId?: string | null): boolean {
+  const scope = readLorebookScope(value);
+  if (scope.mode === "disabled") return false;
+  if (scope.mode === "specific") return !!chatId && scope.chatIds.includes(chatId);
+  return true;
 }
 
 function toTimingStateMap(states?: Record<string, LorebookEntryTimingState>): Map<string, EntryTimingState> {
@@ -338,6 +381,7 @@ type LorebookBudgetSelectionState = {
   selected: ActivatedEntry[];
   selectedIds: Set<string>;
   perLorebookTokens: Map<string, number>;
+  perLorebookEntryCounts: Map<string, number>;
   totalTokens: number;
 };
 
@@ -356,6 +400,7 @@ function createLorebookBudgetSelectionState(): LorebookBudgetSelectionState {
     selected: [],
     selectedIds: new Set(),
     perLorebookTokens: new Map(),
+    perLorebookEntryCounts: new Map(),
     totalTokens: 0,
   };
 }
@@ -365,6 +410,7 @@ function cloneLorebookBudgetSelectionState(state: LorebookBudgetSelectionState):
     selected: [...state.selected],
     selectedIds: new Set(state.selectedIds),
     perLorebookTokens: new Map(state.perLorebookTokens),
+    perLorebookEntryCounts: new Map(state.perLorebookEntryCounts),
     totalTokens: state.totalTokens,
   };
 }
@@ -425,19 +471,34 @@ function getBudgetSkipReason(exceedsLorebookBudget: boolean, exceedsGlobalBudget
   return "chat";
 }
 
+function normalizeLorebookEntryLimit(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT;
+  return Math.max(
+    LIMITS.LOREBOOK_ENTRY_LIMIT_MIN,
+    Math.min(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX, Math.trunc(parsed)),
+  );
+}
+
 function trySelectBudgetedLorebookEntry(
   candidate: ActivatedEntry,
   state: LorebookBudgetSelectionState,
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
 ): BudgetedLorebookEntrySelection {
   if (state.selectedIds.has(candidate.entry.id)) return { selected: false };
   if (maxEntries > 0 && state.selected.length >= maxEntries) return { selected: false };
 
+  const lorebookId = candidate.entry.lorebookId;
+  const lorebook = lorebooksById.get(lorebookId);
+  const lorebookEntryLimit = normalizeLorebookEntryLimit(lorebook?.entryLimit);
+  const lorebookEntryCount = state.perLorebookEntryCounts.get(lorebookId) ?? 0;
+  if (lorebookEntryCount >= lorebookEntryLimit) return { selected: false };
+
   const entryTokens = estimateLorebookTokens(candidate.entry.content);
-  const lorebookBudget = lorebooksById.get(candidate.entry.lorebookId)?.tokenBudget ?? 0;
-  const lorebookTokens = state.perLorebookTokens.get(candidate.entry.lorebookId) ?? 0;
+  const lorebookBudget = lorebook?.tokenBudget ?? 0;
+  const lorebookTokens = state.perLorebookTokens.get(lorebookId) ?? 0;
   const exceedsLorebookBudget = lorebookBudget > 0 && lorebookTokens + entryTokens > lorebookBudget;
   const exceedsGlobalBudget = tokenBudget > 0 && state.totalTokens + entryTokens > tokenBudget;
 
@@ -458,7 +519,8 @@ function trySelectBudgetedLorebookEntry(
 
   state.selected.push(candidate);
   state.selectedIds.add(candidate.entry.id);
-  state.perLorebookTokens.set(candidate.entry.lorebookId, lorebookTokens + entryTokens);
+  state.perLorebookTokens.set(lorebookId, lorebookTokens + entryTokens);
+  state.perLorebookEntryCounts.set(lorebookId, lorebookEntryCount + 1);
   state.totalTokens += entryTokens;
 
   return { selected: true, entry: candidate };
@@ -496,7 +558,7 @@ function toBudgetSkippedEntries(
 function selectBudgetedLorebookEntryBatch(
   candidates: ActivatedEntry[],
   baseState: LorebookBudgetSelectionState,
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
   resolveContent?: LorebookFinalContentResolver,
@@ -590,7 +652,7 @@ function selectBudgetedLorebookEntryBatch(
 
 export function resolveAndBudgetActivatedLorebookEntriesWithDiagnostics(
   activatedEntries: ActivatedEntry[],
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
   resolveContent?: LorebookFinalContentResolver,
@@ -614,7 +676,7 @@ export function resolveAndBudgetActivatedLorebookEntriesWithDiagnostics(
 
 export function resolveAndBudgetActivatedLorebookEntries(
   activatedEntries: ActivatedEntry[],
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
   resolveContent?: LorebookFinalContentResolver,
@@ -633,19 +695,25 @@ export function resolveBudgetAndRecursivelyActivateLorebookEntriesWithDiagnostic
   entries: LorebookEntry[],
   options: ScanOptions,
   maxDepth: number,
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
   resolveContent?: LorebookFinalContentResolver,
 ): { selected: ActivatedEntry[]; budgetSkippedEntries: LorebookBudgetSkippedEntry[] } {
   let state = createLorebookBudgetSelectionState();
   const processedIds = new Set<string>();
-  let frontier = scanForActivatedEntries(messages, entries, options);
+  const selectedGroups = new Set<string>();
+  const probabilityDecisions = options.probabilityDecisions ?? new Map<string, boolean>();
+  const scanOptions = { ...options, probabilityDecisions };
+  let frontier = scanForActivatedEntries(messages, entries, scanOptions);
   const budgetSkippedEntries: LorebookBudgetSkippedEntry[] = [];
 
   for (let depth = 0; frontier.length > 0; depth++) {
     const candidates = frontier.filter(
-      (candidate) => !processedIds.has(candidate.entry.id) && !state.selectedIds.has(candidate.entry.id),
+      (candidate) =>
+        !processedIds.has(candidate.entry.id) &&
+        !state.selectedIds.has(candidate.entry.id) &&
+        !(candidate.entry.group && selectedGroups.has(candidate.entry.group)),
     );
     for (const candidate of candidates) {
       processedIds.add(candidate.entry.id);
@@ -661,6 +729,9 @@ export function resolveBudgetAndRecursivelyActivateLorebookEntriesWithDiagnostic
     );
     state = selectedBatch.state;
     budgetSkippedEntries.push(...selectedBatch.budgetSkippedEntries);
+    for (const selected of selectedBatch.selectedFromCandidates) {
+      if (selected.entry.group) selectedGroups.add(selected.entry.group);
+    }
 
     const recursiveContentParts = selectedBatch.selectedFromCandidates
       .filter((selected) => !selected.entry.preventRecursion)
@@ -672,10 +743,19 @@ export function resolveBudgetAndRecursivelyActivateLorebookEntriesWithDiagnostic
     const recursiveContent = recursiveContentParts.join("\n");
     if (!recursiveContent) break;
 
-    const remaining = entries.filter((entry) => !processedIds.has(entry.id) && !state.selectedIds.has(entry.id));
+    const remaining = entries.filter(
+      (entry) =>
+        !processedIds.has(entry.id) &&
+        !state.selectedIds.has(entry.id) &&
+        !entry.excludeRecursion &&
+        !(entry.group && selectedGroups.has(entry.group)),
+    );
     if (remaining.length === 0) break;
 
-    frontier = scanForActivatedEntries([{ role: "system", content: recursiveContent }], remaining, options);
+    frontier = scanForActivatedEntries([{ role: "system", content: recursiveContent }], remaining, {
+      ...scanOptions,
+      recursionPass: true,
+    });
   }
 
   return {
@@ -689,7 +769,7 @@ export function resolveBudgetAndRecursivelyActivateLorebookEntries(
   entries: LorebookEntry[],
   options: ScanOptions,
   maxDepth: number,
-  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget">>,
+  lorebooksById: ReadonlyMap<string, Pick<Lorebook, "name" | "tokenBudget" | "entryLimit">>,
   tokenBudget: number,
   maxEntries: number,
   resolveContent?: LorebookFinalContentResolver,
@@ -819,9 +899,13 @@ export async function processLorebooks(
     gameState ?? null,
   );
 
-  // Scan for activated entries
+  // Scan for activated entries.
+  // Bound the default global scan window so a lorebook/entry that leaves
+  // scanDepth unset doesn't re-scan the full chat history every turn. An
+  // explicit per-entry/per-lorebook scanDepth 0 ("scan all") is still honored
+  // in keyword-scanner.ts.
   const scanOpts: ScanOptions = {
-    scanDepth: 0, // Scan all messages
+    scanDepth: LIMITS.LOREBOOK_DEFAULT_SCAN_DEPTH,
     gameState: gameState ?? null,
     chatEmbedding: options?.chatEmbedding ?? null,
     semanticThreshold: options?.semanticThreshold,
@@ -852,14 +936,14 @@ export async function processLorebooks(
         maxRecursionDepth,
         relevantLorebooksById,
         tokenBudget,
-        LIMITS.MAX_LOREBOOK_ENTRIES,
+        0,
         options?.resolveContent,
       )
     : resolveAndBudgetActivatedLorebookEntriesWithDiagnostics(
         scanForActivatedEntries(messages, allEntries, scanOpts),
         relevantLorebooksById,
         tokenBudget,
-        LIMITS.MAX_LOREBOOK_ENTRIES,
+        0,
         options?.resolveContent,
       );
   const finalActivated = budgetResult.selected;

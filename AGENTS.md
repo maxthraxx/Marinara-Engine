@@ -11,8 +11,11 @@ This file is a thin maintainer note for contributors using Codex. Canonical work
 
 - Start with `pnpm install`.
 - Run `pnpm check` as the baseline validation command.
-- Run `pnpm db:push` when server or database changes need schema verification.
 - Run `pnpm version:check` when you touch release metadata, version-bearing files, or README release references.
+
+## Temporary Tests
+
+- Do not keep `.test.ts` files in the repo. If an agent creates one for local proof, remove it after the test is done.
 
 ## Repo-Specific Cautions
 

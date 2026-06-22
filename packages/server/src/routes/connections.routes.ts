@@ -2,7 +2,16 @@
 // Routes: Connections
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { MODEL_LISTS, createConnectionSchema, inferImageSource } from "@marinara-engine/shared";
+import { existsSync } from "fs";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import { extname, join } from "path";
+import {
+  IMAGE_DEFAULTS_STORAGE_KEY,
+  MODEL_LISTS,
+  createConnectionSchema,
+  generationParametersSchema,
+  inferImageSource,
+} from "@marinara-engine/shared";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { fetchOpenAIChatGPTModels, getOpenAIChatGPTAuth } from "../services/llm/openai-chatgpt-auth.js";
@@ -10,9 +19,17 @@ import { buildGoogleVertexModelUrl, googleAuthHeadersForVertex } from "../servic
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { isImageLocalUrlsEnabled, isProviderLocalUrlsEnabled } from "../config/runtime-config.js";
 import { logDebugOverride } from "../lib/logger.js";
-import { normalizeLoopbackUrl, safeFetch } from "../utils/security.js";
+import {
+  assertInsideDir,
+  extensionFromImageMime,
+  isAllowedImageBuffer,
+  normalizeLoopbackUrl,
+  safeFetch,
+} from "../utils/security.js";
+import { DATA_DIR } from "../utils/data-dir.js";
 
 const CONNECTION_TEST_ERROR_PREVIEW_CHARS = 2000;
+const CONNECTION_IMAGES_DIR = join(DATA_DIR, "connections", "images");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -125,6 +142,28 @@ function normalizeConnectionTestBaseUrl(baseUrl: string, provider: string): stri
   }
 }
 
+function parseImageUpload(image: string): { buffer: Buffer; hintedExt: string } {
+  let base64 = image;
+  let hintedExt = "png";
+  if (base64.startsWith("data:")) {
+    const match = base64.match(/^data:image\/([\w.+-]+);base64,/i);
+    if (match?.[1]) {
+      hintedExt = match[1].replace("+xml", "");
+      base64 = base64.slice(base64.indexOf(",") + 1);
+    }
+  }
+  return { buffer: Buffer.from(base64, "base64"), hintedExt };
+}
+
+function getSafeConnectionImagePath(filename: string): string | null {
+  if (!filename || filename.includes("..") || filename.includes("/") || filename.includes("\\")) return null;
+  try {
+    return assertInsideDir(CONNECTION_IMAGES_DIR, join(CONNECTION_IMAGES_DIR, filename));
+  } catch {
+    return null;
+  }
+}
+
 function buildStabilityUrl(baseUrl: string, targetPath: string): string {
   try {
     const url = new URL(baseUrl);
@@ -189,6 +228,20 @@ export async function connectionsRoutes(app: FastifyInstance) {
     return storage.list();
   });
 
+  app.get<{ Params: { filename: string } }>("/images/file/:filename", async (req, reply) => {
+    const filepath = getSafeConnectionImagePath(req.params.filename);
+    if (!filepath || !existsSync(filepath)) return reply.status(404).send({ error: "Image not found" });
+
+    const buffer = await readFile(filepath);
+    const imageInfo = isAllowedImageBuffer(buffer, extname(filepath));
+    if (!imageInfo) return reply.status(404).send({ error: "Image not found" });
+
+    return reply
+      .header("Content-Type", imageInfo.mimeType)
+      .header("Cache-Control", "public, max-age=31536000, immutable")
+      .send(buffer);
+  });
+
   app.get<{ Params: { id: string } }>("/:id", async (req, reply) => {
     const conn = await storage.getById(req.params.id);
     if (!conn) return reply.status(404).send({ error: "Connection not found" });
@@ -206,6 +259,30 @@ export async function connectionsRoutes(app: FastifyInstance) {
     return storage.update(req.params.id, data);
   });
 
+  app.post<{ Params: { id: string } }>("/:id/image", async (req, reply) => {
+    const connection = await storage.getById(req.params.id);
+    if (!connection) return reply.status(404).send({ error: "Connection not found" });
+
+    const body = req.body as { image?: string };
+    if (!body.image) return reply.status(400).send({ error: "No image data provided" });
+
+    const { buffer, hintedExt } = parseImageUpload(body.image);
+    const imageInfo = isAllowedImageBuffer(buffer, `.${hintedExt}`);
+    if (!imageInfo) return reply.status(400).send({ error: "Unsupported or invalid connection image" });
+
+    const ext = extensionFromImageMime(imageInfo.mimeType);
+    await mkdir(CONNECTION_IMAGES_DIR, { recursive: true });
+    const filename = `connection-${req.params.id.replace(/[^a-zA-Z0-9_-]/g, "-")}-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}.${ext}`;
+    const filepath = assertInsideDir(CONNECTION_IMAGES_DIR, join(CONNECTION_IMAGES_DIR, filename));
+    await writeFile(filepath, buffer);
+
+    const updated = await storage.update(req.params.id, { imagePath: `/api/connections/images/file/${filename}` });
+    if (!updated) return reply.status(404).send({ error: "Connection not found" });
+    return updated;
+  });
+
   // Save default generation parameters for a connection
   app.put<{ Params: { id: string } }>("/:id/default-parameters", async (req, reply) => {
     const conn = await storage.getById(req.params.id);
@@ -214,7 +291,24 @@ export async function connectionsRoutes(app: FastifyInstance) {
     if (raw !== null && (typeof raw !== "object" || Array.isArray(raw))) {
       return reply.status(400).send({ error: "Body must be a JSON object or null" });
     }
-    const params = raw as Record<string, unknown> | null;
+    let params: Record<string, unknown> | null = null;
+    if (raw !== null) {
+      const parsed = generationParametersSchema.partial().safeParse(raw);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "Invalid generation parameters",
+          issues: parsed.error.issues.map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
+        });
+      }
+      params = { ...parsed.data };
+      const rawRecord = raw as Record<string, unknown>;
+      if (Object.prototype.hasOwnProperty.call(rawRecord, IMAGE_DEFAULTS_STORAGE_KEY)) {
+        params[IMAGE_DEFAULTS_STORAGE_KEY] = rawRecord[IMAGE_DEFAULTS_STORAGE_KEY];
+      }
+    }
     await storage.updateDefaultParameters(req.params.id, params);
     return { success: true };
   });
@@ -240,22 +334,35 @@ export async function connectionsRoutes(app: FastifyInstance) {
     const debugLog = (message: string, ...args: any[]) => logDebugOverride(requestDebug, message, ...args);
     const start = Date.now();
     try {
-      // Claude (Subscription) has no HTTP endpoint — verify the local SDK
-      // can be loaded and that an auth source exists, then return success.
       if (conn.provider === "claude_subscription") {
-        try {
-          await import("@anthropic-ai/claude-agent-sdk");
-        } catch (err) {
+        if (!conn.model) {
           return {
             success: false,
-            message: `Claude Agent SDK unavailable: ${err instanceof Error ? err.message : "Unknown error"}`,
+            message: "No model configured. Set a Claude subscription model first.",
             latencyMs: Date.now() - start,
             modelName: null,
           };
         }
+        const provider = createLLMProvider(
+          conn.provider,
+          "",
+          conn.apiKey,
+          conn.maxContext,
+          conn.openrouterProvider,
+          conn.maxTokensOverride,
+          conn.claudeFastMode === "true",
+        );
+        let responseText = "";
+        for await (const chunk of provider.chat([{ role: "user", content: "Reply with OK." }], {
+          model: conn.model,
+          maxTokens: 32,
+          stream: false,
+        })) {
+          responseText += chunk;
+        }
         return {
           success: true,
-          message: "Claude Agent SDK loaded. The first chat will fail if `claude login` has not been run on this host.",
+          message: `Claude Agent SDK completed a real request: ${responseText.trim().slice(0, 120) || "OK"}`,
           latencyMs: Date.now() - start,
           modelName: conn.model,
         };
@@ -294,6 +401,9 @@ export async function connectionsRoutes(app: FastifyInstance) {
       }
       if (conn.provider === "google_vertex") {
         Object.assign(headers, await googleAuthHeadersForVertex(conn.apiKey));
+      }
+      if (conn.provider === "anthropic") {
+        headers["anthropic-version"] = "2023-06-01";
       }
 
       const imageSource =
@@ -431,7 +541,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
       const lowerBase = baseUrl.toLowerCase();
       const sanitizeProviderBody = (body: string): string => {
         if (body.includes("<html") || body.includes("<!DOCTYPE")) {
-          return "Provider returned an HTML page instead of JSON. Check the Base URL for this image service.";
+          const hint =
+            conn.provider === "image_generation"
+              ? "Check the Base URL for this image service."
+              : "Check the Base URL for this connection.";
+          return `Provider returned an HTML page instead of JSON. ${hint}`;
         }
         return body.slice(0, 300);
       };
@@ -908,9 +1022,22 @@ function readPositiveInteger(value: unknown): number | undefined {
 
 function readOpenAICompatibleModelLimits(model: Record<string, unknown>): Pick<RemoteModel, "context" | "maxOutput"> {
   const topProvider = readProviderMetadataRecord(model.top_provider);
-  const context = readPositiveInteger(model.context_length) ?? readPositiveInteger(topProvider?.context_length);
+  const context =
+    readPositiveInteger(model.context_length) ??
+    readPositiveInteger(model.context_window) ??
+    readPositiveInteger(model.contextWindow) ??
+    readPositiveInteger(model.max_input_tokens) ??
+    readPositiveInteger(model.input_token_limit) ??
+    readPositiveInteger(model.inputTokenLimit) ??
+    readPositiveInteger(topProvider?.context_length);
   const maxOutput =
-    readPositiveInteger(topProvider?.max_completion_tokens) ?? readPositiveInteger(model.max_completion_tokens);
+    readPositiveInteger(topProvider?.max_completion_tokens) ??
+    readPositiveInteger(model.max_completion_tokens) ??
+    readPositiveInteger(model.max_output_tokens) ??
+    readPositiveInteger(model.max_tokens) ??
+    readPositiveInteger(model.maxOutputTokens) ??
+    readPositiveInteger(model.output_token_limit) ??
+    readPositiveInteger(model.outputTokenLimit);
 
   return {
     ...(context ? { context } : {}),
@@ -926,12 +1053,15 @@ function normalizeModelsResponse(provider: string, json: Record<string, unknown>
         name?: string;
         displayName?: string;
         supportedGenerationMethods?: string[];
+        inputTokenLimit?: number;
+        outputTokenLimit?: number;
       }>;
       return models
         .filter((m) => m.supportedGenerationMethods?.includes("generateContent"))
         .map((m) => ({
           id: (m.name ?? "").replace(/^models\//, ""),
           name: m.displayName ?? (m.name ?? "").replace(/^models\//, ""),
+          ...readOpenAICompatibleModelLimits(m as Record<string, unknown>),
         }))
         .filter((m) => m.id);
     }
@@ -942,12 +1072,15 @@ function normalizeModelsResponse(provider: string, json: Record<string, unknown>
         name?: string;
         displayName?: string;
         supportedActions?: { viewRestApi?: unknown };
+        inputTokenLimit?: number;
+        outputTokenLimit?: number;
       }>;
       return models
         .filter((m) => m.name?.includes("/models/"))
         .map((m) => ({
           id: (m.name ?? "").replace(/^.*\/models\//, ""),
           name: m.displayName ?? (m.name ?? "").replace(/^.*\/models\//, ""),
+          ...readOpenAICompatibleModelLimits(m as Record<string, unknown>),
         }))
         .filter((m) => m.id);
     }
@@ -958,12 +1091,15 @@ function normalizeModelsResponse(provider: string, json: Record<string, unknown>
         id?: string;
         display_name?: string;
         type?: string;
+        context_window?: number;
+        max_output_tokens?: number;
       }>;
       return data
         .filter((m) => m.type === "model" || m.id)
         .map((m) => ({
           id: m.id ?? "",
           name: m.display_name ?? m.id ?? "",
+          ...readOpenAICompatibleModelLimits(m as Record<string, unknown>),
         }))
         .filter((m) => m.id);
     }
@@ -974,20 +1110,33 @@ function normalizeModelsResponse(provider: string, json: Record<string, unknown>
       const data = (json.data ?? []) as Array<{
         id?: string;
         name?: string;
+        context_length?: number;
+        max_output_tokens?: number;
+        max_completion_tokens?: number;
       }>;
       if (data.length > 0) {
-        return data.map((m) => ({ id: m.id ?? "", name: m.name ?? m.id ?? "" })).filter((m) => m.id);
+        return data
+          .map((m) => ({
+            id: m.id ?? "",
+            name: m.name ?? m.id ?? "",
+            ...readOpenAICompatibleModelLimits(m as Record<string, unknown>),
+          }))
+          .filter((m) => m.id);
       }
 
       const models = (json.models ?? []) as Array<{
         name?: string;
         endpoints?: string[];
+        context_length?: number;
+        max_output_tokens?: number;
+        max_completion_tokens?: number;
       }>;
       return models
         .filter((m) => m.endpoints?.includes("chat"))
         .map((m) => ({
           id: m.name ?? "",
           name: m.name ?? "",
+          ...readOpenAICompatibleModelLimits(m as Record<string, unknown>),
         }))
         .filter((m) => m.id);
     }

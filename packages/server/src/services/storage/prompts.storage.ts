@@ -27,6 +27,19 @@ function resolveTimestamps(overrides?: TimestampOverrides | null) {
   };
 }
 
+function parseGenerationParameters(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+}
+
 export function createPromptsStorage(db: DB) {
   return {
     // ═══════════════════════════════════════════
@@ -54,6 +67,8 @@ export function createPromptsStorage(db: DB) {
         id,
         name: input.name,
         description: input.description ?? "",
+        conversationPrompt: input.conversationPrompt ?? "",
+        gamePrompt: input.gamePrompt ?? "",
         sectionOrder: JSON.stringify([]),
         groupOrder: JSON.stringify([]),
         variableGroups: JSON.stringify(input.variableGroups ?? []),
@@ -72,11 +87,25 @@ export function createPromptsStorage(db: DB) {
       const updateFields: Record<string, unknown> = { updatedAt: now() };
       if (data.name !== undefined) updateFields.name = data.name;
       if (data.description !== undefined) updateFields.description = data.description;
+      if (data.conversationPrompt !== undefined) updateFields.conversationPrompt = data.conversationPrompt;
+      if (data.gamePrompt !== undefined) updateFields.gamePrompt = data.gamePrompt;
       if (data.sectionOrder !== undefined) updateFields.sectionOrder = JSON.stringify(data.sectionOrder);
       if (data.groupOrder !== undefined) updateFields.groupOrder = JSON.stringify(data.groupOrder);
       if (data.variableGroups !== undefined) updateFields.variableGroups = JSON.stringify(data.variableGroups);
       if (data.variableValues !== undefined) updateFields.variableValues = JSON.stringify(data.variableValues);
-      if (data.parameters !== undefined) updateFields.parameters = JSON.stringify(data.parameters);
+      if (data.parameters !== undefined) {
+        const existingRows = await db
+          .select({ parameters: promptPresets.parameters })
+          .from(promptPresets)
+          .where(eq(promptPresets.id, id))
+          .limit(1);
+        const existingParameters = parseGenerationParameters(existingRows[0]?.parameters);
+        updateFields.parameters = JSON.stringify({
+          ...DEFAULT_GENERATION_PARAMS,
+          ...existingParameters,
+          ...data.parameters,
+        });
+      }
       if (data.wrapFormat !== undefined) updateFields.wrapFormat = data.wrapFormat;
       if (data.author !== undefined) updateFields.author = data.author;
       if ((data as any).defaultChoices !== undefined)
@@ -102,6 +131,8 @@ export function createPromptsStorage(db: DB) {
       const newPreset = await this.create({
         name: `${preset.name} (Copy)`,
         description: preset.description,
+        conversationPrompt: preset.conversationPrompt,
+        gamePrompt: preset.gamePrompt,
         variableGroups: JSON.parse(preset.variableGroups as string),
         variableValues: JSON.parse(preset.variableValues as string),
         parameters: JSON.parse(preset.parameters as string),
@@ -164,6 +195,8 @@ export function createPromptsStorage(db: DB) {
           multiSelect: v.multiSelect === "true",
           separator: v.separator,
           randomPick: v.randomPick === "true",
+          displayMode: v.displayMode === "buttons" || v.displayMode === "listbox" ? v.displayMode : "auto",
+          optionSort: v.optionSort === "alphabetical" ? "alphabetical" : "manual",
         });
       }
 
@@ -374,6 +407,8 @@ export function createPromptsStorage(db: DB) {
         multiSelect: String(input.multiSelect ?? false),
         separator: input.separator ?? ", ",
         randomPick: String(input.randomPick ?? false),
+        displayMode: input.displayMode ?? "auto",
+        optionSort: input.optionSort ?? "manual",
         sortOrder: maxOrder + 100,
         createdAt: now(),
       });
@@ -389,6 +424,8 @@ export function createPromptsStorage(db: DB) {
       if (data.multiSelect !== undefined) updateFields.multiSelect = String(data.multiSelect);
       if (data.separator !== undefined) updateFields.separator = data.separator;
       if (data.randomPick !== undefined) updateFields.randomPick = String(data.randomPick);
+      if (data.displayMode !== undefined) updateFields.displayMode = data.displayMode;
+      if (data.optionSort !== undefined) updateFields.optionSort = data.optionSort;
       await db.update(choiceBlocks).set(updateFields).where(eq(choiceBlocks.id, id));
       const rows = await db.select().from(choiceBlocks).where(eq(choiceBlocks.id, id));
       return rows[0] ?? null;

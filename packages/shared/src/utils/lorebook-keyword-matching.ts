@@ -77,7 +77,7 @@ export function testPrimaryKeys(
   return { matched: matchedKeys.length > 0, matchedKeys };
 }
 
-/** Secondary key set with selective logic (and/or/not). Empty list passes. */
+/** Secondary key set with selective logic. Empty list passes. */
 export function testSecondaryKeys(
   secondaryKeys: string[],
   text: string,
@@ -90,11 +90,14 @@ export function testSecondaryKeys(
 
   switch (logic) {
     case "and":
-      return results.every(Boolean);
     case "or":
       return results.some(Boolean);
+    case "and_all":
+      return results.every(Boolean);
     case "not":
       return !results.some(Boolean);
+    case "not_all":
+      return !results.every(Boolean);
     default:
       return true;
   }

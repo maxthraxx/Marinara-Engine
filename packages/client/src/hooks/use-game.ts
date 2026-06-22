@@ -8,8 +8,10 @@ import { api, isJsonRepairApiError } from "../lib/api-client";
 import { chatKeys } from "./use-chats";
 import { lorebookKeys } from "./use-lorebooks";
 import {
+  clearPendingHudWidgetPersist,
   getHudWidgetStateSignature,
   getPendingHudWidgetPersistenceSignature,
+  registerPendingHudWidgetPersistence,
   useGameModeStore,
 } from "../stores/game-mode.store";
 import { useGameAssetStore } from "../stores/game-asset.store";
@@ -184,6 +186,9 @@ export function useCreateGame() {
     },
     onError: (err) => {
       console.error("[createGame] Error:", err);
+      toast.error(err.message || "Failed to create game. Check the selected connection and try again.", {
+        duration: 10000,
+      });
     },
   });
 }
@@ -193,7 +198,7 @@ export function useGameSetup() {
   const store = useGameModeStore;
 
   return useMutation({
-    mutationFn: (data: { chatId: string; connectionId?: string; preferences: string }) =>
+    mutationFn: (data: { chatId: string; connectionId?: string; promptPresetId?: string | null; preferences: string }) =>
       api.post<SetupResponse>("/game/setup", {
         ...data,
         streaming: useUIStore.getState().enableStreaming,
@@ -379,6 +384,12 @@ export function useRegenerateSessionLorebook() {
     },
     onError: (err, variables) => {
       console.error("[game/session/regenerate-lorebook] Error:", err);
+      if (isJsonRepairApiError(err)) {
+        toast.info("Review the generated lorebook JSON before applying it.", {
+          id: `game-session-lorebook:${variables.chatId}:${variables.sessionNumber}`,
+        });
+        return;
+      }
       toast.error(err.message || "Failed to regenerate session lorebook.", {
         id: `game-session-lorebook:${variables.chatId}:${variables.sessionNumber}`,
       });
@@ -581,6 +592,10 @@ export function useUpdateGameWidgets() {
   return useMutation({
     mutationFn: ({ chatId, widgets }: { chatId: string; widgets: HudWidget[] }) =>
       api.put<UpdateGameWidgetsResponse>(`/game/${chatId}/widgets`, { widgets }),
+    onMutate: (variables) => {
+      clearPendingHudWidgetPersist(variables.chatId);
+      registerPendingHudWidgetPersistence(variables.chatId, variables.widgets);
+    },
     onSuccess: (_, variables) => {
       useGameModeStore.getState().setHudWidgets(variables.widgets);
       const queryKey = chatKeys.detail(variables.chatId);
@@ -595,6 +610,9 @@ export function useUpdateGameWidgets() {
     },
     onError: (err) => {
       console.error("[updateGameWidgets] Error:", err);
+    },
+    onSettled: (_, __, variables) => {
+      clearPendingHudWidgetPersist(variables.chatId, getHudWidgetStateSignature(variables.widgets));
     },
   });
 }

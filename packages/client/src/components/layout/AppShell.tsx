@@ -4,6 +4,7 @@
 import { ChatSidebar } from "./ChatSidebar";
 import { TopBar } from "./TopBar";
 import { SpotifyMobileWidget } from "../spotify/SpotifyMiniPlayer";
+import { YouTubeMobileWidget } from "../chat/YouTubePlayer";
 import { ChatNotificationBubbles } from "../chat/ChatNotificationBubbles";
 import {
   getTrackerPanelWidthForProfile,
@@ -11,6 +12,7 @@ import {
   RIGHT_PANEL_WIDTH_MIN,
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
+  TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR,
   useUIStore,
 } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
@@ -18,6 +20,7 @@ import { useBackgroundAutonomousPolling } from "../../hooks/use-background-auton
 import { useClearAutonomousUnread } from "../../hooks/use-chats";
 import { useIdleDetection } from "../../hooks/use-idle-detection";
 import { usePageActivity } from "../../hooks/use-page-activity";
+import { getCssBackgroundStyle } from "../../lib/css-colors";
 import { cn } from "../../lib/utils";
 import { parseChatMetadata } from "../../lib/chat-display";
 import { motion, AnimatePresence } from "framer-motion";
@@ -76,6 +79,8 @@ function clampWidth(width: number, min: number, max: number) {
 
 const PANEL_RESIZE_STEP = 16;
 const PANEL_RESIZE_LARGE_STEP = 48;
+const SHARED_SIDEBAR_WIDTH_MIN = Math.max(SIDEBAR_WIDTH_MIN, RIGHT_PANEL_WIDTH_MIN);
+const SHARED_SIDEBAR_WIDTH_MAX = Math.min(SIDEBAR_WIDTH_MAX, RIGHT_PANEL_WIDTH_MAX);
 const RESIZER_HITBOX = 10;
 const TRACKER_PANEL_EDGE_OFFSET = 8;
 const TRACKER_PANEL_HUD_GAP = 6;
@@ -86,10 +91,42 @@ const TRACKER_PANEL_DESKTOP_EXIT_EASE = [0.4, 0, 1, 1] as const;
 const TRACKER_PANEL_TOGGLE_SELECTOR = '[data-tracker-panel-toggle="roleplay-hud"]';
 const TRACKER_PANEL_ANCHOR_SELECTOR = '[data-tracker-panel-anchor="roleplay-hud"]';
 const TOP_BAR_SELECTOR = '[data-component="TopBar"]';
+const CENTER_COMPACT_WIDTH = 768;
+const CENTER_COMPACT_HYSTERESIS = 80;
+const CENTER_COMPACT_SCAN_DEPTH = 6;
+const CENTER_COMPACT_OVERFLOW_TOLERANCE = 2;
+
+function hasHorizontalOverflow(root: Element) {
+  let overflows = false;
+  const scan = (node: Element, depth: number) => {
+    if (overflows || depth > CENTER_COMPACT_SCAN_DEPTH) return;
+    const rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    if (node.scrollWidth > node.clientWidth + CENTER_COMPACT_OVERFLOW_TOLERANCE) {
+      overflows = true;
+      return;
+    }
+    for (let i = 0; i < node.children.length; i++) {
+      scan(node.children[i]!, depth + 1);
+    }
+  };
+  scan(root, 0);
+  return overflows;
+}
+
+function readVisibleElementRect(element: HTMLElement) {
+  const rect = element.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0 || window.getComputedStyle(element).display === "none") return null;
+  return rect;
+}
+
+function getViewportWidth() {
+  return typeof window === "undefined" ? 0 : window.innerWidth;
+}
 
 function MainPaneFallback() {
   return (
-    <div className="flex flex-1 items-center justify-center text-sm text-[var(--muted-foreground)]">Loading...</div>
+    <div className="mari-chrome-text-muted flex flex-1 items-center justify-center text-sm">Loading...</div>
   );
 }
 /** Mounts children once `open` becomes true, then keeps them mounted so state persists.
@@ -115,7 +152,7 @@ function MountOnceWhenOpened({
         animate={open ? { opacity: 1, x: 0 } : { opacity: 0, x: 30 }}
         transition={{ duration: 0.2 }}
         className={cn(
-          "absolute inset-0 flex flex-col overflow-hidden bg-[var(--background)]",
+          "mari-app-background-paint absolute inset-0 flex flex-col overflow-hidden",
           open ? "z-20" : "z-10 pointer-events-none",
         )}
       >
@@ -132,7 +169,7 @@ function MountOnceWhenOpened({
 
 function SidePanelFallback() {
   return (
-    <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">Loading...</div>
+    <div className="mari-chrome-text-muted flex h-full items-center justify-center text-sm">Loading...</div>
   );
 }
 
@@ -156,14 +193,25 @@ export function AppShell() {
   const trackerPanelSide = useUIStore((s) => s.trackerPanelSide);
   const trackerPanelHideHudWidgets = useUIStore((s) => s.trackerPanelHideHudWidgets);
   const trackerPanelSizeProfile = useUIStore((s) => s.trackerPanelSizeProfile);
+  const trackerPanelBackgroundColor = useUIStore((s) => s.trackerPanelBackgroundColor);
   const setTrackerPanelOpen = useUIStore((s) => s.setTrackerPanelOpen);
   const [sidebarDragWidth, setSidebarDragWidth] = useState<number | null>(null);
   const [rightPanelDragWidth, setRightPanelDragWidth] = useState<number | null>(null);
   const sidebarDragWidthRef = useRef<number | null>(null);
   const rightPanelDragWidthRef = useRef<number | null>(null);
-  const liveSidebarWidth = sidebarDragWidth ?? sidebarWidth;
-  const liveRightPanelWidth = rightPanelDragWidth ?? rightPanelWidth;
+  const sharedSidebarWidth = clampWidth(
+    rightPanelWidth || sidebarWidth,
+    SHARED_SIDEBAR_WIDTH_MIN,
+    SHARED_SIDEBAR_WIDTH_MAX,
+  );
+  const liveSidebarWidth = sidebarDragWidth ?? rightPanelDragWidth ?? sharedSidebarWidth;
+  const liveRightPanelWidth = rightPanelDragWidth ?? sidebarDragWidth ?? sharedSidebarWidth;
   const trackerPanelWidth = getTrackerPanelWidthForProfile(trackerPanelSizeProfile);
+  const trackerPanelHasCustomBackground =
+    trackerPanelBackgroundColor.trim().toLowerCase() !== TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR;
+  const trackerPanelBackgroundStyle = trackerPanelHasCustomBackground
+    ? getCssBackgroundStyle(trackerPanelBackgroundColor)
+    : undefined;
 
   // Track mobile breakpoint for right-panel animation strategy
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
@@ -174,64 +222,92 @@ export function AppShell() {
     return () => mq.removeEventListener("change", handler);
   }, []);
 
-  // Auto-close right panel when viewport is too narrow for comfort
+  const [viewportWidth, setViewportWidth] = useState(getViewportWidth);
   useEffect(() => {
-    if (isMobile) return; // Mobile uses overlays, no squishing concern
     let rafId = 0;
-    const handleResize = () => {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        const { rightPanelOpen: rp, sidebarOpen: sb, sidebarWidth: sw, closeRightPanel: close } = useUIStore.getState();
-        if (!rp) return;
-        const panelWidth = useUIStore.getState().rightPanelWidth;
-        const reserved = (sb ? sw : 0) + panelWidth;
-        if (window.innerWidth - reserved < 400) close();
+    const updateViewportWidth = () => {
+      window.cancelAnimationFrame(rafId);
+      rafId = window.requestAnimationFrame(() => {
+        setViewportWidth(getViewportWidth());
       });
     };
-    window.addEventListener("resize", handleResize);
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      cancelAnimationFrame(rafId);
-    };
-  }, [isMobile]);
 
-  // ── Center-area overflow detection ──
-  // When the center <main> content overflows horizontally, switch to compact
-  // layout. Uses hysteresis to prevent toggling back-and-forth.
+    updateViewportWidth();
+    window.addEventListener("resize", updateViewportWidth);
+    return () => {
+      window.removeEventListener("resize", updateViewportWidth);
+      window.cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  const desktopReservedSidebarWidth = sidebarOpen ? liveSidebarWidth : 0;
+  const desktopReservedRightPanelWidth = rightPanelOpen ? liveRightPanelWidth : 0;
+  const desktopCenterWidth = Math.max(0, viewportWidth - desktopReservedSidebarWidth - desktopReservedRightPanelWidth);
+  const centerSqueezedByPanels =
+    !isMobile && (sidebarOpen || rightPanelOpen) && viewportWidth > 0 && desktopCenterWidth < CENTER_COMPACT_WIDTH;
+  const shellOverlayMode = isMobile || centerSqueezedByPanels;
+  const chatUiInsetLeft = !shellOverlayMode && sidebarOpen ? Math.round(liveSidebarWidth) : 0;
+  const chatUiInsetRight = !shellOverlayMode && rightPanelOpen ? Math.round(liveRightPanelWidth) : 0;
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--mari-chat-ui-inset-left", `${chatUiInsetLeft}px`);
+    root.style.setProperty("--mari-chat-ui-inset-right", `${chatUiInsetRight}px`);
+    return () => {
+      root.style.removeProperty("--mari-chat-ui-inset-left");
+      root.style.removeProperty("--mari-chat-ui-inset-right");
+    };
+  }, [chatUiInsetLeft, chatUiInsetRight]);
+
+  // ── Center-area compact detection ──
+  // Side panels can shrink the center pane below the chat chrome's usable desktop
+  // width even when the viewport itself is desktop-sized. Switch that pane to the
+  // compact chat layout before toolbar controls begin colliding.
   const mainRef = useRef<HTMLElement>(null);
   const compactWidthRef = useRef(0); // width when we last switched to compact
   const centerCompact = useUIStore((s) => s.centerCompact);
   const setCenterCompact = useUIStore((s) => s.setCenterCompact);
+
+  useEffect(() => {
+    if (centerSqueezedByPanels && !useUIStore.getState().centerCompact) {
+      compactWidthRef.current = desktopCenterWidth;
+      setCenterCompact(true);
+    }
+  }, [centerSqueezedByPanels, desktopCenterWidth, setCenterCompact]);
 
   const checkOverflow = useCallback(() => {
     const el = mainRef.current;
     if (!el) return;
     const compact = useUIStore.getState().centerCompact;
     const width = el.clientWidth;
+    const tooNarrowForDesktopChatChrome = width > 0 && width < CENTER_COMPACT_WIDTH;
+    const shouldCompact = centerSqueezedByPanels || tooNarrowForDesktopChatChrome || (!compact && hasHorizontalOverflow(el));
 
-    if (compact) {
-      if (width > compactWidthRef.current + 80) {
-        setCenterCompact(false);
-      }
-    } else {
-      let overflows = false;
-      const scan = (node: Element, depth: number) => {
-        if (overflows || depth > 3) return;
-        if (node.scrollWidth > node.clientWidth + 2) {
-          overflows = true;
-          return;
-        }
-        for (let i = 0; i < node.children.length; i++) {
-          scan(node.children[i]!, depth + 1);
-        }
-      };
-      scan(el, 0);
-      if (overflows) {
-        compactWidthRef.current = width;
-        setCenterCompact(true);
-      }
+    if (shouldCompact) {
+      compactWidthRef.current = width;
+      if (!compact) setCenterCompact(true);
+      return;
     }
-  }, [setCenterCompact]);
+
+    const releaseWidth = Math.max(
+      CENTER_COMPACT_WIDTH + CENTER_COMPACT_HYSTERESIS,
+      compactWidthRef.current + CENTER_COMPACT_HYSTERESIS,
+    );
+    if (compact && width > releaseWidth) {
+      setCenterCompact(false);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const nextEl = mainRef.current;
+          if (!nextEl || useUIStore.getState().centerCompact) return;
+          const nextWidth = nextEl.clientWidth;
+          if (nextWidth > 0 && (nextWidth < CENTER_COMPACT_WIDTH || hasHorizontalOverflow(nextEl))) {
+            compactWidthRef.current = nextWidth;
+            setCenterCompact(true);
+          }
+        });
+      });
+    }
+  }, [centerSqueezedByPanels, setCenterCompact]);
 
   // Debounce the overflow check so ResizeObserver doesn't cause layout thrashing
   const overflowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -244,9 +320,15 @@ export function AppShell() {
     const el = mainRef.current;
     if (!el) return;
     const ro = new ResizeObserver(debouncedCheckOverflow);
+    const mo = new MutationObserver(debouncedCheckOverflow);
     ro.observe(el);
+    mo.observe(el, { childList: true, subtree: true });
+    window.addEventListener("resize", debouncedCheckOverflow);
+    debouncedCheckOverflow();
     return () => {
       ro.disconnect();
+      mo.disconnect();
+      window.removeEventListener("resize", debouncedCheckOverflow);
       if (overflowTimerRef.current) clearTimeout(overflowTimerRef.current);
     };
   }, [debouncedCheckOverflow]);
@@ -292,17 +374,17 @@ export function AppShell() {
 
   const startSidebarResize = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
-      if (isMobile) return;
+      if (shellOverlayMode) return;
       event.preventDefault();
       const originalCursor = document.body.style.cursor;
       const originalUserSelect = document.body.style.userSelect;
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
-      sidebarDragWidthRef.current = sidebarWidth;
-      setSidebarDragWidth(sidebarWidth);
+      sidebarDragWidthRef.current = sharedSidebarWidth;
+      setSidebarDragWidth(sharedSidebarWidth);
 
       const onMove = (moveEvent: MouseEvent) => {
-        const nextWidth = clampWidth(moveEvent.clientX, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX);
+        const nextWidth = clampWidth(moveEvent.clientX, SHARED_SIDEBAR_WIDTH_MIN, SHARED_SIDEBAR_WIDTH_MAX);
         sidebarDragWidthRef.current = nextWidth;
         setSidebarDragWidth(nextWidth);
       };
@@ -310,7 +392,9 @@ export function AppShell() {
       const finishResize = () => {
         if (finished) return;
         finished = true;
-        setSidebarWidth(sidebarDragWidthRef.current ?? useUIStore.getState().sidebarWidth);
+        const nextWidth = sidebarDragWidthRef.current ?? sharedSidebarWidth;
+        setSidebarWidth(nextWidth);
+        setRightPanelWidth(nextWidth);
         sidebarDragWidthRef.current = null;
         setSidebarDragWidth(null);
         document.body.style.cursor = originalCursor;
@@ -324,25 +408,25 @@ export function AppShell() {
       window.addEventListener("mouseup", finishResize);
       window.addEventListener("blur", finishResize);
     },
-    [isMobile, setSidebarWidth, sidebarWidth],
+    [setRightPanelWidth, setSidebarWidth, sharedSidebarWidth, shellOverlayMode],
   );
 
   const startRightPanelResize = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
-      if (isMobile) return;
+      if (shellOverlayMode) return;
       event.preventDefault();
       const originalCursor = document.body.style.cursor;
       const originalUserSelect = document.body.style.userSelect;
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
-      rightPanelDragWidthRef.current = rightPanelWidth;
-      setRightPanelDragWidth(rightPanelWidth);
+      rightPanelDragWidthRef.current = sharedSidebarWidth;
+      setRightPanelDragWidth(sharedSidebarWidth);
 
       const onMove = (moveEvent: MouseEvent) => {
         const nextWidth = clampWidth(
           window.innerWidth - moveEvent.clientX,
-          RIGHT_PANEL_WIDTH_MIN,
-          RIGHT_PANEL_WIDTH_MAX,
+          SHARED_SIDEBAR_WIDTH_MIN,
+          SHARED_SIDEBAR_WIDTH_MAX,
         );
         rightPanelDragWidthRef.current = nextWidth;
         setRightPanelDragWidth(nextWidth);
@@ -351,7 +435,9 @@ export function AppShell() {
       const finishResize = () => {
         if (finished) return;
         finished = true;
-        setRightPanelWidth(rightPanelDragWidthRef.current ?? useUIStore.getState().rightPanelWidth);
+        const nextWidth = rightPanelDragWidthRef.current ?? sharedSidebarWidth;
+        setSidebarWidth(nextWidth);
+        setRightPanelWidth(nextWidth);
         rightPanelDragWidthRef.current = null;
         setRightPanelDragWidth(null);
         document.body.style.cursor = originalCursor;
@@ -365,41 +451,45 @@ export function AppShell() {
       window.addEventListener("mouseup", finishResize);
       window.addEventListener("blur", finishResize);
     },
-    [isMobile, rightPanelWidth, setRightPanelWidth],
+    [setRightPanelWidth, setSidebarWidth, sharedSidebarWidth, shellOverlayMode],
   );
 
   const adjustSidebarWidth = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       const step = event.shiftKey ? PANEL_RESIZE_LARGE_STEP : PANEL_RESIZE_STEP;
-      let nextWidth = sidebarWidth;
+      let nextWidth: number;
 
-      if (event.key === "ArrowLeft") nextWidth = sidebarWidth - step;
-      else if (event.key === "ArrowRight") nextWidth = sidebarWidth + step;
-      else if (event.key === "Home") nextWidth = SIDEBAR_WIDTH_MIN;
-      else if (event.key === "End") nextWidth = SIDEBAR_WIDTH_MAX;
+      if (event.key === "ArrowLeft") nextWidth = sharedSidebarWidth - step;
+      else if (event.key === "ArrowRight") nextWidth = sharedSidebarWidth + step;
+      else if (event.key === "Home") nextWidth = SHARED_SIDEBAR_WIDTH_MIN;
+      else if (event.key === "End") nextWidth = SHARED_SIDEBAR_WIDTH_MAX;
       else return;
 
       event.preventDefault();
-      setSidebarWidth(clampWidth(nextWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX));
+      const clampedWidth = clampWidth(nextWidth, SHARED_SIDEBAR_WIDTH_MIN, SHARED_SIDEBAR_WIDTH_MAX);
+      setSidebarWidth(clampedWidth);
+      setRightPanelWidth(clampedWidth);
     },
-    [setSidebarWidth, sidebarWidth],
+    [setRightPanelWidth, setSidebarWidth, sharedSidebarWidth],
   );
 
   const adjustRightPanelWidth = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       const step = event.shiftKey ? PANEL_RESIZE_LARGE_STEP : PANEL_RESIZE_STEP;
-      let nextWidth = rightPanelWidth;
+      let nextWidth: number;
 
-      if (event.key === "ArrowLeft") nextWidth = rightPanelWidth + step;
-      else if (event.key === "ArrowRight") nextWidth = rightPanelWidth - step;
-      else if (event.key === "Home") nextWidth = RIGHT_PANEL_WIDTH_MIN;
-      else if (event.key === "End") nextWidth = RIGHT_PANEL_WIDTH_MAX;
+      if (event.key === "ArrowLeft") nextWidth = sharedSidebarWidth + step;
+      else if (event.key === "ArrowRight") nextWidth = sharedSidebarWidth - step;
+      else if (event.key === "Home") nextWidth = SHARED_SIDEBAR_WIDTH_MIN;
+      else if (event.key === "End") nextWidth = SHARED_SIDEBAR_WIDTH_MAX;
       else return;
 
       event.preventDefault();
-      setRightPanelWidth(clampWidth(nextWidth, RIGHT_PANEL_WIDTH_MIN, RIGHT_PANEL_WIDTH_MAX));
+      const clampedWidth = clampWidth(nextWidth, SHARED_SIDEBAR_WIDTH_MIN, SHARED_SIDEBAR_WIDTH_MAX);
+      setSidebarWidth(clampedWidth);
+      setRightPanelWidth(clampedWidth);
     },
-    [rightPanelWidth, setRightPanelWidth],
+    [setRightPanelWidth, setSidebarWidth, sharedSidebarWidth],
   );
 
   const detailView = regexDetailId ? (
@@ -424,9 +514,15 @@ export function AppShell() {
 
   const showAmbientDecor = isPageActive && !activeChatId && !detailView && !botBrowserOpen && !gameAssetsBrowserOpen;
   const hasDetailView = detailView != null;
+  const trackerPanelModeAvailable = activeChat?.mode === "roleplay" || activeChat?.mode === "visual_novel";
   const trackerPanelActive = trackerPanelEnabled && trackerPanelOpen;
-  const trackerPanelSurfaceAvailable = !botBrowserOpen && !gameAssetsBrowserOpen && !hasDetailView;
+  const trackerPanelSurfaceAvailable =
+    trackerPanelModeAvailable && !botBrowserOpen && !gameAssetsBrowserOpen && !hasDetailView;
   const trackerPanelVisible = trackerPanelActive && trackerPanelSurfaceAvailable;
+  useEffect(() => {
+    if (!trackerPanelOpen || !activeChat?.mode || trackerPanelModeAvailable) return;
+    setTrackerPanelOpen(false);
+  }, [activeChat?.mode, setTrackerPanelOpen, trackerPanelModeAvailable, trackerPanelOpen]);
   useEffect(() => {
     if (trackerPanelVisible) {
       trackerPanelWasActiveRef.current = true;
@@ -450,8 +546,8 @@ export function AppShell() {
       root?.querySelector<HTMLElement>(TRACKER_PANEL_TOGGLE_SELECTOR) ??
       document.querySelector<HTMLElement>(TRACKER_PANEL_TOGGLE_SELECTOR);
     if (!toggle) return;
-    const rect = toggle.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0 || window.getComputedStyle(toggle).display === "none") return;
+    const rect = readVisibleElementRect(toggle);
+    if (!rect) return;
 
     const nextCenterY = rect.top + rect.height / 2;
     setTrackerPanelToggleAnchorY((current) =>
@@ -460,33 +556,24 @@ export function AppShell() {
   }, []);
   const updateTrackerPanelTop = useCallback(() => {
     const root = mainRef.current;
-    if (trackerPanelDockToEdge) {
-      const topBar =
-        root?.querySelector<HTMLElement>(TOP_BAR_SELECTOR) ?? document.querySelector<HTMLElement>(TOP_BAR_SELECTOR);
-      const rect = topBar?.getBoundingClientRect();
-      const nextTop =
-        rect && rect.height > 0
-          ? Math.max(TRACKER_PANEL_EDGE_OFFSET, Math.ceil(rect.bottom))
-          : TRACKER_PANEL_EDGE_OFFSET;
-      setTrackerPanelTop((current) => (current === nextTop ? current : nextTop));
-      return;
-    }
-    const anchors = Array.from((root ?? document).querySelectorAll<HTMLElement>(TRACKER_PANEL_ANCHOR_SELECTOR));
-    const visibleAnchor = anchors.find((anchor) => {
-      const rect = anchor.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && window.getComputedStyle(anchor).display !== "none";
+    const topCandidates = [TRACKER_PANEL_EDGE_OFFSET];
+    const topBar =
+      root?.querySelector<HTMLElement>(TOP_BAR_SELECTOR) ?? document.querySelector<HTMLElement>(TOP_BAR_SELECTOR);
+    const topBarRect = topBar ? readVisibleElementRect(topBar) : null;
+    if (topBarRect) topCandidates.push(Math.ceil(topBarRect.bottom + TRACKER_PANEL_HUD_GAP));
+
+    const anchors = Array.from(document.querySelectorAll<HTMLElement>(TRACKER_PANEL_ANCHOR_SELECTOR));
+    anchors.forEach((anchor) => {
+      const rect = readVisibleElementRect(anchor);
+      if (rect) topCandidates.push(Math.ceil(rect.bottom + TRACKER_PANEL_HUD_GAP));
     });
-    const nextTop = visibleAnchor
-      ? Math.max(
-          TRACKER_PANEL_EDGE_OFFSET,
-          Math.ceil(visibleAnchor.getBoundingClientRect().bottom + TRACKER_PANEL_HUD_GAP),
-        )
-      : TRACKER_PANEL_EDGE_OFFSET;
+
+    const nextTop = Math.max(...topCandidates);
     setTrackerPanelTop((current) => (current === nextTop ? current : nextTop));
-  }, [trackerPanelDockToEdge]);
+  }, []);
 
   useLayoutEffect(() => {
-    if (isMobile || trackerPanelVisible || !trackerPanelSurfaceAvailable) return;
+    if (shellOverlayMode || trackerPanelVisible || !trackerPanelSurfaceAvailable) return;
 
     let frame = 0;
     let discoveryObserver: MutationObserver | null = null;
@@ -536,14 +623,14 @@ export function AppShell() {
     botBrowserOpen,
     gameAssetsBrowserOpen,
     centerCompact,
-    isMobile,
+    shellOverlayMode,
     trackerPanelSurfaceAvailable,
     trackerPanelVisible,
     updateTrackerPanelToggleAnchor,
   ]);
 
   useLayoutEffect(() => {
-    if (isMobile || !trackerPanelAnchoredForMotion || !trackerPanelSurfaceAvailable) {
+    if (shellOverlayMode || !trackerPanelAnchoredForMotion || !trackerPanelSurfaceAvailable) {
       setTrackerPanelTop(TRACKER_PANEL_EDGE_OFFSET);
       return;
     }
@@ -555,14 +642,15 @@ export function AppShell() {
       scheduleUpdate();
     });
     const observeTargets = () => {
-      const selector = trackerPanelDockToEdge ? TOP_BAR_SELECTOR : TRACKER_PANEL_ANCHOR_SELECTOR;
-      const targets = Array.from((mainRef.current ?? document).querySelectorAll<HTMLElement>(selector));
+      const topBarTargets = Array.from(document.querySelectorAll<HTMLElement>(TOP_BAR_SELECTOR));
+      const anchorTargets = Array.from(document.querySelectorAll<HTMLElement>(TRACKER_PANEL_ANCHOR_SELECTOR));
+      const targets = [...topBarTargets, ...anchorTargets];
       targets.forEach((target) => {
         if (observedTargets.has(target)) return;
         observer.observe(target);
         observedTargets.add(target);
       });
-      return targets.length > 0;
+      return anchorTargets.length > 0;
     };
     function scheduleUpdate() {
       if (frame) window.cancelAnimationFrame(frame);
@@ -595,7 +683,7 @@ export function AppShell() {
     botBrowserOpen,
     gameAssetsBrowserOpen,
     centerCompact,
-    isMobile,
+    shellOverlayMode,
     trackerPanelAnchoredForMotion,
     trackerPanelDockToEdge,
     trackerPanelSurfaceAvailable,
@@ -603,11 +691,11 @@ export function AppShell() {
   ]);
 
   const trackerPanelChatAvoidance =
-    !isMobile && trackerPanelAnchoredForMotion && trackerPanelSurfaceAvailable
+    !shellOverlayMode && trackerPanelAnchoredForMotion && trackerPanelSurfaceAvailable
       ? Math.round(trackerPanelWidth * 0.62)
       : 0;
   const trackerPanelHudClearance =
-    !isMobile && trackerPanelAnchoredForMotion && trackerPanelHideHudWidgets && trackerPanelSurfaceAvailable
+    !shellOverlayMode && trackerPanelAnchoredForMotion && trackerPanelHideHudWidgets && trackerPanelSurfaceAvailable
       ? trackerPanelWidth + TRACKER_PANEL_HUD_GAP
       : 0;
 
@@ -646,7 +734,7 @@ export function AppShell() {
         data-tracker-size-profile={trackerPanelSizeProfile}
         aria-label="Tracker data panel"
         className={cn(
-          "mari-tracker-panel fixed z-30 hidden overflow-hidden bg-[var(--background)]/20 shadow-2xl ring-1 ring-[var(--border)]/35 backdrop-blur-2xl transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] md:block",
+          "mari-tracker-panel fixed z-30 hidden overflow-hidden bg-zinc-950/95 shadow-2xl ring-1 ring-zinc-700/80 backdrop-blur-2xl transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] md:block",
           side === "left" ? "rounded-r-xl" : "rounded-l-xl",
         )}
         style={{
@@ -660,6 +748,7 @@ export function AppShell() {
           ...(side === "left"
             ? { left: sidebarOpen ? liveSidebarWidth + RESIZER_HITBOX : 0 }
             : { right: rightPanelOpen ? liveRightPanelWidth + RESIZER_HITBOX : 0 }),
+          ...(trackerPanelBackgroundStyle ?? {}),
         }}
       >
         <div className="mari-tracker-panel-scroll max-h-[inherit] overflow-x-hidden overflow-y-auto">
@@ -674,7 +763,7 @@ export function AppShell() {
     <div
       data-component="AppShell"
       className={cn(
-        "mari-app fixed inset-0 flex overflow-hidden bg-[var(--background)] max-md:pt-[env(safe-area-inset-top)]",
+        "mari-app mari-app-background-paint fixed inset-0 flex overflow-hidden max-md:h-screen max-md:max-h-screen max-md:pb-[env(safe-area-inset-bottom)] max-md:pt-[env(safe-area-inset-top)] supports-[height:100dvh]:max-md:h-[100dvh] supports-[height:100dvh]:max-md:max-h-[100dvh]",
         showAmbientDecor && "retro-scanlines noise-bg geometric-grid",
       )}
     >
@@ -689,12 +778,9 @@ export function AppShell() {
         </>
       )}
 
-      {/* Mobile sidebar backdrop */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
+      {/* Overlay sidebar backdrop */}
+      {sidebarOpen && shellOverlayMode && (
+        <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
       )}
 
       {/* Left sidebar - Chat list */}
@@ -705,24 +791,24 @@ export function AppShell() {
         className={cn(
           "mari-sidebar flex-shrink-0 overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl",
           sidebarDragWidth == null && "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
-          sidebarOpen && "border-r border-[var(--sidebar-border)]/30",
-          // Mobile: fixed overlay
-          "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:shadow-2xl max-md:pt-[env(safe-area-inset-top)]",
-          !sidebarOpen && "max-md:!w-0",
+          sidebarOpen && !shellOverlayMode && "mari-shell-panel-edge mari-shell-panel-edge--right md:relative",
+          shellOverlayMode &&
+            "fixed inset-y-0 left-0 z-50 h-screen max-h-screen pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-[max(env(safe-area-inset-top),0.5rem)] shadow-2xl supports-[height:100dvh]:h-[100dvh] supports-[height:100dvh]:max-h-[100dvh]",
+          !sidebarOpen && shellOverlayMode && "!w-0",
         )}
-        style={{ width: sidebarOpen ? (isMobile ? "100vw" : liveSidebarWidth) : 0 }}
+        style={{ width: sidebarOpen ? (shellOverlayMode ? "100vw" : liveSidebarWidth) : 0 }}
       >
-        <div className="h-full" style={{ width: isMobile ? "100vw" : liveSidebarWidth }}>
+        <div className="h-full" style={{ width: shellOverlayMode ? "100vw" : liveSidebarWidth }}>
           <ChatSidebar />
         </div>
       </aside>
-      {!isMobile && sidebarOpen && (
+      {!shellOverlayMode && sidebarOpen && (
         <div
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize left sidebar"
-          aria-valuemin={SIDEBAR_WIDTH_MIN}
-          aria-valuemax={SIDEBAR_WIDTH_MAX}
+          aria-valuemin={SHARED_SIDEBAR_WIDTH_MIN}
+          aria-valuemax={SHARED_SIDEBAR_WIDTH_MAX}
           aria-valuenow={Math.round(liveSidebarWidth)}
           tabIndex={0}
           onMouseDown={startSidebarResize}
@@ -733,7 +819,7 @@ export function AppShell() {
       )}
 
       <AnimatePresence initial={false}>
-        {!isMobile && trackerPanelSurfaceAvailable && trackerPanelDesktop("left")}
+        {!shellOverlayMode && trackerPanelSurfaceAvailable && trackerPanelDesktop("left")}
       </AnimatePresence>
 
       {/* Center content */}
@@ -741,11 +827,13 @@ export function AppShell() {
         ref={mainRef}
         data-tour="chat-area"
         data-component="CenterContent"
+        data-center-compact={centerCompact ? "true" : undefined}
+        data-shell-overlay-mode={shellOverlayMode ? "true" : undefined}
         aria-label="Main content"
-        className="@container mari-main relative flex min-w-0 flex-1 flex-col overflow-hidden"
+        className="@container mari-main mari-app-background-paint relative flex min-w-0 flex-1 flex-col overflow-hidden"
       >
         <TopBar />
-        <div className="relative flex flex-1 flex-col overflow-hidden">
+        <div className="mari-app-background-paint relative flex flex-1 flex-col overflow-hidden">
           {/* Bot Browser — kept mounted once opened so state persists across close/reopen */}
           <MountOnceWhenOpened open={botBrowserOpen} overlay>
             <BotBrowserView />
@@ -755,7 +843,10 @@ export function AppShell() {
             <GameAssetsBrowserView />
           </MountOnceWhenOpened>
           <div
-            className={botBrowserOpen || gameAssetsBrowserOpen ? "hidden" : "flex flex-1 flex-col overflow-hidden"}
+            className={cn(
+              "mari-app-background-paint flex flex-1 flex-col overflow-hidden",
+              (botBrowserOpen || gameAssetsBrowserOpen) && "hidden",
+            )}
             style={
               {
                 "--tracker-chat-avoid-left": `${trackerPanelSide === "left" ? trackerPanelChatAvoidance : 0}px`,
@@ -773,19 +864,16 @@ export function AppShell() {
       </main>
 
       <AnimatePresence initial={false}>
-        {!isMobile && trackerPanelSurfaceAvailable && trackerPanelDesktop("right")}
+        {!shellOverlayMode && trackerPanelSurfaceAvailable && trackerPanelDesktop("right")}
       </AnimatePresence>
 
-      {/* Mobile tracker panel backdrop */}
-      {trackerPanelVisible && (
-        <div
-          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
-          onClick={() => setTrackerPanelOpen(false)}
-        />
+      {/* Overlay tracker panel backdrop */}
+      {trackerPanelVisible && shellOverlayMode && (
+        <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" onClick={() => setTrackerPanelOpen(false)} />
       )}
 
-      {/* Mobile tracker panel */}
-      {isMobile && (
+      {/* Overlay tracker panel */}
+      {shellOverlayMode && (
         <AnimatePresence mode="wait">
           {trackerPanelVisible && (
             <motion.aside
@@ -797,9 +885,10 @@ export function AppShell() {
               data-component="TrackerDataSidebarMobile"
               aria-label="Tracker data panel"
               className={cn(
-                "mari-tracker-panel !fixed inset-y-0 z-50 w-[calc(100vw-0.5rem)] max-w-[24rem] overflow-hidden bg-[var(--background)]/65 pt-[env(safe-area-inset-top)] shadow-2xl backdrop-blur-xl",
+                "mari-tracker-panel !fixed inset-y-0 z-50 h-screen max-h-screen w-screen max-w-none overflow-hidden bg-zinc-950/95 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-[max(env(safe-area-inset-top),0.5rem)] shadow-2xl ring-1 ring-zinc-700/80 backdrop-blur-xl supports-[height:100dvh]:h-[100dvh] supports-[height:100dvh]:max-h-[100dvh]",
                 trackerPanelSide === "left" ? "left-0" : "right-0",
               )}
+              style={trackerPanelBackgroundStyle}
             >
               <Suspense fallback={<SidePanelFallback />}>
                 <TrackerDataSidebar fillHeight />
@@ -809,13 +898,13 @@ export function AppShell() {
         </AnimatePresence>
       )}
 
-      {/* Mobile right panel backdrop */}
-      {rightPanelOpen && (
-        <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden" onClick={() => closeRightPanel()} />
+      {/* Overlay right panel backdrop */}
+      {rightPanelOpen && shellOverlayMode && (
+        <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" onClick={() => closeRightPanel()} />
       )}
 
       {/* Right panel - Context / Settings */}
-      {isMobile ? (
+      {shellOverlayMode ? (
         <AnimatePresence mode="wait">
           {rightPanelOpen && (
             <motion.aside
@@ -826,7 +915,8 @@ export function AppShell() {
               transition={{ type: "spring", damping: 28, stiffness: 350 }}
               data-component="RightPanelMobile"
               aria-label="Settings and tools panel"
-              className="mari-right-panel !fixed inset-y-0 right-0 z-50 !w-full shadow-2xl overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl pt-[env(safe-area-inset-top)]"
+              className="mari-right-panel !fixed inset-y-0 right-0 z-50 h-screen max-h-screen !w-full overflow-hidden bg-[var(--background)]/80 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-[max(env(safe-area-inset-top),0.5rem)] shadow-2xl backdrop-blur-xl supports-[height:100dvh]:h-[100dvh] supports-[height:100dvh]:max-h-[100dvh]"
+              style={{ "--mari-right-panel-width": "100vw" } as CSSProperties}
             >
               <Suspense fallback={<SidePanelFallback />}>
                 <RightPanel />
@@ -841,9 +931,14 @@ export function AppShell() {
           className={cn(
             "mari-right-panel flex-shrink-0 overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl",
             rightPanelDragWidth == null && "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
-            rightPanelOpen && "border-l border-[var(--sidebar-border)]/30",
+            rightPanelOpen && "mari-shell-panel-edge mari-shell-panel-edge--left relative",
           )}
-          style={{ width: rightPanelOpen ? liveRightPanelWidth : 0 }}
+          style={
+            {
+              width: rightPanelOpen ? liveRightPanelWidth : 0,
+              "--mari-right-panel-width": `${liveRightPanelWidth}px`,
+            } as CSSProperties
+          }
         >
           {rightPanelOpen && (
             <div className="h-full" style={{ width: liveRightPanelWidth }}>
@@ -854,13 +949,13 @@ export function AppShell() {
           )}
         </aside>
       )}
-      {!isMobile && rightPanelOpen && (
+      {!shellOverlayMode && rightPanelOpen && (
         <div
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize right sidebar"
-          aria-valuemin={RIGHT_PANEL_WIDTH_MIN}
-          aria-valuemax={RIGHT_PANEL_WIDTH_MAX}
+          aria-valuemin={SHARED_SIDEBAR_WIDTH_MIN}
+          aria-valuemax={SHARED_SIDEBAR_WIDTH_MAX}
           aria-valuenow={Math.round(liveRightPanelWidth)}
           tabIndex={0}
           onMouseDown={startRightPanelResize}
@@ -877,6 +972,7 @@ export function AppShell() {
         </Suspense>
       )}
       <SpotifyMobileWidget />
+      <YouTubeMobileWidget />
     </div>
   );
 }

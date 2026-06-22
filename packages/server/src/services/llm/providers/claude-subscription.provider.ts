@@ -21,11 +21,13 @@
 //   • SDK docs: https://docs.anthropic.com/en/docs/claude-code/sdk
 //
 import { randomUUID } from "node:crypto";
+import { isClaudeAdaptiveOnlyNoSamplingModel, shouldSuppressUnknownModelParameters } from "@marinara-engine/shared";
 import { BaseLLMProvider, type ChatMessage, type ChatOptions, type LLMUsage } from "../base-provider.js";
 import { logger } from "../../../lib/logger.js";
 import { isClaudeSubscriptionResumeEnabled } from "../../../config/runtime-config.js";
 import {
   assembleEntries,
+  buildAssistantPrefillContinuationPrompt,
   currentToSdkUserMessage,
   SDK_VERSION,
   splitHistoryForResume,
@@ -75,6 +77,52 @@ function loadSdk(): Promise<SdkModule> {
   return cachedSdk;
 }
 
+const SDK_ERROR_DETAIL_LIMIT = 1600;
+
+function compactSdkErrorText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const compact = value.trim().replace(/\s+/g, " ");
+  return compact ? compact.slice(0, SDK_ERROR_DETAIL_LIMIT) : null;
+}
+
+function collectSdkErrorDetails(err: unknown, seen = new Set<unknown>()): string[] {
+  if (!err || seen.has(err)) return [];
+  seen.add(err);
+
+  const parts: string[] = [];
+  if (err instanceof Error) {
+    const message = compactSdkErrorText(err.message);
+    if (message) parts.push(message);
+  } else {
+    const message = compactSdkErrorText(String(err));
+    if (message && message !== "[object Object]") parts.push(message);
+  }
+
+  if (typeof err === "object") {
+    const record = err as Record<string, unknown>;
+    for (const key of ["stderr", "stdout", "details", "detail", "code", "status"]) {
+      const value = compactSdkErrorText(record[key]);
+      if (value) parts.push(`${key}: ${value}`);
+    }
+    const errors = record.errors;
+    if (Array.isArray(errors)) {
+      for (const item of errors) parts.push(...collectSdkErrorDetails(item, seen));
+    }
+    if (record.cause) parts.push(...collectSdkErrorDetails(record.cause, seen));
+  }
+
+  return Array.from(new Set(parts));
+}
+
+function formatClaudeSdkError(err: unknown): string {
+  const parts = collectSdkErrorDetails(err);
+  const message = parts.length > 0 ? parts.join(" | ") : err instanceof Error ? err.message : String(err);
+  if (/Claude Code request failed/i.test(message)) {
+    return `${message}. Confirm \`claude login\` was run by the same OS user/HOME as the Marinara server, or set ANTHROPIC_API_KEY/CLAUDE_CODE_OAUTH_TOKEN in the server environment. HOME=${process.env.HOME ?? "unset"}.`;
+  }
+  return message;
+}
+
 /** @internal Test-only seam. Replaces the cached SDK module with a fake or clears it. */
 export function __setSdkForTesting(mod: Pick<SdkModule, "query"> | null): void {
   cachedSdk = mod ? (Promise.resolve(mod as SdkModule) as Promise<SdkModule>) : null;
@@ -122,8 +170,14 @@ function extractSystemPrompt(messages: ChatMessage[]): string | undefined {
 function renderTranscript(messages: ChatMessage[]): { systemPrompt: string | undefined; prompt: string } {
   const systemBlocks: string[] = [];
   const turns: string[] = [];
+  const nonSystemMessages = messages.filter((message) => message.role !== "system");
+  const trailingAssistant =
+    nonSystemMessages.length > 0 && nonSystemMessages[nonSystemMessages.length - 1]!.role === "assistant"
+      ? nonSystemMessages[nonSystemMessages.length - 1]!
+      : null;
 
   for (const message of messages) {
+    if (message === trailingAssistant) continue;
     const text = message.content?.trim();
     if (!text) continue;
     if (message.role === "system") {
@@ -132,6 +186,10 @@ function renderTranscript(messages: ChatMessage[]): { systemPrompt: string | und
     }
     const label = message.role === "user" ? "User" : "Assistant";
     turns.push(`${label}: ${text}`);
+  }
+
+  if (trailingAssistant) {
+    turns.push(`User: ${buildAssistantPrefillContinuationPrompt(trailingAssistant.content ?? "")}`);
   }
 
   // Claude Agent SDK requires a non-empty prompt; if the caller only supplied
@@ -185,6 +243,12 @@ function selectPromptPath(messages: ChatMessage[], model: string): PromptSelecti
 function buildResumeSelection(messages: ChatMessage[], model: string): PromptSelection {
   const split = splitHistoryForResume(messages);
   const systemPrompt = extractSystemPrompt(messages);
+  if (split.shape === "trailing-assistant-continue") {
+    logger.warn(
+      "[claude-subscription] assistant prefill routed through synthetic continuation prompt because SDK prompts are user-only (prefillChars=%d)",
+      split.assistantPrefillLength ?? 0,
+    );
+  }
 
   if (split.history.length === 0) {
     // Resuming an empty transcript makes the SDK throw "No conversation found
@@ -266,8 +330,16 @@ export class ClaudeSubscriptionProvider extends BaseLLMProvider {
     super(baseUrl, apiKey, defaultMaxContext, defaultOpenrouterProvider, maxTokensOverride);
   }
 
+  private shouldSuppressModelParameters(options: ChatOptions): boolean {
+    return (
+      options.suppressModelParameters === true ||
+      shouldSuppressUnknownModelParameters("claude_subscription", options.model)
+    );
+  }
+
   async *chat(messages: ChatMessage[], options: ChatOptions): AsyncGenerator<string, LLMUsage | void, unknown> {
-    const configuredMaxTokens = options.maxTokens ?? 4096;
+    const suppressModelParameters = this.shouldSuppressModelParameters(options);
+    const configuredMaxTokens = suppressModelParameters ? undefined : this.applyMaxTokensCap(options.maxTokens ?? 4096);
     const contextFit = this.fitMessagesToContext(messages, { ...options, maxTokens: configuredMaxTokens });
     this.logContextTrim(contextFit, options.model);
 
@@ -288,11 +360,10 @@ export class ClaudeSubscriptionProvider extends BaseLLMProvider {
       }
     }
 
-    // Opus 4.7+ is adaptive-only (sampling parameters rejected); other models
+    // Claude adaptive-only models reject sampling parameters; other models
     // accept temperature etc. but the Agent SDK doesn't expose those knobs
     // directly, so we skip them and rely on the SDK defaults.
-    const modelLower = options.model.toLowerCase();
-    const isAdaptiveOnly = /claude-opus-4-(?:[7-9]|\d{2,})/.test(modelLower);
+    const isAdaptiveOnly = isClaudeAdaptiveOnlyNoSamplingModel(options.model);
 
     // Outbound-context strip strategy: this provider is a text-chat surface
     // (roleplay / character DM), not an agent runner. The SDK's default
@@ -342,13 +413,13 @@ export class ClaudeSubscriptionProvider extends BaseLLMProvider {
     };
     if (systemPrompt !== undefined) sdkOptions.systemPrompt = systemPrompt;
 
-    if (options.enableThinking) {
+    if (!suppressModelParameters && options.enableThinking) {
       sdkOptions.thinking = { type: "adaptive" };
       // EffortLevel covers low|medium|high|xhigh|max; reasoningEffort matches
-      // four of those, so a runtime cast is safe.
-      sdkOptions.effort = (options.reasoningEffort ?? "high") as "low" | "medium" | "high" | "xhigh";
-    } else if (isAdaptiveOnly) {
-      // Opus 4.7 always thinks; let the SDK pick a default effort.
+      // that provider-facing set.
+      sdkOptions.effort = (options.reasoningEffort ?? "high") as "low" | "medium" | "high" | "xhigh" | "max";
+    } else if (!suppressModelParameters && isAdaptiveOnly) {
+      // Adaptive-only Claude models always think; let the SDK pick a default effort.
       sdkOptions.thinking = { type: "adaptive" };
     }
 
@@ -548,7 +619,7 @@ export class ClaudeSubscriptionProvider extends BaseLLMProvider {
         options.model,
         resumeSessionId ?? "fold-path",
       );
-      const friendly = err instanceof Error ? err.message : String(err);
+      const friendly = formatClaudeSdkError(err);
       throw new Error(`Claude (Subscription) request failed: ${friendly}`);
     } finally {
       if (options.signal) options.signal.removeEventListener("abort", onUpstreamAbort);
@@ -588,7 +659,7 @@ export class ClaudeSubscriptionProvider extends BaseLLMProvider {
    * Embeddings are not exposed by the Claude Agent SDK. Surface a clear error
    * so callers can route embedding work to a separate connection.
    */
-  override async embed(_texts: string[], _model: string): Promise<number[][]> {
+  override async embed(_texts: string[], _model: string, _signal?: AbortSignal): Promise<number[][]> {
     throw new Error(
       "The Claude (Subscription) provider does not support embeddings. Configure a separate embedding connection (OpenAI, Google, or local).",
     );

@@ -11,6 +11,7 @@ import { useUIStore } from "../stores/ui.store";
 import { clearBrowserRuntimeCaches } from "../lib/browser-runtime";
 import { ApiError } from "../lib/api-client";
 import { lorebookKeys } from "./use-lorebooks";
+import { achievementKeys, trackAchievementEvent } from "./use-achievements";
 import type {
   Chat,
   ChatMemoryChunk,
@@ -150,6 +151,7 @@ export function useChats() {
   return useQuery({
     queryKey: chatKeys.list(),
     queryFn: () => api.get<Chat[]>("/chats"),
+    placeholderData: (previousData) => previousData,
     staleTime: 10_000,
     refetchOnMount: "always",
     refetchOnReconnect: true,
@@ -168,6 +170,11 @@ export function useChat(id: string | null) {
     queryFn: () => api.get<Chat>(`/chats/${id}`),
     enabled: !!id,
     staleTime: 60_000,
+    retry: (failureCount, error) => {
+      const status = error instanceof ApiError ? error.status : 0;
+      if (status >= 400 && status < 500 && status !== 408 && status !== 429) return false;
+      return failureCount < 3;
+    },
   });
 }
 
@@ -322,6 +329,23 @@ function getDeleteChatGroupId(input: DeleteChatInput) {
   return typeof input === "string" ? null : (input.groupId ?? null);
 }
 
+function upsertCachedChat(rows: Chat[] | undefined, chat: Chat): Chat[] | undefined {
+  if (!rows) return rows;
+  const existingIndex = rows.findIndex((row) => row.id === chat.id);
+  if (existingIndex === -1) return [chat, ...rows];
+  return rows.map((row) => (row.id === chat.id ? chat : row));
+}
+
+function syncCachedBranch(rows: Chat[] | undefined, sourceChatId: string, newChat: Chat): Chat[] | undefined {
+  if (!rows) return rows;
+  const groupedRows = newChat.groupId
+    ? rows.map((row) =>
+        row.id === sourceChatId && row.groupId !== newChat.groupId ? { ...row, groupId: newChat.groupId } : row,
+      )
+    : rows;
+  return upsertCachedChat(groupedRows, newChat);
+}
+
 export function useCreateChat() {
   const qc = useQueryClient();
   return useMutation({
@@ -334,8 +358,15 @@ export function useCreateChat() {
       personaId?: string | null;
       promptPresetId?: string | null;
     }) => api.post<Chat>("/chats", data),
-    onSuccess: () => {
+    onSuccess: (chat) => {
+      if (chat) {
+        qc.setQueryData(chatKeys.detail(chat.id), chat);
+        qc.setQueryData<Chat[]>(chatKeys.list(), (existing) => upsertCachedChat(existing, chat));
+      }
       qc.invalidateQueries({ queryKey: chatKeys.list() });
+      void trackAchievementEvent("chat_created")
+        .finally(() => qc.invalidateQueries({ queryKey: achievementKeys.all }))
+        .catch(() => undefined);
     },
   });
 }
@@ -447,20 +478,66 @@ export function useUpdateChat() {
   });
 }
 
+export function useTouchChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<Chat>(`/chats/${id}/touch`, {}),
+    onMutate: async (id) => {
+      const updatedAt = new Date().toISOString();
+      qc.setQueryData<Chat[]>(chatKeys.list(), (existing) =>
+        existing
+          ?.map((chat) => (chat.id === id ? { ...chat, updatedAt } : chat))
+          .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+      );
+      qc.setQueryData<Chat>(chatKeys.detail(id), (existing) => (existing ? { ...existing, updatedAt } : existing));
+    },
+    onSuccess: (chat, id) => {
+      if (chat) qc.setQueryData<Chat>(chatKeys.detail(id), chat);
+      qc.invalidateQueries({ queryKey: chatKeys.list() });
+    },
+  });
+}
+
 export function useUpdateChatMetadata() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...metadata }: { id: string; [key: string]: unknown }) =>
       api.patch<Chat>(`/chats/${id}/metadata`, metadata),
+    onMutate: async ({ id, ...metadata }) => {
+      await qc.cancelQueries({ queryKey: chatKeys.detail(id) });
+      const previous = qc.getQueryData<Chat>(chatKeys.detail(id));
+      const updatedAt = new Date().toISOString();
+      qc.setQueryData<Chat>(chatKeys.detail(id), (existing) =>
+        existing
+          ? {
+              ...existing,
+              metadata: { ...existing.metadata, ...metadata },
+              updatedAt,
+            }
+          : existing,
+      );
+      return { previous };
+    },
+    onError: (_error, variables, context) => {
+      if (context?.previous) {
+        qc.setQueryData<Chat>(chatKeys.detail(variables.id), context.previous);
+      }
+    },
     onSuccess: (data, vars) => {
-      // Write the server response straight into the detail cache. Plain
-      // invalidation alone leaves stale data in place when no observer is
-      // mounted to trigger a refetch (e.g. user navigated away after firing
-      // the mutation), causing later renders to re-read the pre-mutation
-      // value — which is what made cleared chat backgrounds reappear after
-      // a chat switch round-trip.
+      // Metadata PATCH returns a full chat row, but concurrent updates to
+      // non-metadata fields (for example promptPresetId) may still be in
+      // flight. Merge only metadata, and keep newer optimistic metadata on top
+      // so an older PATCH response cannot clobber a later in-flight edit.
       if (data) {
-        qc.setQueryData(chatKeys.detail(vars.id), data);
+        qc.setQueryData<Chat>(chatKeys.detail(vars.id), (existing) =>
+          existing
+            ? {
+                ...existing,
+                metadata: { ...data.metadata, ...existing.metadata },
+                updatedAt: data.updatedAt,
+              }
+            : data,
+        );
       } else {
         qc.invalidateQueries({ queryKey: chatKeys.detail(vars.id) });
       }
@@ -793,6 +870,8 @@ export function usePeekPrompt() {
       api.post<{
         messages: Array<{ role: string; content: string }>;
         parameters: unknown;
+        source?: "cached" | "live_preview" | "raw_messages";
+        exact?: boolean;
         generationInfo: {
           model?: string;
           provider?: string;
@@ -857,15 +936,25 @@ export function useBranchChat() {
     mutationFn: ({ chatId, upToMessageId }: { chatId: string; upToMessageId?: string }) =>
       api.post<Chat>(`/chats/${chatId}/branch`, { upToMessageId }),
     onSuccess: (newChat, { chatId }) => {
+      if (newChat) {
+        qc.setQueryData(chatKeys.detail(newChat.id), newChat);
+        qc.setQueryData<Chat[]>(chatKeys.list(), (existing) => syncCachedBranch(existing, chatId, newChat));
+
+        if (newChat.groupId) {
+          qc.setQueryData<Chat>(chatKeys.detail(chatId), (existing) =>
+            existing && existing.groupId !== newChat.groupId ? { ...existing, groupId: newChat.groupId } : existing,
+          );
+          qc.setQueryData<Chat[]>(chatKeys.group(newChat.groupId), (existing) =>
+            syncCachedBranch(existing, chatId, newChat),
+          );
+        }
+      }
+
       qc.invalidateQueries({ queryKey: chatKeys.list() });
       qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
 
       if (newChat?.groupId) {
         qc.invalidateQueries({ queryKey: chatKeys.group(newChat.groupId) });
-      }
-
-      if (newChat) {
-        qc.setQueryData(chatKeys.detail(newChat.id), newChat);
       }
     },
   });

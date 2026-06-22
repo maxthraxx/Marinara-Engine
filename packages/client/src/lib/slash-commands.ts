@@ -4,6 +4,7 @@
 import { api } from "./api-client";
 import { useChatStore } from "../stores/chat.store";
 import { useUIStore } from "../stores/ui.store";
+import { useUnoGameStore } from "../stores/uno-game.store";
 import { toast } from "sonner";
 import {
   SUPPORTED_MACROS,
@@ -50,6 +51,32 @@ export interface SlashCommandContext {
   characters?: Array<{ id: string; name: string }>;
   /** Apply a manual sprite expression override */
   setSpriteExpression?: (characterId: string, expression: string) => void | Promise<void>;
+}
+
+function quoteCommandArgument(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (!/[\s"\\]/u.test(trimmed)) return trimmed;
+  return `"${trimmed.replace(/["\\]/g, "\\$&")}"`;
+}
+
+function formatAvailableCharacterList(characters: Array<{ id: string; name: string }>): string {
+  return characters.map((character) => character.name).join(", ");
+}
+
+function buildStatusCommandHelp(characters: Array<{ id: string; name: string }>): string {
+  const available = formatAvailableCharacterList(characters);
+  const exampleTarget = characters[0]?.name ?? "Character Name";
+  const exampleArg = quoteCommandArgument(exampleTarget) || '"Character Name"';
+  return [
+    "Usage: /status <online|idle|dnd|offline|clear> [character name]",
+    "Examples:",
+    `/status online ${exampleArg}`,
+    `/status clear ${exampleArg}`,
+    available ? `Available: ${available}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export interface SlashCommandResult {
@@ -239,6 +266,14 @@ function matchSpriteExpression(expressions: string[], requested: string): string
   );
 }
 
+const CONVERSATION_STATUS_VALUES = ["online", "idle", "dnd", "offline"] as const;
+
+type ConversationStatusValue = (typeof CONVERSATION_STATUS_VALUES)[number];
+
+function isConversationStatusValue(value: string): value is ConversationStatusValue {
+  return CONVERSATION_STATUS_VALUES.includes(value as ConversationStatusValue);
+}
+
 // ── Message index parser (for /hide and /unhide) ────────────────
 
 /**
@@ -307,6 +342,19 @@ const COMMANDS: SlashCommand[] = [
       const detail = parsed.count > 1 ? ` [${rolls.join(", ")}]${modStr}` : modStr ? ` (${rolls[0]}${modStr})` : "";
       const text = `🎲 **${notation}** → **${sum}**${detail}`;
       ctx.createMessage({ role: "narrator", content: text });
+      return { handled: true };
+    },
+  },
+  {
+    name: "uno",
+    description: "Start a game of UNO with the characters in this chat",
+    usage: "/uno",
+    local: true,
+    async execute(_args, ctx) {
+      if (ctx.mode === "roleplay") {
+        return { handled: true, feedback: "UNO can only be played in conversation chats." };
+      }
+      useUnoGameStore.getState().openSetup(ctx.chatId);
       return { handled: true };
     },
   },
@@ -521,6 +569,102 @@ const COMMANDS: SlashCommand[] = [
       await ctx.setSpriteExpression(target.id, expression);
       ctx.invalidate();
       return { handled: true, feedback: `Emote updated: ${target.name} -> ${expression}` };
+    },
+  },
+  {
+    name: "status",
+    description: "Set or clear a conversation status override",
+    usage: "/status <status|clear> [character name]",
+    local: true,
+    async execute(args, ctx) {
+      if (ctx.mode !== "conversation") {
+        return { handled: true, feedback: "/status is only available in conversation mode." };
+      }
+
+      const characters = ctx.characters ?? [];
+      if (characters.length === 0) {
+        return { handled: true, feedback: "No character metadata found for this chat." };
+      }
+
+      const tokens = parseCommandTokens(args);
+      const action = normalizeLookup(tokens[0]?.value ?? "");
+      if (!action) {
+        return { handled: true, feedback: buildStatusCommandHelp(characters) };
+      }
+
+      const requestedName = tokens
+        .slice(1)
+        .map((token) => token.value)
+        .join(" ")
+        .trim();
+
+      const resolveTargetCharacter = () => {
+        if (requestedName) {
+          return findSceneCharacter(characters, requestedName);
+        }
+        if (characters.length === 1) {
+          return characters[0]!;
+        }
+        return null;
+      };
+
+      if (action === "clear") {
+        const target = resolveTargetCharacter();
+        if (!target) {
+          return {
+            handled: true,
+            feedback: requestedName
+              ? `Character "${requestedName}" not found. Available: ${formatAvailableCharacterList(characters)}`
+              : buildStatusCommandHelp(characters),
+          };
+        }
+
+        try {
+          await api.patch(`/chats/${ctx.chatId}/metadata`, {
+            conversationStatusOverrides: { [target.id]: null },
+          });
+          ctx.invalidate();
+          return { handled: true, feedback: `Cleared ${target.name}'s status override.` };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          return { handled: true, feedback: `Failed to update status: ${message}` };
+        }
+      }
+
+      if (!isConversationStatusValue(action)) {
+        return {
+          handled: true,
+          feedback: `Status must be one of: online, idle, dnd, offline, clear.\n\n${buildStatusCommandHelp(characters)}`,
+        };
+      }
+
+      const target = resolveTargetCharacter();
+      if (!target) {
+        return {
+          handled: true,
+          feedback: requestedName
+            ? `Character "${requestedName}" not found. Available: ${formatAvailableCharacterList(characters)}`
+            : buildStatusCommandHelp(characters),
+        };
+      }
+
+      try {
+        await api.patch(`/chats/${ctx.chatId}/metadata`, {
+          conversationStatusOverrides: {
+            [target.id]: {
+              status: action,
+              activity: null,
+              createdAt: new Date().toISOString(),
+              expiresAt: null,
+            },
+          },
+        });
+        ctx.invalidate();
+        return { handled: true, feedback: `Set ${target.name} to ${action}.` };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return { handled: true, feedback: `Failed to update status: ${message}` };
+      }
     },
   },
   {
@@ -840,7 +984,9 @@ export function matchSlashCommand(input: string): { command: SlashCommand; args:
 /** Get all commands that match a partial prefix (for autocomplete). */
 export function getSlashCompletions(partial: string): SlashCommand[] {
   if (!partial.startsWith("/")) return [];
-  const prefix = partial.slice(1).toLowerCase();
+  const rawPrefix = partial.slice(1);
+  if (rawPrefix.includes(" ")) return [];
+  const prefix = rawPrefix.trim().toLowerCase();
   if (!prefix) return COMMANDS;
   return COMMANDS.filter((c) => c.name.startsWith(prefix) || c.aliases?.some((a) => a.startsWith(prefix)));
 }

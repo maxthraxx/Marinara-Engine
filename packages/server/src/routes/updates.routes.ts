@@ -35,7 +35,7 @@ const MANUAL_GIT_UPDATE_COMMAND =
 const DOCKER_UPDATE_COMMAND = "docker compose pull && docker compose up -d";
 const ANDROID_APK_NOTICE =
   "> [!IMPORTANT]\n" +
-  "> **Android APK notice:** The APK is not a standalone Marinara Engine app yet. It is a WebView shell for the local Marinara server, so Termux must be installed and `./start-termux.sh` must be running on the same Android device before you open the APK.";
+  "> **Android APK notice:** The APK is a Termux bootstrap + WebView shell, not a native Android server build. It opens an already-running local Marinara server, and on first launch it can download Termux from F-Droid, hand it to Android's installer, and start Marinara through Termux after Android permission prompts.";
 
 // ── Cached release info (15-min TTL) ──
 let cachedRelease: {
@@ -698,11 +698,28 @@ export async function updatesRoutes(app: FastifyInstance) {
         message: "Update applied successfully. Please relaunch the app to use the new version.",
       };
 
-      // Give Fastify time to flush the response, then exit
+      // Give Fastify time to flush the response and clear the file-backed
+      // store's write-back debounce window (SAVE_DEBOUNCE_MS = 750ms), then
+      // shut down GRACEFULLY so pending dirty tables reach disk before exit.
       setTimeout(() => {
-        logger.info("[Update] Shutting down after update...");
-        process.exit(0);
-      }, 500);
+        void (async () => {
+          try {
+            // Mirror index.ts shutdown() (and the onClose hook in app.ts):
+            // app.close() runs Fastify onClose -> closeDB() -> fileStore.close()
+            // -> flush(true), plus stops the sidecar. A bare process.exit(0)
+            // bypasses onClose/beforeExit and silently drops debounced writes.
+            await app.close();
+            logger.info("[Update] Shutting down after update...");
+            process.exit(0);
+          } catch (err) {
+            // Flush/close failed: log it (process is being torn down for a
+            // user-initiated relaunch, so still exit 0 rather than signal a
+            // crash to any supervisor).
+            logger.error(err, "[Update] Graceful shutdown failed; exiting anyway");
+            process.exit(0);
+          }
+        })();
+      }, 1_000);
 
       return result;
     } catch (err: unknown) {

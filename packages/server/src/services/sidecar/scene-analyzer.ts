@@ -48,10 +48,18 @@ export interface SceneAnalyzerContext {
   recentSpotifyTracks?: string[];
   /** Current ambient tag. */
   currentAmbient?: string | null;
+  /** Current tracked in-world location. */
+  currentLocation?: string | null;
   /** Current weather. */
   currentWeather: string | null;
   /** Current time of day. */
   currentTimeOfDay: string | null;
+  /** Game setup genre, e.g. fantasy, sci-fi, modern. */
+  genre?: string | null;
+  /** Game setup setting, e.g. medieval kingdom, cyberpunk city. */
+  setting?: string | null;
+  /** Short world overview, when available from game setup metadata. */
+  worldOverview?: string | null;
   /** Whether image generation is configured and this turn is allowed to request a rare CG illustration. */
   canGenerateIllustrations?: boolean;
   /** Whether image generation is configured for missing location/background assets. */
@@ -168,6 +176,55 @@ function compactPromptLabel(value: string | null | undefined): string {
     .slice(0, 180);
 }
 
+function sceneAnalyzerSegmentBeats(narration: string): string[] {
+  const lines = narration.split(/\r?\n/);
+  const beats: string[] = [];
+  let fallbackLines: string[] = [];
+  const readablePlaceholderRe = /^\s*\[(?:Note|Book):/i;
+  const narrationRegex = /^\s*Narration\s*:\s*(.+)$/i;
+  const legacyDialogueRegex = /^\s*Dialogue\s*\[([^\]]+)\]\s*(?:\[([^\]]+)\])?\s*:\s*(.+)$/i;
+  const compactDialogueRegex = /^\s*\[([^\]]+)\]\s*(?:\[([^\]]+)\])?\s*:\s*(.+)$/;
+  const partyLineRegex =
+    /^\s*\[([^\]]+)\]\s*\[(main|side|extra|action|thought|whisper(?::([^\]]+))?)\]\s*(?:\[([^\]]+)\])?\s*:\s*(.+)$/i;
+
+  const flushFallback = () => {
+    const text = fallbackLines.join("\n").trim();
+    if (text) beats.push(text);
+    fallbackLines = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushFallback();
+      continue;
+    }
+
+    const structuredMatch =
+      line.match(narrationRegex) ??
+      line.match(legacyDialogueRegex) ??
+      line.match(partyLineRegex) ??
+      line.match(compactDialogueRegex);
+    if (structuredMatch) {
+      flushFallback();
+      beats.push(line);
+      continue;
+    }
+
+    if (readablePlaceholderRe.test(line)) {
+      flushFallback();
+      beats.push(line);
+      continue;
+    }
+
+    fallbackLines.push(line);
+  }
+
+  flushFallback();
+  const fallback = narration.trim();
+  return beats.length > 0 ? beats : fallback ? [fallback] : [];
+}
+
 /** Build the user prompt with all choices inline in a JSON template. */
 export function buildSceneAnalyzerUserPrompt(
   narration: string,
@@ -193,10 +250,10 @@ export function buildSceneAnalyzerUserPrompt(
     parts.push(`<player_action>`, playerAction, `</player_action>`);
   }
 
-  const lines = narration.split(/\r?\n/).filter((l) => l.trim());
+  const beats = sceneAnalyzerSegmentBeats(narration);
   parts.push(`<narration>`);
-  for (let i = 0; i < lines.length; i++) {
-    parts.push(`[${i}] ${lines[i]}`);
+  for (let i = 0; i < beats.length; i++) {
+    parts.push(`[${i}] ${beats[i]}`);
   }
   parts.push(`</narration>`);
 
@@ -205,8 +262,16 @@ export function buildSceneAnalyzerUserPrompt(
   if (ctx) {
     parts.push(
       ``,
-      `Current: state=${ctx.currentState}, bg=${ctx.currentBackground ?? "none"}, weather=${ctx.currentWeather ?? "unset"}, time=${ctx.currentTimeOfDay ?? "unset"}`,
+      `Current: state=${ctx.currentState}, location=${ctx.currentLocation ?? "unset"}, bg=${ctx.currentBackground ?? "none"}, weather=${ctx.currentWeather ?? "unset"}, time=${ctx.currentTimeOfDay ?? "unset"}`,
     );
+    const worldContext = [
+      ctx.genre ? `genre=${compactPromptLabel(ctx.genre)}` : "",
+      ctx.setting ? `setting=${compactPromptLabel(ctx.setting)}` : "",
+      ctx.worldOverview ? `world=${compactPromptLabel(ctx.worldOverview)}` : "",
+    ].filter(Boolean);
+    if (worldContext.length > 0) {
+      parts.push(`World context: ${worldContext.join(", ")}`);
+    }
   }
 
   if (spotifyOptions.length > 0) {
@@ -242,14 +307,14 @@ export function buildSceneAnalyzerUserPrompt(
           `2. AUDIO DIRECTION — Choose compact musicGenre/musicIntensity/locationKind hints. Do NOT choose music or ambient file tags; Marinara maps these hints to assets deterministically. Do NOT output spotifyTrack.`,
         ]),
     `3. REPUTATION — If an NPC relationship shifted, note it. Otherwise empty array.`,
-    `4. PER-BEAT EFFECTS — Scan each narration beat [0]-[${lines.length - 1}]. For each beat you can optionally add:`,
+    `4. PER-BEAT EFFECTS — Scan each narration beat [0]-[${Math.max(0, beats.length - 1)}]. For each beat you can optionally add:`,
     `   - "sfx": sound effects (door slam, explosion, footsteps, impact)`,
     `   - "directions": rare cinematic effects at the exact beat they should happen, usually paired with a meaningful sound or reveal`,
     `   - "background": a DIFFERENT background tag if the characters move to a new location at that beat. The background stays the same until the NEXT segment that changes it, so only set "background" on the beat where characters actually arrive at a new location. Do NOT repeat the current background.`,
     `   Only include segments that HAVE at least one effect — omit empty segments.`,
     ...(canGenerateBackgrounds
       ? [
-          `5. GENERATED LOCATION BACKGROUNDS — If the narration enters a new location and none of the listed background tags fit, use backgrounds:generated:<short-location-slug>. This requests a normal reusable location background image.`,
+          `5. GENERATED LOCATION BACKGROUNDS — If the narration enters a new location and none of the listed background tags fit, use backgrounds:generated:<short-location-slug>. This requests a normal reusable location background image. The generated prompt MUST include concrete scenery plus any provided world context (genre, setting, current location, and time/weather when relevant). For example, a field in a medieval fantasy game should be a medieval fantasy field, not a modern farm.`,
         ]
       : []),
     ...((ctx?.turnNumber ?? 1) > 1
@@ -283,9 +348,11 @@ export function buildSceneAnalyzerUserPrompt(
     `- Cinematic directions are spice, not punctuation. Use at most 2 total directions per turn, and never more than 1 direction in any 3-beat span. Prefer none for routine dialogue.`,
     `- Use directions for real visual beats: a door slamming, a blade impact, thunder, a memory fracture, a kiss/reveal close-up, a panic spike, a scene transition, or a major emotional turn. Do not attach directions to every line.`,
     `- The background should stay the SAME as long as the characters remain in the same location. Only change it in a segment when characters physically move to a different place.`,
+    `- Generated reusable background prompts must be world-grounded scenery. Include concrete place details and any provided setting era/genre context; exclude characters, UI, text, and modern objects unless the world context supports them.`,
     ...(canGenerateIllustrations
       ? [
           `- Use "illustration" rarely. Most turns MUST keep it null. If you request it, the prompt must describe the exact illustrated moment, visible characters, player POV, mood, lighting, and composition.`,
+          `- "illustration.title" should be a short concrete visual title that names what the picture is of, not just why it matters.`,
           ...(imagePromptInstructions
             ? [`- When writing "illustration.prompt", obey these user image instructions: ${imagePromptInstructions}`]
             : []),
@@ -326,7 +393,7 @@ export function buildSceneAnalyzerUserPrompt(
 
   // Build ONE segment example showing the range
   const segmentFields: string[] = [];
-  segmentFields.push(`      "segment": <0-${lines.length - 1}>`);
+  segmentFields.push(`      "segment": <0-${Math.max(0, beats.length - 1)}>`);
   if (sfxLine) segmentFields.push(sfxLine);
   segmentFields.push(
     `      "directions": [{"effect":"<flash|screen_shake|pulse|slow_zoom|impact_zoom|tilt|desaturate|chromatic_aberration|film_grain|rain_streaks|spotlight|focus|vignette|letterbox|color_grade>","duration":<0.4-3>,"intensity":<0-1>}]  // optional, rare`,
@@ -361,7 +428,7 @@ export function buildSceneAnalyzerUserPrompt(
       : []),
     ...(canGenerateIllustrations
       ? [
-          `,  "illustration": null OR {"segment":<0-${lines.length - 1}>,"prompt":"<important CG image prompt from player POV>","characters":["<visible named character>"],"reason":"<why this is CG-worthy>","slug":"<short-safe-slug>"}`,
+          `,  "illustration": null OR {"segment":<0-${Math.max(0, beats.length - 1)}>,"title":"<short concrete visual title>","prompt":"<important CG image prompt from player POV>","characters":["<visible named character>"],"reason":"<why this is CG-worthy>","slug":"<short-safe-slug>"}`,
         ]
       : []),
     `}`,

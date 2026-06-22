@@ -5,13 +5,23 @@ import type { DB } from "../../db/connection.js";
 import { characters as charactersTable } from "../../db/schema/index.js";
 import { logger } from "../../lib/logger.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
+import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
+import { createRegexScriptsStorage } from "../storage/regex-scripts.storage.js";
 import { importSTLorebook } from "./st-lorebook.importer.js";
-import type { CharacterData } from "@marinara-engine/shared";
+import { isPatternSafe } from "@marinara-engine/shared";
+import type {
+  CharacterBookEntryPosition,
+  CharacterBookEntryRole,
+  CharacterData,
+  CreateRegexScriptInput,
+  RegexPlacement,
+} from "@marinara-engine/shared";
 import { existsSync, mkdirSync } from "fs";
-import { writeFile } from "fs/promises";
+import { unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { DATA_DIR } from "../../utils/data-dir.js";
+import { isAllowedImageBuffer } from "../../utils/security.js";
 import AdmZip from "adm-zip";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "./import-timestamps.js";
 
@@ -26,6 +36,45 @@ function ensureAvatarDir() {
 
 function countEmbeddedLorebookEntries(book: unknown): number {
   return getCharacterBookEntries(book).length;
+}
+
+async function removeImportedAvatarFile(avatarPath: string | undefined) {
+  if (!avatarPath?.startsWith("/api/avatars/file/")) return;
+  const filename = avatarPath.split("/").pop();
+  if (!filename) return;
+  try {
+    await unlink(join(AVATAR_DIR, filename));
+  } catch (err) {
+    logger.warn(err, "Failed to roll back imported character avatar");
+  }
+}
+
+async function rollbackImportedCharacter(db: DB, characterId: string | undefined, avatarPath: string | undefined) {
+  if (!characterId) {
+    await removeImportedAvatarFile(avatarPath);
+    return;
+  }
+
+  const characterStorage = createCharactersStorage(db);
+  const lorebookStorage = createLorebooksStorage(db);
+  try {
+    const linkedLorebooks = (await lorebookStorage.listByCharacter(characterId)) as Array<{ id?: string }>;
+    for (const lorebook of linkedLorebooks) {
+      if (typeof lorebook.id === "string") {
+        await lorebookStorage.remove(lorebook.id);
+      }
+    }
+  } catch (err) {
+    logger.warn(err, "Failed to roll back imported character lorebook");
+  }
+
+  try {
+    await characterStorage.remove(characterId);
+  } catch (err) {
+    logger.warn(err, "Failed to roll back imported character");
+  }
+
+  await removeImportedAvatarFile(avatarPath);
 }
 
 /**
@@ -46,6 +95,72 @@ export interface STCharacterImportOptions {
   importEmbeddedLorebook?: boolean;
   tagImportMode?: STCharacterTagImportMode;
   existingTagKeys?: ReadonlySet<string>;
+  /** Where embedded regex scripts land: scoped to the character (default) or global. */
+  regexScriptScope?: "character" | "global";
+}
+
+// SillyTavern regex placement ids → our placement strings (1 = user input, 2 = AI output).
+// Unknown-only placement arrays are skipped by the importer instead of being
+// silently remapped to AI output.
+function convertStPlacements(placement: unknown): RegexPlacement[] | null {
+  if (!Array.isArray(placement)) return ["ai_output"];
+  const out: RegexPlacement[] = [];
+  for (const n of placement) {
+    if (n === 1 && !out.includes("user_input")) out.push("user_input");
+    else if (n === 2 && !out.includes("ai_output")) out.push("ai_output");
+  }
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * Convert a SillyTavern card's embedded `regex_scripts` into CreateRegexScriptInput
+ * rows scoped to the imported character. ST stores the pattern as `/source/flags`
+ * (or a bare source) and placements as numbers; scripts with an empty or
+ * ReDoS-prone source, or one that won't compile, are skipped.
+ */
+function convertStRegexScripts(
+  stScripts: unknown,
+  characterId: string,
+  scope: "character" | "global",
+): CreateRegexScriptInput[] {
+  if (!Array.isArray(stScripts)) return [];
+  const out: CreateRegexScriptInput[] = [];
+  for (const [index, entry] of stScripts.entries()) {
+    if (!entry || typeof entry !== "object") continue;
+    const s = entry as Record<string, unknown>;
+    const rawFind = typeof s.findRegex === "string" ? s.findRegex.trim() : "";
+    if (!rawFind) continue;
+    // ST patterns are usually `/source/flags`; fall back to treating the whole string as the source.
+    const delimited = /^\/(.*)\/([a-z]*)$/is.exec(rawFind);
+    const source = delimited ? delimited[1]! : rawFind;
+    if (!source || !isPatternSafe(source)) continue;
+    const flags = Array.from(new Set((delimited?.[2] ?? "").replace(/[^gimsuy]/g, ""))).join("");
+    try {
+      new RegExp(source, flags);
+    } catch {
+      continue;
+    }
+    const placement = convertStPlacements(s.placement);
+    if (!placement) continue;
+    out.push({
+      name: typeof s.scriptName === "string" && s.scriptName.trim() ? s.scriptName.trim() : "Imported regex",
+      enabled: s.disabled !== true,
+      findRegex: source,
+      replaceString: typeof s.replaceString === "string" ? s.replaceString : "",
+      trimStrings: Array.isArray(s.trimStrings) ? s.trimStrings.filter((t): t is string => typeof t === "string") : [],
+      placement,
+      flags,
+      promptOnly: s.promptOnly === true || s.prompt_only === true || s.onlyFormatPrompt === true,
+      targetCharacterIds: scope === "global" ? [] : [characterId],
+      // Preserve the card's authoring order so multi-script imports keep a stable
+      // execution/list order (all-zero ties leave it undefined). Gaps from skipped
+      // entries are harmless — list() only sorts by ascending order.
+      order: index,
+      minDepth: typeof s.minDepth === "number" ? s.minDepth : null,
+      maxDepth: typeof s.maxDepth === "number" ? s.maxDepth : null,
+    });
+  }
+  return out;
 }
 
 export type STCharacterTagImportMode = "all" | "none" | "existing";
@@ -108,16 +223,19 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB, op
   // Save avatar image if provided
   let avatarPath: string | undefined;
   if (avatarDataUrl && avatarDataUrl.startsWith("data:image/")) {
-    ensureAvatarDir();
-    const ext = avatarDataUrl.match(/^data:image\/([\w+]+);/)?.[1]?.replace("+xml", "") ?? "png";
-    const filename = `${randomUUID()}.${ext}`;
-    const filePath = join(AVATAR_DIR, filename);
-
     // Strip data URL header → raw base64
     const base64 = avatarDataUrl.split(",")[1];
     if (base64) {
-      await writeFile(filePath, Buffer.from(base64, "base64"));
-      avatarPath = `/api/avatars/file/${filename}`;
+      const declaredExt = avatarDataUrl.match(/^data:image\/([\w+]+);/)?.[1]?.replace("+xml", "");
+      const avatarBuffer = Buffer.from(base64, "base64");
+      const imageInfo = isAllowedImageBuffer(avatarBuffer, declaredExt ? `.${declaredExt}` : undefined);
+      if (imageInfo) {
+        ensureAvatarDir();
+        const filename = `${randomUUID()}.${imageInfo.ext}`;
+        const filePath = join(AVATAR_DIR, filename);
+        await writeFile(filePath, avatarBuffer);
+        avatarPath = `/api/avatars/file/${filename}`;
+      }
     }
   }
 
@@ -171,10 +289,44 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB, op
           updatedAt: normalizedTimestamps?.updatedAt ?? normalizedTimestamps?.createdAt ?? null,
           skipVersionSnapshot: true,
         });
+      } else if (hasEmbeddedLorebook) {
+        throw new Error(
+          typeof result?.error === "string"
+            ? result.error
+            : "Character imported but the embedded lorebook could not be saved — the import has been rolled back.",
+        );
       }
     } catch (err) {
-      logger.warn(err, "Lorebook extraction failed for character import");
-      // Non-fatal — character was imported, just lorebook extraction failed
+      await rollbackImportedCharacter(db, charId, avatarPath);
+      logger.warn(err, "Rolled back character import after embedded lorebook import failed");
+      throw err;
+    }
+  }
+
+  // Import any regex scripts embedded in the ST card, scoped to this character.
+  if (charId) {
+    const cardData = raw.data && typeof raw.data === "object" ? (raw.data as Record<string, unknown>) : raw;
+    const cardExtensions =
+      cardData.extensions && typeof cardData.extensions === "object"
+        ? (cardData.extensions as Record<string, unknown>)
+        : {};
+    const importedRegex = convertStRegexScripts(
+      cardExtensions.regex_scripts,
+      charId,
+      options?.regexScriptScope ?? "character",
+    );
+    if (importedRegex.length > 0) {
+      const regexStorage = createRegexScriptsStorage(db);
+      let created = 0;
+      for (const input of importedRegex) {
+        try {
+          await regexStorage.create(input);
+          created += 1;
+        } catch (err) {
+          logger.warn(err, "Failed to import an embedded regex script");
+        }
+      }
+      if (created > 0) logger.info("Imported %d embedded regex script(s) for character %s", created, charId);
     }
   }
 
@@ -213,11 +365,47 @@ export function inspectSTCharacter(raw: Record<string, unknown>): STCharacterImp
 }
 
 /**
+ * Guard a parsed CharX zip against decompression-bomb abuse before any
+ * `getData()` call materializes a decompressed entry into memory.
+ *
+ * adm-zip's `getData()` allocates the full uncompressed entry as a single
+ * Buffer, and the 256 MB multipart cap (`app.ts`) bounds only the
+ * *compressed* upload — DEFLATE reaches ~1000:1 on repetitive data, so a
+ * few-MB `.charx` can expand to multiple GB and OOM the shared process.
+ * Sizes are read off the central-directory headers (`entry.header.size`),
+ * not the decompressed stream, so we reject before paying the memory cost.
+ * Mirrors the `/marinara-package` cap in `import.routes.ts`. Throws on
+ * violation; callers wrap this so the route surfaces a 4xx-style failure
+ * instead of crashing.
+ */
+function assertCharXWithinLimits(zip: AdmZip): void {
+  const MAX_CHARX_ENTRIES = 512;
+  const MAX_CHARX_ENTRY_BYTES = 64 * 1024 * 1024;
+  const MAX_CHARX_TOTAL_BYTES = 256 * 1024 * 1024;
+  const entries = zip.getEntries();
+  if (entries.length > MAX_CHARX_ENTRIES) {
+    throw new Error(".charx file has too many entries");
+  }
+  let total = 0;
+  for (const entry of entries) {
+    const size = entry.header.size ?? 0;
+    if (size > MAX_CHARX_ENTRY_BYTES) {
+      throw new Error(".charx file has an entry that is too large");
+    }
+    total += size;
+    if (total > MAX_CHARX_TOTAL_BYTES) {
+      throw new Error(".charx file decompresses to too much data");
+    }
+  }
+}
+
+/**
  * Import a CharX (.charx) file — RisuAI Character Card V3 zip format.
  * Extracts card.json and the main icon asset from the zip.
  */
 export async function importCharX(buf: Buffer, db: DB, options?: STCharacterImportOptions) {
   const zip = new AdmZip(buf);
+  assertCharXWithinLimits(zip);
 
   // Extract card.json from root of the zip
   const cardJson = readCharXCardJson(zip);
@@ -250,9 +438,12 @@ export async function importCharX(buf: Buffer, db: DB, options?: STCharacterImpo
       const entry = zip.getEntry(fallback);
       if (entry) {
         const ext = fallback.split(".").pop() ?? "png";
-        const mime = ext === "jpg" ? "jpeg" : ext;
-        avatarDataUrl = `data:image/${mime};base64,${entry.getData().toString("base64")}`;
-        break;
+        const data = entry.getData();
+        const imageInfo = isAllowedImageBuffer(data, `.${ext}`);
+        if (imageInfo) {
+          avatarDataUrl = `data:${imageInfo.mimeType};base64,${data.toString("base64")}`;
+          break;
+        }
       }
     }
   }
@@ -268,6 +459,7 @@ export async function importCharX(buf: Buffer, db: DB, options?: STCharacterImpo
 export function inspectCharX(buf: Buffer): STCharacterImportPreview {
   try {
     const zip = new AdmZip(buf);
+    assertCharXWithinLimits(zip);
     const cardJson = readCharXCardJson(zip);
     if (!cardJson) {
       return {
@@ -300,13 +492,14 @@ function normalizeCharacterData(raw: Record<string, unknown>): CharacterData {
     // V2 / V3 format — extract from data wrapper
     return normalizeV2(raw.data as Record<string, unknown>);
   }
+  if (raw.type === "character" && raw.data) {
+    // RisuAI format
+    const data = raw.data && typeof raw.data === "object" ? (raw.data as Record<string, unknown>) : {};
+    return convertRisuToV2({ ...raw, ...data });
+  }
   if (raw.char_name || raw.name) {
     // V1 / Pygmalion format — convert to V2
     return convertV1toV2(raw);
-  }
-  if (raw.type === "character" && raw.data) {
-    // RisuAI format
-    return convertRisuToV2((raw.data as Record<string, unknown>) ?? {});
   }
   // Try treating the whole object as character data
   return normalizeV2(raw);
@@ -352,6 +545,70 @@ function selectBestCharacterBook(...books: unknown[]): unknown {
 
   return best;
 }
+
+function normalizeCharacterBookPosition(value: unknown): CharacterBookEntryPosition {
+  if (typeof value === "string") {
+    if (value === "after_char" || value === "at_depth" || value === "depth") return value;
+    return "before_char";
+  }
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 6) {
+    return value as CharacterBookEntryPosition;
+  }
+  return "before_char";
+}
+
+function normalizeCharacterBookRole(value: unknown): CharacterBookEntryRole | undefined {
+  if (value === "system" || value === "user" || value === "assistant") return value;
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2) {
+    return value as CharacterBookEntryRole;
+  }
+  return undefined;
+}
+
+function optionalRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function pickDefinedFields(source: Record<string, unknown>, fields: string[]): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (source[field] !== undefined) picked[field] = source[field];
+  }
+  return picked;
+}
+
+const V3_CHARACTER_DATA_FIELDS = [
+  "group_only_greetings",
+  "nickname",
+  "assets",
+  "creation_date",
+  "source",
+  "creator_notes_multilingual",
+];
+
+const CHARACTER_BOOK_ENTRY_PASSTHROUGH_FIELDS = [
+  "probability",
+  "useProbability",
+  "use_probability",
+  "selectiveLogic",
+  "sticky",
+  "cooldown",
+  "delay",
+  "group",
+  "groupWeight",
+  "scanDepth",
+  "scan_depth",
+  "matchWholeWords",
+  "match_whole_words",
+  "caseSensitive",
+  "case_sensitive",
+  "useRegex",
+  "regex",
+  "preventRecursion",
+  "excludeRecursion",
+  "delayUntilRecursion",
+  "vectorized",
+];
 
 function buildCardSpecMetadata(raw: Record<string, unknown>) {
   const spec = typeof raw.spec === "string" ? raw.spec : null;
@@ -423,36 +680,15 @@ function resolveCharXAsset(zip: AdmZip, uri: string, ext?: string): string | nul
   const entry = zip.getEntry(zipPath);
   if (!entry) return null;
 
+  const data = entry.getData();
   const fileExt = ext ?? zipPath.split(".").pop() ?? "png";
-  const mime = fileExt === "jpg" ? "jpeg" : fileExt;
-  return `data:image/${mime};base64,${entry.getData().toString("base64")}`;
-}
-
-function normalizeAltDescriptions(raw: unknown): CharacterData["extensions"]["altDescriptions"] {
-  const entries = (() => {
-    if (Array.isArray(raw)) return raw;
-    if (typeof raw !== "string" || !raw.trim()) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  })();
-
-  return entries
-    .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === "object")
-    .map((entry, index) => ({
-      id: typeof entry.id === "string" && entry.id.trim() ? entry.id : `extension-${index}`,
-      label: typeof entry.label === "string" ? entry.label : "Extension",
-      content: typeof entry.content === "string" ? entry.content : "",
-      active: entry.active !== false,
-    }));
+  const imageInfo = isAllowedImageBuffer(data, `.${fileExt}`);
+  if (!imageInfo) return null;
+  return `data:${imageInfo.mimeType};base64,${data.toString("base64")}`;
 }
 
 function normalizeV2(raw: Record<string, unknown>): CharacterData {
-  const rawExtensions =
-    raw.extensions && typeof raw.extensions === "object" ? (raw.extensions as Record<string, unknown>) : {};
+  const rawExtensions = optionalRecord(raw.extensions);
   return {
     name: String(raw.name ?? "Unknown"),
     description: String(raw.description ?? ""),
@@ -468,6 +704,7 @@ function normalizeV2(raw: Record<string, unknown>): CharacterData {
     character_version: String(raw.character_version ?? ""),
     alternate_greetings: Array.isArray(raw.alternate_greetings) ? raw.alternate_greetings.map(String) : [],
     extensions: {
+      ...rawExtensions,
       talkativeness: Number(rawExtensions.talkativeness ?? 0.5),
       fav: Boolean(rawExtensions.fav),
       world: String(rawExtensions.world ?? ""),
@@ -480,9 +717,9 @@ function normalizeV2(raw: Record<string, unknown>): CharacterData {
       },
       backstory: String(rawExtensions.backstory ?? ""),
       appearance: String(rawExtensions.appearance ?? ""),
-      altDescriptions: normalizeAltDescriptions(rawExtensions.altDescriptions ?? rawExtensions.descriptionExtensions),
     },
     character_book: normalizeCharacterBook(raw.character_book),
+    ...pickDefinedFields(raw, V3_CHARACTER_DATA_FIELDS),
   };
 }
 
@@ -509,16 +746,14 @@ function normalizeCharacterBook(raw: unknown): CharacterData["character_book"] {
   const book = raw as Record<string, unknown>;
 
   const entries = getCharacterBookEntries(book).map((e, i) => {
-    const posRaw = e.position;
-    let position: "before_char" | "after_char" = "before_char";
-    if (typeof posRaw === "string") {
-      position = posRaw === "after_char" ? "after_char" : "before_char";
-    } else if (typeof posRaw === "number") {
-      position = posRaw === 1 ? "after_char" : "before_char";
-    }
+    const position = normalizeCharacterBookPosition(e.position);
+    const depth = typeof e.depth === "number" && Number.isFinite(e.depth) ? e.depth : null;
+    const role = normalizeCharacterBookRole(e.role);
     const title = firstNonEmptyString(e.comment, e.name) ?? `Entry ${i + 1}`;
+    const passthrough = pickDefinedFields(e, CHARACTER_BOOK_ENTRY_PASSTHROUGH_FIELDS);
 
     return {
+      ...passthrough,
       keys: normalizeStringArray(e.key ?? e.keys),
       secondary_keys: normalizeStringArray(e.keysecondary ?? e.secondary_keys),
       content: String(e.content ?? ""),
@@ -533,6 +768,8 @@ function normalizeCharacterBook(raw: unknown): CharacterData["character_book"] {
       selective: Boolean(e.selective ?? false),
       constant: Boolean(e.constant ?? false),
       position,
+      ...(depth !== null ? { depth } : {}),
+      ...(role !== undefined ? { role } : {}),
     };
   });
 
@@ -569,21 +806,47 @@ function convertV1toV2(raw: Record<string, unknown>): CharacterData {
 }
 
 function convertRisuToV2(raw: Record<string, unknown>): CharacterData {
+  const risuExtensions: Record<string, unknown> = {
+    ...optionalRecord(raw.extensions),
+    ...pickDefinedFields(raw, [
+      "depth_prompt",
+      "depthPrompt",
+      "talkativeness",
+      "fav",
+      "world",
+      "regex_scripts",
+      "regexScripts",
+      "backstory",
+      "appearance",
+    ]),
+  };
+  if (risuExtensions.depth_prompt === undefined && raw.depthPrompt !== undefined) {
+    risuExtensions.depth_prompt = raw.depthPrompt;
+  }
+  if (risuExtensions.regex_scripts === undefined && raw.regexScripts !== undefined) {
+    risuExtensions.regex_scripts = raw.regexScripts;
+  }
+
   return normalizeV2({
     name: raw.name ?? "Unknown",
     description: raw.description ?? "",
     personality: raw.personality ?? "",
     scenario: raw.scenario ?? "",
-    first_mes: raw.firstMessage ?? raw.first_mes ?? "",
-    mes_example: raw.exampleMessage ?? raw.mes_example ?? "",
+    first_mes: raw.firstMessage ?? raw.first_mes ?? raw.first_message ?? "",
+    mes_example: raw.exampleMessage ?? raw.mes_example ?? raw.example_dialogue ?? "",
     system_prompt: raw.systemPrompt ?? "",
     creator_notes: raw.creatorNotes ?? "",
-    post_history_instructions: "",
+    post_history_instructions:
+      raw.postHistoryInstructions ?? raw.post_history_instructions ?? raw.jailbreak ?? raw.jailbreakPrompt ?? "",
     tags: Array.isArray(raw.tags) ? raw.tags.map(String) : [],
     creator: String(raw.creator ?? ""),
-    character_version: "",
-    alternate_greetings: Array.isArray(raw.alternateGreetings) ? raw.alternateGreetings.map(String) : [],
-    extensions: {},
-    character_book: null,
+    character_version: raw.characterVersion ?? raw.character_version ?? "",
+    alternate_greetings: Array.isArray(raw.alternateGreetings)
+      ? raw.alternateGreetings.map(String)
+      : Array.isArray(raw.alternate_greetings)
+        ? raw.alternate_greetings.map(String)
+        : [],
+    extensions: risuExtensions,
+    character_book: raw.character_book ?? raw.characterBook ?? raw.lorebook ?? raw.world_info ?? raw.worldInfo ?? null,
   });
 }

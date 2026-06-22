@@ -54,7 +54,10 @@
 
    QUICK CUSTOMIZATION GUIDE
    ─────────────────────────
-   • Change the app's accent color → edit --primary in §2
+   • Change the app's accent color → edit --primary / --marinara-app-accent-* in §2
+   • Change chat toolbar/panel accents → edit --marinara-chat-chrome-accent in §2
+   • Change ordinary chat chrome text → edit --marinara-chat-chrome-text in §2
+   • Change rainbow chrome accents → edit --marinara-chat-chrome-accent-gradient in §2
    • Change the background color   → edit --background in §2
    • Change the font               → edit --font-y2k in §2
    • Change the cursor SVG         → edit --cursor-pink in §2
@@ -78,6 +81,11 @@
      --border, --input, --ring          Borders, inputs, focus rings
      --sidebar-*                        Left & right sidebar tones
      --glow-primary, --glow-accent      Glow effect bases
+     --marinara-app-accent-*            Shared app accent solid/gradient tokens
+     --marinara-chat-chrome-*           Shared chat/game top buttons, panels, highlights
+     --marinara-chat-chrome-accent      Shared chrome icon, border, ring, and highlight color
+     --marinara-chat-chrome-text        Shared non-action chrome text color for tracker widgets, panels, popovers
+     --marinara-chat-chrome-accent-gradient  Optional gradient for rainbow chrome accents
 
    PALETTE (decorative flavor — components should NOT reference these
    directly; they exist for the CSS effects layer and user customization):
@@ -169,12 +177,13 @@
   color-scheme: dark;
 
   --background: #050312;
+  --marinara-app-background-paint: var(--background);
   --foreground: #d4d4d4;
   --card: #141414d9;
   --card-foreground: #d4d4d4;
   --popover: #141414d9;
   --popover-foreground: #d4d4d4;
-  --primary: #ffb3d9;
+  --primary: #d4acfb;
   --primary-foreground: #0a0a0a;
   --secondary: #1a1a2e;
   --secondary-foreground: #e8d4ff;
@@ -186,15 +195,123 @@
   --destructive-foreground: #0a0a0a;
   --border: #d4adfc33;
   --input: #d4adfc33;
-  --ring: #ffb3d9;
+  --ring: #d4acfb;
   --radius: 0.75rem;
   --sidebar: #08061a;
   --sidebar-foreground: #e8d4ff;
   --sidebar-border: #d4adfc22;
-  --sidebar-accent: #ffb3d91a;
-  --sidebar-accent-foreground: #ffb3d9;
-  --glow-primary: rgba(255, 179, 217, 0.15);
+  --sidebar-accent: #d4acfb1a;
+  --sidebar-accent-foreground: #d4acfb;
+  --glow-primary: color-mix(in srgb, var(--primary) 15%, transparent);
   --glow-accent: rgba(212, 173, 252, 0.12);
+
+  /* Theme hooks for shared chat, roleplay, and game chrome. */
+  --marinara-topbar-surface: color-mix(in srgb, var(--card) 80%, transparent);
+  --marinara-topbar-border: color-mix(in srgb, var(--border) 30%, transparent);
+  --marinara-shell-edge-border: color-mix(in srgb, var(--foreground) 14%, var(--background) 86%);
+  --marinara-music-player-shell-bg: var(--marinara-topbar-surface);
+  --marinara-music-player-shell-border: var(--marinara-topbar-border);
+  --mari-logo-cyan: #4de5dd;
+  --mari-logo-cyan-deep: #3ab8b1;
+  --mari-logo-orange: #eb8951;
+  --mari-logo-orange-deep: #d97530;
+  --mari-logo-pink: #e15c8c;
+  --mari-logo-pink-deep: #c94776;
+  --mari-logo-title-cyan: #22d3ee;
+  --mari-logo-title-orange: #fb923c;
+  --mari-logo-title-pink: #ec4899;
+  --marinara-app-accent-solid: var(--primary);
+  --marinara-app-accent-gradient: linear-gradient(
+    90deg,
+    var(--marinara-app-accent-solid),
+    color-mix(in srgb, var(--marinara-app-accent-solid) 76%, var(--foreground) 24%),
+    var(--marinara-app-accent-solid)
+  );
+  --marinara-chat-chrome-accent: var(--marinara-app-accent-solid);
+  --marinara-chat-chrome-accent-gradient: var(--marinara-app-accent-gradient);
+  --marinara-chat-chrome-text: var(--foreground);
+  --marinara-chat-chrome-button-text-base: var(--marinara-chat-chrome-accent);
+  --marinara-chat-chrome-highlight-text-base: var(--marinara-chat-chrome-accent);
+  --marinara-chat-chrome-surface-bg: var(--card);
+  --marinara-chat-chrome-surface-bg-hover: color-mix(
+    in srgb,
+    var(--marinara-chat-chrome-surface-bg) 92%,
+    var(--foreground) 8%
+  );
+  --marinara-chat-chrome-surface-bg-active: color-mix(
+    in srgb,
+    var(--marinara-chat-chrome-surface-bg) 88%,
+    var(--foreground) 12%
+  );
+  --marinara-chat-chrome-button-bg: var(--marinara-chat-chrome-surface-bg);
+  --marinara-chat-chrome-button-bg-hover: color-mix(
+    in srgb,
+    var(--marinara-chat-chrome-surface-bg-hover) 90%,
+    var(--marinara-chat-chrome-accent) 10%
+  );
+  --marinara-chat-chrome-button-bg-active: color-mix(
+    in srgb,
+    var(--marinara-chat-chrome-surface-bg-active) 84%,
+    var(--marinara-chat-chrome-accent) 16%
+  );
+  --marinara-chat-chrome-button-border: color-mix(in srgb, var(--marinara-chat-chrome-accent) 12%, transparent);
+  --marinara-chat-chrome-button-border-hover: color-mix(in srgb, var(--marinara-chat-chrome-accent) 20%, transparent);
+  --marinara-chat-chrome-button-border-active: color-mix(in srgb, var(--marinara-chat-chrome-accent) 24%, transparent);
+  --marinara-chat-chrome-button-text: color-mix(in srgb, var(--marinara-chat-chrome-button-text-base) 64%, transparent);
+  --marinara-chat-chrome-button-text-hover: color-mix(
+    in srgb,
+    var(--marinara-chat-chrome-button-text-base) 92%,
+    transparent
+  );
+  --marinara-chat-chrome-button-text-active: color-mix(
+    in srgb,
+    var(--marinara-chat-chrome-button-text-base) 96%,
+    transparent
+  );
+  --marinara-chat-chrome-focus-ring: color-mix(in srgb, var(--marinara-chat-chrome-accent) 22%, transparent);
+  --marinara-chat-chrome-panel-bg: var(--marinara-chat-chrome-button-bg);
+  --marinara-chat-chrome-panel-border: color-mix(in srgb, var(--marinara-chat-chrome-accent) 16%, transparent);
+  --marinara-chat-chrome-panel-divider: color-mix(in srgb, var(--marinara-chat-chrome-accent) 13%, transparent);
+  --marinara-chat-chrome-panel-text: color-mix(in srgb, var(--marinara-chat-chrome-text) 90%, transparent);
+  --marinara-chat-chrome-panel-title: color-mix(in srgb, var(--marinara-chat-chrome-text) 96%, transparent);
+  --marinara-chat-chrome-panel-muted: color-mix(in srgb, var(--marinara-chat-chrome-text) 58%, transparent);
+  --marinara-chat-chrome-panel-scrollbar: color-mix(in srgb, var(--marinara-chat-chrome-accent) 22%, transparent);
+  --marinara-chat-chrome-highlight-bg: color-mix(in srgb, var(--marinara-chat-chrome-accent) 9%, transparent);
+  --marinara-chat-chrome-highlight-bg-hover: color-mix(in srgb, var(--marinara-chat-chrome-accent) 13%, transparent);
+  --marinara-chat-chrome-highlight-text: color-mix(
+    in srgb,
+    var(--marinara-chat-chrome-highlight-text-base) 94%,
+    transparent
+  );
+  --marinara-chat-chrome-input-bg: var(--marinara-chat-chrome-surface-bg);
+  --marinara-chat-chrome-input-border: color-mix(in srgb, var(--marinara-chat-chrome-accent) 14%, transparent);
+  --marinara-chat-chrome-input-border-focus: color-mix(in srgb, var(--marinara-chat-chrome-accent) 30%, transparent);
+  --marinara-chat-option-field-bg: var(--marinara-chat-chrome-button-bg);
+  --marinara-chat-option-field-bg-hover: var(--marinara-chat-chrome-button-bg-hover);
+  --marinara-chat-option-field-bg-active: var(--marinara-chat-chrome-button-bg-active);
+  --marinara-chat-option-field-border: var(--marinara-chat-chrome-button-border);
+  --marinara-chat-option-field-border-active: var(--marinara-chat-chrome-button-border-active);
+  --marinara-chat-option-field-ring: var(--marinara-chat-chrome-focus-ring);
+  --marinara-chat-option-switch-off: color-mix(in srgb, var(--muted-foreground) 48%, transparent);
+  --marinara-editor-bg: var(--background);
+  --marinara-editor-surface-bg: var(--marinara-chat-chrome-panel-bg);
+  --marinara-editor-surface-bg-hover: var(--marinara-chat-chrome-surface-bg-hover);
+  --marinara-editor-surface-bg-active: var(--marinara-chat-chrome-surface-bg-active);
+  --marinara-editor-control-bg: color-mix(in srgb, var(--marinara-editor-surface-bg) 78%, var(--background) 22%);
+  --marinara-editor-control-bg-hover: color-mix(
+    in srgb,
+    var(--marinara-editor-surface-bg-hover) 86%,
+    var(--marinara-chat-chrome-accent) 14%
+  );
+  --marinara-editor-border: var(--marinara-chat-chrome-panel-border);
+  --marinara-editor-border-strong: color-mix(in srgb, var(--marinara-chat-chrome-accent) 24%, transparent);
+  --marinara-editor-divider: var(--marinara-chat-chrome-panel-divider);
+  --marinara-editor-text: var(--marinara-chat-chrome-panel-title);
+  --marinara-editor-muted: var(--marinara-chat-chrome-panel-muted);
+  --marinara-editor-accent: var(--marinara-chat-chrome-accent);
+  --marinara-editor-focus-ring: var(--marinara-chat-chrome-focus-ring);
+  --marinara-editor-shadow: 0 18px 48px color-mix(in srgb, #000 24%, transparent);
+
   --tracker-card-neutral-surface-top: color-mix(
     in srgb,
     color-mix(in srgb, var(--secondary) 66%, var(--accent) 34%) 91%,
@@ -240,32 +357,32 @@
 
   --glass-bg: linear-gradient(
     135deg,
-    rgba(255, 179, 217, 0.06) 0%,
+    color-mix(in srgb, var(--primary) 6%, transparent) 0%,
     rgba(212, 173, 252, 0.06) 50%,
     rgba(168, 216, 255, 0.06) 100%
   );
   --glass-border: rgba(255, 255, 255, 0.08);
   --glass-strong-bg: linear-gradient(
     135deg,
-    rgba(255, 179, 217, 0.1) 0%,
+    color-mix(in srgb, var(--primary) 10%, transparent) 0%,
     rgba(212, 173, 252, 0.1) 50%,
     rgba(168, 216, 255, 0.1) 100%
   );
   --glass-strong-border: rgba(255, 255, 255, 0.12);
   --glass-strong-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px rgba(255, 255, 255, 0.1);
 
-  --glow-color-1: rgba(255, 179, 217, 0.3);
+  --glow-color-1: color-mix(in srgb, var(--primary) 30%, transparent);
   --glow-color-2: rgba(212, 173, 252, 0.2);
   --glow-color-3: rgba(168, 216, 255, 0.1);
-  --glow-sm-1: rgba(255, 179, 217, 0.2);
+  --glow-sm-1: color-mix(in srgb, var(--primary) 20%, transparent);
   --glow-sm-2: rgba(212, 173, 252, 0.1);
 
   --scrollbar-track: #1a1a2e40;
   --scrollbar-border: #0a0a0a66;
 
-  --cursor-pink: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 3L10 20L12 12L20 10L3 3Z' fill='%23FFB3D9' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E");
+  --cursor-pink: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 3L10 20L12 12L20 10L3 3Z' fill='%23D4ACFB' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E");
 
-  --y2k-pink: #ffb3d9;
+  --y2k-pink: var(--primary);
   --y2k-purple: #d4adfc;
   --y2k-blue: #a8d8ff;
   --y2k-mint: #b8f4d3;
@@ -303,13 +420,14 @@
   color-scheme: light;
 
   --background: #faf8ff;
+  --marinara-app-background-paint: var(--background);
   --foreground: #1a1025;
   --card: #ffffffee;
   --card-foreground: #1a1025;
   --popover: #ffffffee;
   --popover-foreground: #1a1025;
-  --primary: #e0709a;
-  --primary-foreground: #ffffff;
+  --primary: #d4acfb;
+  --primary-foreground: #0a0a0a;
   --secondary: #f0eaf7;
   --secondary-foreground: #3a2960;
   --muted: #f0eaf7;
@@ -320,13 +438,13 @@
   --destructive-foreground: #ffffff;
   --border: #d4adfc44;
   --input: #d4adfc44;
-  --ring: #e0709a;
+  --ring: #d4acfb;
   --sidebar: #f5f0fc;
   --sidebar-foreground: #3a2960;
   --sidebar-border: #d4adfc33;
-  --sidebar-accent: #e0709a18;
-  --sidebar-accent-foreground: #e0709a;
-  --glow-primary: rgba(224, 112, 154, 0.1);
+  --sidebar-accent: #d4acfb18;
+  --sidebar-accent-foreground: #d4acfb;
+  --glow-primary: color-mix(in srgb, var(--primary) 12%, transparent);
   --glow-accent: rgba(212, 173, 252, 0.08);
   --tracker-card-neutral-surface-top: color-mix(in srgb, var(--card) 84%, var(--accent) 16%);
   --tracker-card-neutral-surface-bottom: color-mix(in srgb, var(--secondary) 86%, var(--primary) 14%);
@@ -353,16 +471,16 @@
   --glass-strong-border: rgba(0, 0, 0, 0.08);
   --glass-strong-shadow: 0 4px 16px rgba(0, 0, 0, 0.06), inset 0 1px rgba(255, 255, 255, 0.5);
 
-  --glow-color-1: rgba(224, 112, 154, 0.2);
+  --glow-color-1: color-mix(in srgb, var(--primary) 20%, transparent);
   --glow-color-2: rgba(212, 173, 252, 0.15);
   --glow-color-3: rgba(168, 216, 255, 0.08);
-  --glow-sm-1: rgba(224, 112, 154, 0.15);
+  --glow-sm-1: color-mix(in srgb, var(--primary) 15%, transparent);
   --glow-sm-2: rgba(212, 173, 252, 0.08);
 
   --scrollbar-track: rgba(212, 173, 252, 0.1);
   --scrollbar-border: rgba(0, 0, 0, 0.1);
 
-  --y2k-pink: #e0709a;
+  --y2k-pink: var(--primary);
   --y2k-purple: #9b6ec6;
   --y2k-blue: #5ea0d4;
   --y2k-mint: #48c990;
@@ -401,8 +519,8 @@
 
 [data-theme="light"] .retro-glow-text {
   text-shadow:
-    0 0 5px rgba(224, 112, 154, 0.25),
-    0 0 10px rgba(155, 110, 198, 0.15);
+    0 0 5px color-mix(in srgb, var(--marinara-chat-chrome-text) 25%, transparent),
+    0 0 10px color-mix(in srgb, var(--marinara-chat-chrome-text) 12%, transparent);
 }
 
 [data-theme="light"] .os-window-btn {
@@ -427,6 +545,1328 @@
 [data-theme="light"] .shimmer {
   background: linear-gradient(90deg, #f0eaf7 25%, #ede4f7 50%, #f0eaf7 75%);
   background-size: 200% 100%;
+}
+
+/* ─────────────────────────────────────────────
+   4a. SHARED CHROME GRADIENT ACCENTS
+   ───────────────────────────────────────────── */
+[data-marinara-chat-chrome-accent-mode="gradient"] .marinara-chat-toolbar-button {
+  border-color: var(--marinara-chat-chrome-button-border);
+  background: var(--marinara-chat-chrome-button-bg);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"] .marinara-chat-toolbar-button:hover {
+  border-color: var(--marinara-chat-chrome-button-border-hover);
+  background: var(--marinara-chat-chrome-surface-bg-hover);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"] .marinara-chat-toolbar-button--open {
+  border-color: var(--marinara-chat-chrome-button-border-hover);
+  background: var(--marinara-chat-chrome-surface-bg-hover);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"] .marinara-chat-toolbar-button--active {
+  border-color: var(--marinara-chat-chrome-button-border-active);
+  background: var(--marinara-chat-chrome-highlight-bg);
+  color: var(--marinara-chat-chrome-button-text-active);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"] .marinara-chat-popover {
+  border-color: var(--marinara-chat-chrome-panel-border);
+  background: var(--marinara-chat-chrome-panel-bg);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"] .marinara-chat-input-shell {
+  border-color: var(--marinara-chat-chrome-input-border);
+  background: var(--marinara-chat-chrome-input-bg);
+}
+
+.marinara-chat-input-shell button:not(:disabled) {
+  color: color-mix(in srgb, var(--marinara-chat-chrome-accent) 58%, transparent);
+}
+
+.marinara-chat-input-shell button:disabled {
+  color: color-mix(in srgb, var(--marinara-chat-chrome-accent) 22%, transparent);
+}
+
+.marinara-chat-input-shell button:not(:disabled):hover,
+.marinara-chat-input-shell button:not(:disabled):focus-visible {
+  background-color: var(--marinara-chat-chrome-highlight-bg-hover);
+  color: var(--marinara-chat-chrome-button-text-hover);
+}
+
+.marinara-chat-input-shell button.bg-foreground\/10:not(:disabled),
+.marinara-chat-input-shell button:not(:disabled)[aria-expanded="true"],
+.marinara-chat-input-shell button:not(:disabled)[aria-pressed="true"] {
+  background-color: var(--marinara-chat-chrome-highlight-bg);
+  color: var(--marinara-chat-chrome-button-text-active);
+  box-shadow: 0 0 0 1px var(--marinara-chat-chrome-focus-ring);
+}
+
+.marinara-chat-input-shell .mari-chat-send-btn:not(:disabled) {
+  color: var(--marinara-chat-chrome-button-text-active);
+}
+
+.marinara-chat-popover.marinara-chat-toolbar-overflow-menu {
+  border-radius: 0.5rem;
+}
+
+/* ─────────────────────────────────────────────
+   4b. SHARED SIDEBAR AND PANEL CHROME
+   Used by library tabs, chat sidebar controls, home chips, and compact toolbar fields.
+   Custom themes can override --marinara-chat-chrome-* without touching component code.
+   ───────────────────────────────────────────── */
+.mari-chrome-control {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border: 1px solid var(--marinara-chat-chrome-button-border);
+  border-radius: 0.75rem;
+  background: var(--marinara-chat-chrome-button-bg);
+  color: var(--marinara-chat-chrome-button-text);
+  font-weight: 600;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease,
+    transform 120ms ease;
+}
+
+.mari-chrome-control:hover {
+  border-color: var(--marinara-chat-chrome-button-border-hover);
+  background: var(--marinara-chat-chrome-button-bg-hover);
+  color: var(--marinara-chat-chrome-button-text-hover);
+}
+
+.mari-chrome-control:active {
+  transform: scale(0.98);
+}
+
+.mari-chrome-control:disabled,
+.mari-chrome-field:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.mari-chrome-control--primary {
+  min-height: 2.5rem;
+  padding: 0.625rem 0.75rem;
+  color: var(--marinara-chat-chrome-button-text-active);
+  font-weight: 700;
+}
+
+.mari-chrome-control--compact {
+  min-height: 1.75rem;
+  border-radius: 0.625rem;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.625rem;
+}
+
+.mari-chrome-control--small {
+  min-height: 1.75rem;
+  border-radius: 0.625rem;
+  padding: 0.375rem 0.625rem;
+}
+
+.mari-chrome-control--selected,
+.mari-chrome-control[aria-pressed="true"] {
+  border-color: var(--marinara-chat-chrome-button-border-active);
+  background: var(--marinara-chat-chrome-button-bg-active);
+  color: var(--marinara-chat-chrome-button-text-active);
+  box-shadow: 0 0 0 1px var(--marinara-chat-chrome-focus-ring);
+}
+
+.mari-chrome-control--danger {
+  border-color: color-mix(in srgb, var(--destructive) 26%, transparent);
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  color: var(--destructive);
+}
+
+.mari-chrome-control--danger:hover {
+  border-color: color-mix(in srgb, var(--destructive) 40%, transparent);
+  background: color-mix(in srgb, var(--destructive) 16%, transparent);
+  color: var(--destructive);
+}
+
+.mari-chat-logo-mode--conversation {
+  --mari-chat-logo-mode-color: var(--mari-logo-cyan);
+  --mari-chat-logo-mode-color-deep: var(--mari-logo-cyan-deep);
+  --mari-chat-logo-mode-text: #062426;
+}
+
+.mari-chat-logo-mode--roleplay {
+  --mari-chat-logo-mode-color: var(--mari-logo-orange);
+  --mari-chat-logo-mode-color-deep: var(--mari-logo-orange-deep);
+  --mari-chat-logo-mode-text: #261006;
+}
+
+.mari-chat-logo-mode--game {
+  --mari-chat-logo-mode-color: var(--mari-logo-pink);
+  --mari-chat-logo-mode-color-deep: var(--mari-logo-pink-deep);
+  --mari-chat-logo-mode-text: #fff7fb;
+}
+
+.mari-chat-mode-action {
+  border-color: color-mix(in srgb, var(--mari-chat-logo-mode-color) 42%, transparent);
+  background: linear-gradient(135deg, var(--mari-chat-logo-mode-color), var(--mari-chat-logo-mode-color-deep));
+  color: var(--mari-chat-logo-mode-text);
+  box-shadow: 0 0.25rem 0.75rem color-mix(in srgb, var(--mari-chat-logo-mode-color-deep) 20%, transparent);
+}
+
+.mari-chat-mode-action:hover,
+.mari-chat-mode-action:focus-visible {
+  border-color: color-mix(in srgb, var(--mari-chat-logo-mode-color) 62%, transparent);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--mari-chat-logo-mode-color) 92%, var(--foreground) 8%),
+    color-mix(in srgb, var(--mari-chat-logo-mode-color-deep) 88%, var(--foreground) 12%)
+  );
+  color: var(--mari-chat-logo-mode-text);
+  box-shadow:
+    0 0.35rem 0.9rem color-mix(in srgb, var(--mari-chat-logo-mode-color-deep) 28%, transparent),
+    0 0 0 0.125rem color-mix(in srgb, var(--mari-chat-logo-mode-color) 18%, transparent);
+}
+
+.mari-chat-mode-avatar {
+  border: 1px solid color-mix(in srgb, var(--mari-chat-logo-mode-color) 34%, transparent);
+  background: color-mix(in srgb, var(--mari-chat-logo-mode-color) 16%, var(--marinara-chat-chrome-panel-bg) 84%);
+  color: var(--mari-chat-logo-mode-color);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mari-chat-logo-mode-color) 18%, transparent);
+}
+
+.mari-chat-mode-badge {
+  background: color-mix(in srgb, var(--mari-chat-logo-mode-color) 18%, var(--card) 82%);
+  color: var(--mari-chat-logo-mode-color);
+  box-shadow: 0 0 0.45rem color-mix(in srgb, var(--mari-chat-logo-mode-color) 24%, transparent);
+}
+
+.mari-panel-gradient-button,
+.mari-panel-gradient-surface {
+  --mari-panel-gradient-start: var(--marinara-app-accent-solid);
+  --mari-panel-gradient-end: color-mix(in srgb, var(--marinara-app-accent-solid) 76%, var(--foreground) 24%);
+  --mari-panel-gradient-text: var(--primary-foreground);
+  background: linear-gradient(135deg, var(--mari-panel-gradient-start), var(--mari-panel-gradient-end));
+  color: var(--mari-panel-gradient-text);
+  box-shadow: 0 0.25rem 0.75rem color-mix(in srgb, var(--mari-panel-gradient-end) 18%, transparent);
+}
+
+.mari-panel-gradient-button {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border: 1px solid color-mix(in srgb, var(--mari-panel-gradient-start) 34%, transparent);
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  font-weight: 700;
+  transition:
+    filter 150ms ease,
+    transform 120ms ease,
+    box-shadow 150ms ease;
+}
+
+.mari-panel-gradient-button:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 0.35rem 0.9rem color-mix(in srgb, var(--mari-panel-gradient-end) 24%, transparent);
+}
+
+.mari-panel-gradient-button:active {
+  transform: scale(0.98);
+}
+
+.mari-panel-gradient-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  filter: none;
+}
+
+.mari-panel-gradient--characters {
+  --mari-panel-gradient-start: #f472b6;
+  --mari-panel-gradient-end: #f43f5e;
+  --mari-panel-gradient-text: #fff7fb;
+}
+
+.mari-panel-gradient--lorebooks {
+  --mari-panel-gradient-start: #f59e0b;
+  --mari-panel-gradient-end: #f97316;
+  --mari-panel-gradient-text: #fff7ed;
+}
+
+.mari-panel-gradient--presets {
+  --mari-panel-gradient-start: #c084fc;
+  --mari-panel-gradient-end: #8b5cf6;
+  --mari-panel-gradient-text: #fbf7ff;
+}
+
+.mari-panel-gradient--connections {
+  --mari-panel-gradient-start: #38bdf8;
+  --mari-panel-gradient-end: #3b82f6;
+  --mari-panel-gradient-text: #f0f9ff;
+}
+
+.mari-panel-gradient--agents {
+  --mari-panel-gradient-start: #a78bfa;
+  --mari-panel-gradient-end: #a855f7;
+  --mari-panel-gradient-text: #fbf7ff;
+}
+
+.mari-panel-gradient--personas {
+  --mari-panel-gradient-start: #34d399;
+  --mari-panel-gradient-end: #14b8a6;
+  --mari-panel-gradient-text: #ecfdf5;
+}
+
+.mari-panel-gradient--browser {
+  --mari-panel-gradient-start: #a3e635;
+  --mari-panel-gradient-end: #14b8a6;
+  --mari-panel-gradient-text: #07130f;
+}
+
+.mari-avatar-placeholder {
+  background: linear-gradient(
+    135deg,
+    var(--mari-avatar-placeholder-start),
+    var(--mari-avatar-placeholder-end)
+  );
+  color: var(--mari-avatar-placeholder-text);
+  box-shadow:
+    0 0.25rem 0.75rem color-mix(in srgb, var(--mari-avatar-placeholder-end) 18%, transparent),
+    inset 0 1px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+
+.mari-avatar-placeholder--character {
+  --mari-avatar-placeholder-start: #f472b6;
+  --mari-avatar-placeholder-end: #f43f5e;
+  --mari-avatar-placeholder-text: #fff7fb;
+}
+
+.mari-avatar-placeholder--persona {
+  --mari-avatar-placeholder-start: #34d399;
+  --mari-avatar-placeholder-end: #14b8a6;
+  --mari-avatar-placeholder-text: #ecfdf5;
+}
+
+.mari-topbar-button {
+  color: var(--marinara-chat-chrome-button-text);
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease,
+    transform 120ms ease;
+}
+
+.mari-topbar-button:hover {
+  background: var(--accent);
+  color: var(--marinara-chat-chrome-button-text-hover);
+}
+
+.mari-topbar-button--active {
+  background: var(--accent);
+  color: var(--marinara-chat-chrome-button-text-active);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.mari-topbar-panel-icon {
+  color: var(--muted-foreground);
+}
+
+.mari-topbar-panel-icon:hover,
+.mari-topbar-panel-icon:focus-visible,
+.mari-topbar-panel-icon--hovered,
+.mari-topbar-panel-icon--active {
+  color: var(--mari-panel-gradient-start);
+}
+
+.mari-topbar-chat-gradient-icon svg,
+.mari-topbar-chat-gradient-hover:hover svg,
+.mari-topbar-chat-gradient-hover:focus-visible svg {
+  color: var(--mari-logo-cyan);
+  stroke: url(#mari-topbar-chats-gradient);
+}
+
+.mari-topbar .mari-topbar-accent-icon {
+  color: var(--marinara-chat-chrome-button-text-active);
+  stroke: currentcolor;
+}
+
+.mari-topbar-chat-gradient-underline {
+  background: linear-gradient(
+    90deg,
+    var(--mari-logo-cyan) 0%,
+    var(--mari-logo-orange) 34%,
+    var(--mari-logo-pink) 68%,
+    var(--mari-logo-cyan) 100%
+  );
+}
+
+.mari-chrome-segmented {
+  display: grid;
+  min-height: 2.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--marinara-chat-chrome-button-border);
+  border-radius: 0.75rem;
+  background: var(--marinara-chat-chrome-button-bg);
+  color: var(--marinara-chat-chrome-button-text-active);
+}
+
+.mari-chrome-segmented__button {
+  position: relative;
+  display: inline-flex;
+  min-height: 2.5rem;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border: 0;
+  border-left: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease,
+    transform 120ms ease;
+}
+
+.mari-chrome-segmented__button + .mari-chrome-segmented__button {
+  border-left-color: var(--marinara-chat-chrome-button-border);
+}
+
+.mari-chrome-segmented__button:first-child {
+  border-radius: calc(0.75rem - 1px) 0 0 calc(0.75rem - 1px);
+}
+
+.mari-chrome-segmented__button:last-child {
+  border-radius: 0 calc(0.75rem - 1px) calc(0.75rem - 1px) 0;
+}
+
+.mari-chrome-segmented__button:hover {
+  background: var(--marinara-chat-chrome-button-bg-hover);
+  color: var(--marinara-chat-chrome-button-text-hover);
+}
+
+.mari-chrome-segmented__button:active {
+  transform: scale(0.98);
+}
+
+.mari-chrome-segmented__button--selected,
+.mari-chrome-segmented__button[aria-pressed="true"] {
+  background: var(--marinara-chat-chrome-button-bg-active);
+  color: var(--marinara-chat-chrome-button-text-active);
+  box-shadow: inset 0 0 0 1px var(--marinara-chat-chrome-focus-ring);
+}
+
+.mari-chrome-field {
+  min-height: 2.25rem;
+  border: 1px solid var(--marinara-chat-chrome-input-border);
+  border-radius: 0.75rem;
+  background: var(--marinara-chat-chrome-input-bg);
+  color: var(--marinara-chat-chrome-panel-title);
+  outline: none;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background-color 150ms ease;
+}
+
+.mari-chrome-field::placeholder {
+  color: var(--marinara-chat-chrome-panel-muted);
+}
+
+.mari-chrome-field-icon {
+  color: var(--marinara-chat-chrome-panel-title);
+  opacity: 0.68;
+}
+
+.mari-chrome-sort-field {
+  border-color: var(--marinara-chat-chrome-button-border);
+  color: var(--marinara-chat-chrome-button-text-active);
+}
+
+.mari-chrome-sort-field:hover {
+  border-color: var(--marinara-chat-chrome-button-border-hover);
+}
+
+.mari-chrome-sort-field option {
+  background: var(--marinara-chat-chrome-panel-bg);
+  color: var(--marinara-chat-chrome-button-text-active);
+}
+
+.mari-chat-settings-popover select,
+.mari-chat-settings-drawer select {
+  color-scheme: dark;
+  border-color: var(--marinara-chat-chrome-input-border);
+  background-color: var(--marinara-chat-chrome-panel-bg);
+  color: var(--marinara-chat-chrome-panel-text);
+}
+
+[data-theme="light"] .mari-chat-settings-popover select,
+[data-theme="light"] .mari-chat-settings-drawer select {
+  color-scheme: light;
+}
+
+.mari-chat-settings-popover select option,
+.mari-chat-settings-popover select optgroup,
+.mari-chat-settings-drawer select option,
+.mari-chat-settings-drawer select optgroup {
+  background-color: var(--marinara-chat-chrome-panel-bg);
+  color: var(--marinara-chat-chrome-panel-text);
+}
+
+.mari-chat-settings-popover select:disabled,
+.mari-chat-settings-drawer select:disabled {
+  color: var(--marinara-chat-chrome-panel-muted);
+}
+
+.mari-chrome-sort-icon {
+  color: var(--marinara-chat-chrome-button-text-active);
+  opacity: 1;
+}
+
+.mari-chrome-field:focus,
+.mari-chrome-field:focus-visible {
+  border-color: var(--marinara-chat-chrome-input-border-focus);
+  box-shadow: 0 0 0 0.125rem var(--marinara-chat-chrome-focus-ring);
+}
+
+.mari-chrome-field--compact {
+  min-height: 1.75rem;
+  border-radius: 0.625rem;
+}
+
+.mari-chrome-selection-bar {
+  border: 1px solid var(--marinara-chat-chrome-panel-border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--marinara-chat-chrome-panel-bg) 76%, transparent);
+  color: var(--marinara-chat-chrome-panel-text);
+}
+
+.mari-selection-action-bar {
+  border-top: 1px solid var(--marinara-chat-chrome-panel-divider);
+  background-color: var(--background);
+  background-image: linear-gradient(var(--marinara-chat-chrome-panel-bg), var(--marinara-chat-chrome-panel-bg));
+  color: var(--marinara-chat-chrome-panel-text);
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--marinara-chat-chrome-panel-border) 70%, transparent);
+  backdrop-filter: none;
+}
+
+.mari-folder-helper {
+  margin-top: 0;
+  padding: 0 0.625rem;
+  color: var(--marinara-chat-chrome-panel-muted);
+  font-size: 0.625rem;
+  line-height: 1.25;
+}
+
+.mari-chrome-text {
+  color: var(--marinara-chat-chrome-panel-text);
+}
+
+.mari-chrome-text-strong {
+  color: var(--marinara-chat-chrome-panel-title);
+}
+
+.mari-chrome-text-muted {
+  color: var(--marinara-chat-chrome-panel-muted);
+}
+
+.mari-chrome-token-scope,
+.mari-settings-panel-chrome {
+  --accent: var(--marinara-chat-chrome-highlight-bg);
+  --accent-foreground: var(--marinara-chat-chrome-highlight-text);
+  --foreground: var(--marinara-chat-chrome-panel-title);
+  --muted-foreground: var(--marinara-chat-chrome-panel-muted);
+  --sidebar-accent: var(--marinara-chat-chrome-highlight-bg);
+  --sidebar-accent-foreground: var(--marinara-chat-chrome-panel-title);
+  --sidebar-foreground: var(--marinara-chat-chrome-panel-text);
+}
+
+.mari-chrome-accent-text {
+  color: var(--marinara-chat-chrome-panel-title);
+}
+
+.mari-chrome-accent-icon {
+  color: var(--marinara-chat-chrome-button-text-active);
+}
+
+.mari-chrome-accent-text-muted {
+  color: var(--marinara-chat-chrome-panel-muted);
+}
+
+.mari-chrome-accent-surface {
+  border-color: var(--marinara-chat-chrome-button-border-active);
+  background: var(--marinara-chat-chrome-highlight-bg);
+  color: var(--marinara-chat-chrome-button-text-active);
+}
+
+.mari-chrome-accent-surface:hover {
+  border-color: var(--marinara-chat-chrome-button-border-hover);
+  background: var(--marinara-chat-chrome-highlight-bg-hover);
+  color: var(--marinara-chat-chrome-button-text-hover);
+}
+
+.mari-chrome-accent-tile {
+  background: var(--marinara-app-accent-gradient);
+  color: var(--primary-foreground);
+  box-shadow: 0 0.25rem 0.75rem color-mix(in srgb, var(--marinara-app-accent-solid) 18%, transparent);
+}
+
+.mari-chrome-accent-soft-tile {
+  background: color-mix(in srgb, var(--marinara-chat-chrome-accent) 14%, transparent);
+  color: var(--marinara-chat-chrome-button-text-active);
+  box-shadow: inset 0 0 0 1px var(--marinara-chat-chrome-button-border);
+}
+
+.mari-chrome-accent-dot,
+.mari-chrome-accent-progress {
+  background: var(--marinara-chat-chrome-accent);
+}
+
+.mari-chrome-accent-rail {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--marinara-chat-chrome-accent) 18%, transparent),
+    color-mix(in srgb, var(--marinara-chat-chrome-accent) 10%, transparent),
+    transparent
+  );
+}
+
+.mari-chrome-accent-rail-strong {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--marinara-chat-chrome-accent) 90%, transparent),
+    color-mix(in srgb, var(--marinara-chat-chrome-accent) 65%, transparent),
+    transparent
+  );
+}
+
+.mari-chrome-muted-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--marinara-chat-chrome-button-border);
+  border-radius: 999px;
+  background: var(--marinara-chat-chrome-button-bg);
+  color: var(--marinara-chat-chrome-button-text);
+  font-weight: 600;
+}
+
+.mari-chat-option-field {
+  border: 1px solid var(--marinara-chat-option-field-border);
+  background: var(--marinara-chat-option-field-bg);
+}
+
+.mari-chat-option-field:hover {
+  background: var(--marinara-chat-option-field-bg-hover);
+}
+
+.mari-chat-option-field--active {
+  border-color: var(--marinara-chat-option-field-border-active);
+  background: var(--marinara-chat-option-field-bg-active);
+  box-shadow: 0 0 0 1px var(--marinara-chat-option-field-ring);
+}
+
+.mari-chat-option-switch {
+  background: var(--marinara-chat-option-switch-off);
+}
+
+.mari-chat-option-switch--active {
+  background: var(--marinara-chat-chrome-accent);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"]
+  .mari-chrome-control:not(.mari-chrome-control--danger):not(.mari-chat-mode-action):not(.mari-panel-gradient-button) {
+  border-color: var(--marinara-chat-chrome-button-border);
+  background: var(--marinara-chat-chrome-button-bg);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"]
+  .mari-chrome-control:not(.mari-chrome-control--danger):not(.mari-chat-mode-action):not(.mari-panel-gradient-button):hover {
+  border-color: var(--marinara-chat-chrome-button-border-hover);
+  background: var(--marinara-chat-chrome-surface-bg-hover);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"]
+  .mari-chrome-control--selected:not(.mari-chrome-control--danger):not(.mari-chat-mode-action):not(.mari-panel-gradient-button),
+[data-marinara-chat-chrome-accent-mode="gradient"]
+  .mari-chrome-control[aria-pressed="true"]:not(.mari-chrome-control--danger):not(.mari-chat-mode-action):not(.mari-panel-gradient-button) {
+  border-color: var(--marinara-chat-chrome-button-border-active);
+  background: var(--marinara-chat-chrome-surface-bg-active);
+  color: var(--marinara-chat-chrome-button-text-active);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"] .mari-chrome-segmented {
+  border-color: var(--marinara-chat-chrome-button-border);
+  background: var(--marinara-chat-chrome-button-bg);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"] .mari-chrome-field:focus,
+[data-marinara-chat-chrome-accent-mode="gradient"] .mari-chrome-field:focus-visible {
+  border-color: var(--marinara-chat-chrome-input-border-focus);
+  background: var(--marinara-chat-chrome-input-bg);
+}
+
+[data-marinara-accent-animation]
+  :where(.mari-chrome-token-scope, .mari-rgb-icon-scope, .mari-settings-panel-chrome)
+  svg:not(.mari-rgb-static-icon) {
+  color: var(--marinara-chat-chrome-button-text-active);
+  stroke: currentColor;
+  transition:
+    color 140ms linear,
+    stroke 140ms linear,
+    filter 140ms linear;
+}
+
+.mari-topbar-active-underline {
+  background: var(--marinara-chat-chrome-button-text-hover);
+}
+
+.mari-accent-gradient-fill {
+  background: var(--marinara-app-accent-gradient);
+}
+
+.mari-accent-soft-fill {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--marinara-app-accent-solid) 24%, transparent),
+    color-mix(in srgb, var(--marinara-app-accent-solid) 12%, transparent)
+  );
+}
+
+.mari-settings-accent-dot {
+  background: linear-gradient(
+    135deg,
+    var(--marinara-app-accent-solid),
+    color-mix(in srgb, var(--marinara-app-accent-solid) 62%, var(--foreground) 38%)
+  );
+}
+
+.mari-settings-portrait-preview {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--marinara-app-accent-solid) 78%, var(--foreground) 22%),
+    color-mix(in srgb, var(--marinara-app-accent-solid) 48%, transparent),
+    color-mix(in srgb, var(--background) 88%, var(--marinara-app-accent-solid) 12%)
+  );
+}
+
+.mari-settings-scene-preview {
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--marinara-app-accent-solid) 76%, var(--foreground) 24%),
+    color-mix(in srgb, var(--marinara-app-accent-solid) 52%, transparent) 48%,
+    color-mix(in srgb, var(--background) 88%, var(--marinara-app-accent-solid) 12%) 100%
+  );
+}
+
+[data-marinara-accent-animation]
+  :where(
+    .mari-accent-animated,
+    .mari-accent-gradient-fill,
+    .mari-chrome-accent-text,
+    .mari-chrome-accent-icon,
+    .mari-chrome-accent-surface,
+    .mari-chrome-accent-tile,
+    .mari-chrome-accent-soft-tile,
+    .mari-chrome-accent-dot,
+    .mari-chrome-accent-progress,
+    .mari-chrome-accent-rail,
+    .mari-chrome-accent-rail-strong,
+    .mari-topbar-button
+  ) {
+  transition:
+    background 140ms linear,
+    background-color 140ms linear,
+    border-color 140ms linear,
+    color 140ms linear,
+    box-shadow 140ms linear;
+}
+
+/* ─────────────────────────────────────────────
+   4c. SHARED EDITOR CHROME
+   Used by character, persona, preset, lorebook, connection, and agent editors.
+   Custom themes can override --marinara-editor-* without touching component code.
+   ───────────────────────────────────────────── */
+.mari-editor-shell {
+  background: var(--marinara-editor-bg);
+  color: var(--marinara-editor-text);
+}
+
+.mari-editor-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--marinara-editor-divider);
+  background: color-mix(in srgb, var(--marinara-editor-surface-bg) 76%, transparent);
+  padding: 0.75rem 1rem;
+}
+
+.mari-editor-header-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 18rem;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.mari-editor-title,
+.mari-editor-title-input,
+.mari-editor-subtitle-input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+}
+
+.mari-editor-title,
+.mari-editor-title-input {
+  color: var(--marinara-editor-text);
+  font-size: 1.125rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.mari-editor-subtitle-input,
+.mari-editor-meta {
+  color: var(--marinara-editor-muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.mari-editor-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mari-editor-icon-tile,
+.mari-editor-avatar-tile {
+  display: flex;
+  height: 2.25rem;
+  width: 2.25rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--marinara-editor-border);
+  border-radius: 0.75rem;
+  background: var(--marinara-editor-control-bg);
+  color: var(--marinara-editor-accent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+.mari-editor-avatar-tile {
+  cursor: var(--cursor-pink), pointer;
+}
+
+.mari-editor-avatar-tile.mari-avatar-placeholder {
+  background: linear-gradient(
+    135deg,
+    var(--mari-avatar-placeholder-start),
+    var(--mari-avatar-placeholder-end)
+  );
+  color: var(--mari-avatar-placeholder-text);
+  box-shadow:
+    0 0.25rem 0.75rem color-mix(in srgb, var(--mari-avatar-placeholder-end) 18%, transparent),
+    inset 0 1px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+
+.mari-editor-icon-tile.mari-panel-gradient-surface {
+  border-color: color-mix(in srgb, var(--mari-panel-gradient-start) 34%, transparent);
+  background: linear-gradient(135deg, var(--mari-panel-gradient-start), var(--mari-panel-gradient-end));
+  color: var(--mari-panel-gradient-text);
+  box-shadow: 0 0.25rem 0.75rem color-mix(in srgb, var(--mari-panel-gradient-end) 18%, transparent);
+}
+
+.mari-editor-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.mari-editor-action {
+  display: inline-flex;
+  min-height: 2.25rem;
+  min-width: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border: 1px solid var(--marinara-editor-border);
+  border-radius: 0.75rem;
+  background: var(--marinara-editor-control-bg);
+  padding: 0.5rem;
+  color: var(--marinara-editor-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease,
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.mari-editor-action:hover {
+  border-color: var(--marinara-editor-border-strong);
+  background: var(--marinara-editor-control-bg-hover);
+  color: var(--marinara-editor-text);
+}
+
+.mari-editor-action:active {
+  transform: scale(0.98);
+}
+
+.mari-editor-action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 0.125rem var(--marinara-editor-focus-ring);
+}
+
+.mari-editor-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  transform: none;
+}
+
+.mari-editor-action--primary {
+  padding-inline: 1rem;
+  color: var(--marinara-editor-text);
+}
+
+.mari-editor-action--save {
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.mari-editor-action--save > svg {
+  height: 0.9375rem;
+  width: 0.9375rem;
+}
+
+.mari-editor-action--compact {
+  min-height: auto;
+}
+
+.mari-editor-action--danger {
+  color: var(--destructive);
+}
+
+.mari-editor-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--marinara-editor-muted);
+  font-size: 0.625rem;
+  font-weight: 600;
+}
+
+.mari-editor-body {
+  display: flex;
+  flex: 1 1 0%;
+  overflow: hidden;
+}
+
+.mari-editor-content {
+  flex: 1 1 0%;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.mari-editor-content-inner {
+  margin-inline: auto;
+  max-width: 42rem;
+}
+
+.mari-editor-content-inner--wide {
+  max-width: 48rem;
+}
+
+.mari-editor-tab-rail {
+  border-color: var(--marinara-editor-divider);
+  background: color-mix(in srgb, var(--marinara-editor-surface-bg) 58%, transparent);
+}
+
+.mari-editor-tab {
+  color: var(--marinara-editor-muted);
+}
+
+.mari-editor-tab:hover,
+.mari-editor-tab[data-active="true"] {
+  background: var(--marinara-editor-control-bg-hover);
+  color: var(--marinara-editor-text);
+}
+
+.mari-editor-tab[data-active="true"] {
+  box-shadow: inset 0 0 0 1px var(--marinara-editor-border-strong);
+}
+
+.mari-editor-tab-badge {
+  margin-left: auto;
+  border: 1px solid var(--marinara-editor-border);
+  border-radius: 9999px;
+  background: var(--marinara-editor-control-bg);
+  padding: 0.125rem 0.375rem;
+  color: var(--marinara-editor-text);
+  font-size: 0.625rem;
+  line-height: 1;
+}
+
+.mari-editor-section-jumps {
+  margin-bottom: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  color: var(--marinara-editor-muted);
+  font-size: 0.75rem;
+}
+
+.mari-editor-section-jump {
+  border: 1px solid var(--marinara-editor-border);
+  border-radius: 0.625rem;
+  background: var(--marinara-editor-control-bg);
+  padding: 0.375rem 0.625rem;
+  font-weight: 600;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.mari-editor-section-jump:hover {
+  border-color: var(--marinara-editor-border-strong);
+  background: var(--marinara-editor-control-bg-hover);
+  color: var(--marinara-editor-text);
+}
+
+.mari-editor-section-jump:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 0.125rem var(--marinara-editor-focus-ring);
+}
+
+.mari-editor-panel {
+  border: 1px solid var(--marinara-editor-border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--marinara-editor-surface-bg) 74%, var(--background) 26%);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--foreground) 7%, transparent);
+}
+
+.mari-editor-panel--soft {
+  background: color-mix(in srgb, var(--marinara-editor-control-bg) 78%, transparent);
+}
+
+.mari-editor-toolbar {
+  border: 1px solid var(--marinara-editor-border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--marinara-editor-control-bg) 84%, transparent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+.mari-editor-field {
+  border: 1px solid var(--marinara-editor-border);
+  border-radius: 0.625rem;
+  background: var(--marinara-editor-control-bg);
+  color: var(--marinara-editor-text);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease;
+}
+
+.mari-editor-field:hover {
+  border-color: var(--marinara-editor-border-strong);
+}
+
+.mari-editor-field:focus,
+.mari-editor-field:focus-within,
+.mari-editor-field:focus-visible {
+  border-color: var(--marinara-editor-border-strong);
+  outline: none;
+  box-shadow: 0 0 0 0.125rem var(--marinara-editor-focus-ring);
+}
+
+.mari-editor-field::placeholder {
+  color: var(--marinara-editor-muted);
+}
+
+.mari-editor-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--marinara-editor-border);
+  border-radius: 9999px;
+  background: var(--marinara-editor-control-bg);
+  color: var(--marinara-editor-muted);
+  font-weight: 600;
+}
+
+.mari-editor-chip--accent {
+  border-color: var(--marinara-editor-border-strong);
+  background: color-mix(in srgb, var(--marinara-editor-accent) 13%, transparent);
+  color: var(--marinara-editor-text);
+}
+
+.mari-editor-chip--warning {
+  border-color: color-mix(in srgb, var(--warning) 32%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: color-mix(in srgb, var(--warning) 78%, var(--marinara-editor-text) 22%);
+}
+
+.mari-editor-empty {
+  border: 1px dashed var(--marinara-editor-border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--marinara-editor-control-bg) 54%, transparent);
+}
+
+.mari-editor-shell [class~="text-[var(--foreground)]"],
+.mari-editor-shell [class~="text-[var(--primary)]"],
+.mari-editor-shell [class~="text-sky-400"],
+.mari-editor-shell [class~="text-sky-300"],
+.mari-editor-shell [class~="text-sky-400/80"],
+.mari-editor-shell .mari-chrome-accent-text {
+  color: var(--marinara-editor-text);
+}
+
+.mari-editor-shell [class~="text-[var(--muted-foreground)]"],
+.mari-editor-shell [class~="text-[var(--muted-foreground)]/40"],
+.mari-editor-shell [class~="text-[var(--muted-foreground)]/45"],
+.mari-editor-shell [class~="text-[var(--muted-foreground)]/50"],
+.mari-editor-shell [class~="text-[var(--muted-foreground)]/60"],
+.mari-editor-shell [class~="text-[var(--muted-foreground)]/70"],
+.mari-editor-shell .mari-chrome-accent-text-muted,
+.mari-editor-shell .mari-chrome-accent-icon {
+  color: var(--marinara-editor-muted);
+}
+
+.mari-editor-shell [class~="hover:text-[var(--foreground)]"]:hover,
+.mari-editor-shell [class~="hover:text-[var(--primary)]"]:hover,
+.mari-editor-shell [class~="hover:text-sky-300"]:hover,
+.mari-editor-shell [class~="hover:text-sky-400"]:hover {
+  color: var(--marinara-editor-text);
+}
+
+.mari-editor-legacy-bridge
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not(.mari-editor-title-input):not(
+    .mari-editor-subtitle-input
+  ),
+.mari-editor-legacy-bridge textarea,
+.mari-editor-legacy-bridge select {
+  border: 1px solid var(--marinara-editor-border);
+  border-radius: 0.625rem;
+  background: var(--marinara-editor-control-bg);
+  color: var(--marinara-editor-text);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease;
+}
+
+.mari-editor-legacy-bridge
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not(.mari-editor-title-input):not(
+    .mari-editor-subtitle-input
+  ):focus,
+.mari-editor-legacy-bridge textarea:focus,
+.mari-editor-legacy-bridge select:focus {
+  border-color: var(--marinara-editor-border-strong);
+  outline: none;
+  box-shadow: 0 0 0 0.125rem var(--marinara-editor-focus-ring);
+}
+
+.mari-editor-legacy-bridge input::placeholder,
+.mari-editor-legacy-bridge textarea::placeholder {
+  color: var(--marinara-editor-muted);
+}
+
+.mari-editor-legacy-bridge [class~="bg-[var(--secondary)]"],
+.mari-editor-legacy-bridge [class~="bg-[var(--secondary)]/70"],
+.mari-editor-legacy-bridge [class~="bg-[var(--secondary)]/60"],
+.mari-editor-legacy-bridge [class~="bg-[var(--secondary)]/50"],
+.mari-editor-legacy-bridge [class~="bg-[var(--secondary)]/40"],
+.mari-editor-legacy-bridge [class~="bg-[var(--secondary)]/30"],
+.mari-editor-legacy-bridge [class~="bg-[var(--card)]"] {
+  background: var(--marinara-editor-control-bg);
+}
+
+.mari-editor-legacy-bridge [class~="bg-[var(--card)]/95"],
+.mari-editor-legacy-bridge [class~="bg-[var(--card)]/90"],
+.mari-editor-legacy-bridge [class~="bg-[var(--card)]/40"] {
+  background: color-mix(in srgb, var(--marinara-editor-surface-bg) 88%, transparent);
+}
+
+.mari-editor-legacy-bridge [class~="border-[var(--border)]"] {
+  border-color: var(--marinara-editor-border);
+}
+
+.mari-editor-legacy-bridge [class~="ring-[var(--border)]"] {
+  --tw-ring-color: var(--marinara-editor-border);
+}
+
+.mari-editor-legacy-bridge [class~="text-[var(--foreground)]"],
+.mari-editor-legacy-bridge [class~="text-[var(--primary)]"],
+.mari-editor-legacy-bridge [class~="text-sky-400"],
+.mari-editor-legacy-bridge [class~="text-sky-300"],
+.mari-editor-legacy-bridge [class~="text-sky-400/80"] {
+  color: var(--marinara-editor-text);
+}
+
+.mari-editor-legacy-bridge [class~="text-[var(--muted-foreground)]"],
+.mari-editor-legacy-bridge [class~="text-[var(--muted-foreground)]/40"],
+.mari-editor-legacy-bridge [class~="text-[var(--muted-foreground)]/45"],
+.mari-editor-legacy-bridge [class~="text-[var(--muted-foreground)]/50"],
+.mari-editor-legacy-bridge [class~="text-[var(--muted-foreground)]/60"],
+.mari-editor-legacy-bridge [class~="text-[var(--muted-foreground)]/70"] {
+  color: var(--marinara-editor-muted);
+}
+
+.mari-editor-legacy-bridge [class~="bg-[var(--primary)]/10"],
+.mari-editor-legacy-bridge [class~="bg-[var(--primary)]/15"],
+.mari-editor-legacy-bridge [class~="bg-[var(--primary)]/25"],
+.mari-editor-legacy-bridge [class~="bg-sky-400/5"],
+.mari-editor-legacy-bridge [class~="bg-sky-400/10"],
+.mari-editor-legacy-bridge [class~="bg-sky-400/15"],
+.mari-editor-legacy-bridge [class~="bg-sky-400/20"] {
+  background: color-mix(in srgb, var(--marinara-editor-accent) 13%, transparent);
+}
+
+.mari-editor-legacy-bridge [class~="ring-[var(--primary)]/30"],
+.mari-editor-legacy-bridge [class~="ring-sky-400/20"],
+.mari-editor-legacy-bridge [class~="ring-sky-400/30"],
+.mari-editor-legacy-bridge [class~="ring-sky-400/50"] {
+  --tw-ring-color: var(--marinara-editor-border-strong);
+}
+
+.mari-editor-legacy-bridge [class~="text-amber-300"],
+.mari-editor-legacy-bridge [class~="text-amber-300/80"],
+.mari-editor-legacy-bridge [class~="text-amber-400"],
+.mari-editor-legacy-bridge [class~="text-amber-400/80"],
+.mari-editor-legacy-bridge [class~="text-amber-500"] {
+  color: var(--warning);
+}
+
+.mari-editor-legacy-bridge [class~="bg-amber-400/5"],
+.mari-editor-legacy-bridge [class~="bg-amber-400/10"],
+.mari-editor-legacy-bridge [class~="bg-amber-400/15"],
+.mari-editor-legacy-bridge [class~="bg-amber-400/20"],
+.mari-editor-legacy-bridge [class~="bg-amber-500/10"],
+.mari-editor-legacy-bridge [class~="bg-amber-500/15"],
+.mari-editor-legacy-bridge [class~="bg-amber-500/20"],
+.mari-editor-legacy-bridge [class~="bg-amber-500/30"] {
+  background: color-mix(in srgb, var(--warning) 13%, transparent);
+}
+
+.mari-editor-legacy-bridge [class~="border-amber-400/20"],
+.mari-editor-legacy-bridge [class~="border-amber-500/30"] {
+  border-color: color-mix(in srgb, var(--warning) 34%, transparent);
+}
+
+.mari-editor-legacy-bridge [class~="ring-amber-400/20"],
+.mari-editor-legacy-bridge [class~="ring-amber-400/30"] {
+  --tw-ring-color: color-mix(in srgb, var(--warning) 34%, transparent);
+}
+
+.mari-editor-legacy-bridge [class~="hover:bg-[var(--secondary)]"]:hover,
+.mari-editor-legacy-bridge [class~="hover:bg-[var(--accent)]"]:hover {
+  background: var(--marinara-editor-control-bg-hover);
+}
+
+.mari-editor-legacy-bridge [class~="hover:text-[var(--primary)]"]:hover,
+.mari-editor-legacy-bridge [class~="hover:text-sky-300"]:hover,
+.mari-editor-legacy-bridge [class~="hover:text-sky-400"]:hover {
+  color: var(--marinara-editor-text);
+}
+
+.mari-editor-legacy-bridge [class~="hover:bg-[var(--primary)]/25"]:hover,
+.mari-editor-legacy-bridge [class~="hover:bg-sky-400/10"]:hover,
+.mari-editor-legacy-bridge [class~="hover:bg-sky-400/20"]:hover {
+  background: color-mix(in srgb, var(--marinara-editor-accent) 18%, transparent);
+}
+
+.mari-editor-legacy-bridge [class~="hover:bg-amber-400/10"]:hover,
+.mari-editor-legacy-bridge [class~="hover:bg-amber-400/20"]:hover,
+.mari-editor-legacy-bridge [class~="hover:bg-amber-500/25"]:hover,
+.mari-editor-legacy-bridge [class~="hover:bg-amber-500/30"]:hover {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+}
+
+.mari-editor-legacy-bridge [class~="focus:border-[var(--primary)]/40"]:focus,
+.mari-editor-legacy-bridge [class~="focus:border-emerald-400/40"]:focus {
+  border-color: var(--marinara-editor-border-strong);
+}
+
+.mari-editor-legacy-bridge [class~="focus:ring-[var(--primary)]/20"]:focus,
+.mari-editor-legacy-bridge [class~="focus:ring-sky-400/50"]:focus,
+.mari-editor-legacy-bridge [class~="focus:ring-emerald-400/20"]:focus {
+  --tw-ring-color: var(--marinara-editor-focus-ring);
+}
+
+[data-marinara-chat-chrome-accent-mode="gradient"] .mari-editor-action--primary,
+[data-marinara-chat-chrome-accent-mode="gradient"] .mari-editor-tab[data-active="true"],
+[data-marinara-chat-chrome-accent-mode="gradient"] .mari-editor-section-jump:hover {
+  border-color: var(--marinara-editor-border-strong);
+  background: var(--marinara-editor-control-bg-hover);
+  color: var(--marinara-editor-text);
+}
+
+@media (max-width: 767px) {
+  .mari-editor-header {
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
+  }
+
+  .mari-editor-title-input {
+    font-size: 1rem;
+  }
+
+  .mari-editor-icon-tile,
+  .mari-editor-avatar-tile {
+    height: 2rem;
+    width: 2rem;
+    border-radius: 0.625rem;
+  }
+
+  .mari-editor-actions {
+    width: 100%;
+    justify-content: flex-end;
+    border-top: 1px solid var(--marinara-editor-divider);
+    padding-top: 0.5rem;
+  }
+
+  .mari-editor-action {
+    min-height: 2rem;
+    min-width: 2rem;
+    border-radius: 0.625rem;
+    padding: 0.375rem;
+  }
+
+  .mari-editor-action--primary {
+    margin-right: auto;
+    padding-inline: 0.75rem;
+  }
+
+  .mari-editor-action--compact {
+    min-height: auto;
+  }
+
+  .mari-editor-action--compact.mari-editor-action--primary {
+    margin-right: 0;
+  }
+
+  .mari-editor-body {
+    flex-direction: column;
+  }
+
+  .mari-editor-content {
+    padding: 1rem;
+  }
 }
 
 /* ─────────────────────────────────────────────
@@ -539,39 +1979,77 @@ input[type="range"]:disabled {
 }
 
 input[type="range"].mari-spotify-volume-slider {
-  --range-track-color: oklch(0.36 0.006 145);
-  --range-fill-color: oklch(0.96 0.006 145);
-  --range-thumb-color: oklch(0.96 0.006 145);
+  --range-track-color: color-mix(in srgb, #1db954 26%, transparent);
+  --range-fill-color: #1db954;
+  --range-thumb-color: #1db954;
   --range-thumb-size: 0.6875rem;
   --range-track-height: 0.25rem;
-  --range-thumb-shadow: 0 0 0 0.125rem oklch(0.16 0.006 145);
-  accent-color: oklch(0.96 0.006 145);
+  --range-thumb-shadow: 0 0 0 0.125rem #191414;
+
+  accent-color: #1db954;
 }
 
 input[type="range"].mari-spotify-volume-slider::-webkit-slider-runnable-track {
   background: linear-gradient(
     to right,
-    oklch(0.96 0.006 145) 0%,
-    oklch(0.96 0.006 145) var(--range-progress),
-    oklch(0.36 0.006 145) var(--range-progress),
-    oklch(0.36 0.006 145) 100%
+    var(--range-fill-color) 0%,
+    var(--range-fill-color) var(--range-progress),
+    var(--range-track-color) var(--range-progress),
+    var(--range-track-color) 100%
   );
 }
 
 input[type="range"].mari-spotify-volume-slider::-moz-range-track {
-  background: oklch(0.36 0.006 145);
+  background: var(--range-track-color);
 }
 
 input[type="range"].mari-spotify-volume-slider::-moz-range-progress {
-  background: oklch(0.96 0.006 145);
+  background: var(--range-fill-color);
 }
 
 input[type="range"].mari-spotify-volume-slider::-webkit-slider-thumb {
-  background: oklch(0.96 0.006 145);
+  background: var(--range-thumb-color);
 }
 
 input[type="range"].mari-spotify-volume-slider::-moz-range-thumb {
-  background: oklch(0.96 0.006 145);
+  background: var(--range-thumb-color);
+}
+
+input[type="range"].mari-youtube-volume-slider {
+  --range-track-color: color-mix(in srgb, #ff0000 24%, transparent);
+  --range-fill-color: #ff0000;
+  --range-thumb-color: #ff0000;
+  --range-thumb-size: 0.6875rem;
+  --range-track-height: 0.25rem;
+  --range-thumb-shadow: 0 0 0 0.125rem #0f0f0f;
+
+  accent-color: #ff0000;
+}
+
+input[type="range"].mari-youtube-volume-slider::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to right,
+    var(--range-fill-color) 0%,
+    var(--range-fill-color) var(--range-progress),
+    var(--range-track-color) var(--range-progress),
+    var(--range-track-color) 100%
+  );
+}
+
+input[type="range"].mari-youtube-volume-slider::-moz-range-track {
+  background: var(--range-track-color);
+}
+
+input[type="range"].mari-youtube-volume-slider::-moz-range-progress {
+  background: var(--range-fill-color);
+}
+
+input[type="range"].mari-youtube-volume-slider::-webkit-slider-thumb {
+  background: var(--range-thumb-color);
+}
+
+input[type="range"].mari-youtube-volume-slider::-moz-range-thumb {
+  background: var(--range-thumb-color);
 }
 
 @font-face {
@@ -582,12 +2060,102 @@ input[type="range"].mari-spotify-volume-slider::-moz-range-thumb {
 }
 
 body {
-  background: var(--background);
+  background: var(--marinara-app-background-paint);
   color: var(--foreground);
   overflow: hidden;
   font-family: var(--font-y2k);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.mari-app-background-paint {
+  background: var(--marinara-app-background-paint);
+}
+
+.mari-home-starfield {
+  --mari-home-star-core: color-mix(in srgb, var(--foreground) 70%, var(--marinara-app-accent-solid) 30%);
+  --mari-home-star-glow: color-mix(in srgb, var(--marinara-app-accent-solid) 48%, transparent);
+  --mari-home-star-halo: color-mix(in srgb, var(--foreground) 28%, transparent);
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: none;
+  overflow: hidden;
+}
+
+:root:not([data-visual-theme]) .mari-home-starfield {
+  display: block;
+}
+
+.mari-home-starfield__star {
+  position: absolute;
+  left: var(--mari-home-star-x);
+  top: var(--mari-home-star-y);
+  width: var(--mari-home-star-size);
+  height: var(--mari-home-star-size);
+  opacity: 0;
+  color: var(--mari-home-star-core);
+  border-radius: 999px;
+  transform: translate(-50%, -50%) scale(0.42);
+  animation: mari-home-star-glisten var(--mari-home-star-duration) ease-in-out forwards;
+}
+
+.mari-home-starfield__star::before,
+.mari-home-starfield__star::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+}
+
+.mari-home-starfield__star::before {
+  inset: 0;
+  background:
+    radial-gradient(circle, var(--foreground) 0 12%, currentcolor 28%, transparent 72%),
+    radial-gradient(circle, var(--mari-home-star-halo) 0 42%, transparent 74%);
+}
+
+.mari-home-starfield__star::after {
+  inset: -55%;
+  background: radial-gradient(circle, var(--mari-home-star-glow) 0 18%, transparent 68%);
+}
+
+@keyframes mari-home-star-glisten {
+  0% {
+    opacity: 0;
+    filter: drop-shadow(0 0 0 transparent);
+    transform: translate(-50%, -50%) scale(0.42);
+  }
+  24% {
+    opacity: 0.34;
+    filter: drop-shadow(0 0 0.2rem var(--mari-home-star-glow));
+    transform: translate(-50%, -50%) scale(0.74);
+  }
+  54% {
+    opacity: 0.95;
+    filter:
+      drop-shadow(0 0 0.38rem var(--mari-home-star-glow))
+      drop-shadow(0 0 0.9rem var(--mari-home-star-glow));
+    transform: translate(-50%, -50%) scale(1.16);
+  }
+  72% {
+    opacity: 0.72;
+    filter:
+      drop-shadow(0 0 0.46rem var(--mari-home-star-glow))
+      drop-shadow(0 0 1.1rem var(--mari-home-star-glow));
+    transform: translate(-50%, -50%) scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    filter: drop-shadow(0 0 0.15rem var(--mari-home-star-glow));
+    transform: translate(-50%, -50%) scale(0.58);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mari-home-starfield {
+    display: none;
+  }
 }
 
 /* Tailwind v4 preflight does not restore italic/bold for semantic elements.
@@ -910,9 +2478,38 @@ summary[class*="cursor-pointer"],
   box-shadow: var(--glass-strong-shadow);
 }
 
+.mari-shell-panel-edge {
+  position: relative;
+  border-right-width: 0 !important;
+  border-left-width: 0 !important;
+}
+
+.mari-shell-panel-edge::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 30;
+  width: 1px;
+  pointer-events: none;
+  background: var(--marinara-shell-edge-border);
+}
+
+.mari-shell-panel-edge--left::after {
+  left: 0;
+}
+
+.mari-shell-panel-edge--right::after {
+  right: 0;
+}
+
 /* Firefox on Windows can rasterize text inside large blurred/translucent layout layers,
    which shows up most clearly on high-DPI displays. Fall back to opaque shell chrome there. */
 @supports (-moz-appearance: none) {
+  :root {
+    --marinara-topbar-surface: var(--card);
+  }
+
   .mari-topbar,
   .mari-sidebar,
   .mari-sidebar-header,
@@ -1013,8 +2610,8 @@ summary[class*="cursor-pointer"],
   height: 0.125rem;
   background: var(--y2k-pink);
   box-shadow:
-    0 0 8px 3px rgba(255, 179, 217, 0.5),
-    0 0 16px 6px rgba(255, 179, 217, 0.2);
+    0 0 8px 3px color-mix(in srgb, var(--primary) 50%, transparent),
+    0 0 16px 6px color-mix(in srgb, var(--primary) 20%, transparent);
 }
 
 .y2k-star-md {
@@ -1030,10 +2627,10 @@ summary[class*="cursor-pointer"],
 .y2k-star-lg {
   width: 0.25rem;
   height: 0.25rem;
-  background: #ffe4f5;
+  background: color-mix(in srgb, var(--primary) 34%, var(--foreground) 66%);
   box-shadow:
-    0 0 12px 5px rgba(255, 228, 245, 0.7),
-    0 0 24px 10px rgba(255, 228, 245, 0.4);
+    0 0 12px 5px color-mix(in srgb, var(--primary) 32%, transparent),
+    0 0 24px 10px color-mix(in srgb, var(--primary) 18%, transparent);
   animation-duration: 6s;
 }
 
@@ -1042,12 +2639,12 @@ summary[class*="cursor-pointer"],
   100% {
     box-shadow:
       0 0 8px rgba(212, 173, 252, 0.15),
-      0 0 16px rgba(255, 179, 217, 0.1);
+      0 0 16px color-mix(in srgb, var(--primary) 10%, transparent);
   }
   50% {
     box-shadow:
       0 0 12px rgba(212, 173, 252, 0.25),
-      0 0 24px rgba(255, 179, 217, 0.2);
+      0 0 24px color-mix(in srgb, var(--primary) 20%, transparent);
   }
 }
 
@@ -1056,8 +2653,66 @@ summary[class*="cursor-pointer"],
 }
 
 .retro-glow-text {
-  color: var(--primary);
-  text-shadow: 0 0 8px color-mix(in srgb, var(--primary) 20%, transparent);
+  color: var(--marinara-chat-chrome-text);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--marinara-chat-chrome-text) 20%, transparent);
+}
+
+.mari-logo-gradient-text {
+  background: linear-gradient(
+    90deg,
+    var(--mari-logo-title-cyan) 0%,
+    var(--mari-logo-title-orange) 28%,
+    var(--mari-logo-title-pink) 55%,
+    var(--mari-logo-title-orange) 78%,
+    var(--mari-logo-title-cyan) 100%
+  );
+  background-clip: text;
+  background-position: 0% 50%;
+  background-size: 220% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 0.45rem rgba(236, 72, 153, 0.16));
+}
+
+.mari-logo-gradient-text--active {
+  animation: mari-logo-title-shift 5.2s ease-in-out infinite;
+}
+
+.mari-rgb-toggle-track {
+  background: linear-gradient(
+    90deg,
+    var(--mari-logo-title-cyan) 0%,
+    var(--mari-logo-title-orange) 28%,
+    var(--mari-logo-title-pink) 55%,
+    var(--mari-logo-title-orange) 78%,
+    var(--mari-logo-title-cyan) 100%
+  );
+  background-position: 0% 50%;
+  background-size: 220% 100%;
+  animation: mari-logo-title-shift 5.2s ease-in-out infinite;
+}
+
+@keyframes mari-logo-title-shift {
+  0%,
+  100% {
+    background-position: 0% 50%;
+    filter: drop-shadow(0 0 0.45rem color-mix(in srgb, var(--mari-logo-title-cyan) 16%, transparent));
+  }
+  50% {
+    background-position: 100% 50%;
+    filter: drop-shadow(0 0 0.5rem color-mix(in srgb, var(--mari-logo-title-pink) 22%, transparent));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mari-logo-gradient-text--active {
+    animation: none;
+  }
+
+  .mari-rgb-toggle-track {
+    animation: none;
+  }
 }
 
 .os-button-pastel {
@@ -1168,7 +2823,7 @@ summary[class*="cursor-pointer"],
   opacity: 0;
   background: radial-gradient(
     circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-    rgba(255, 179, 217, 0.2),
+    color-mix(in srgb, var(--primary) 20%, transparent),
     transparent 60%
   );
   transition: opacity 0.3s;
@@ -1280,7 +2935,7 @@ summary[class*="cursor-pointer"],
 
 .retro-divider {
   height: 0.125rem;
-  margin: 1rem 0;
+  margin: var(--retro-divider-margin, 1rem 0);
   border-radius: 1px;
   background: linear-gradient(
     90deg,
@@ -1681,13 +3336,13 @@ summary[class*="cursor-pointer"],
 
 @keyframes pulse-ring {
   0% {
-    box-shadow: 0 0 0 0 rgba(255, 179, 217, 0.4);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 40%, transparent);
   }
   70% {
-    box-shadow: 0 0 0 8px rgba(255, 179, 217, 0);
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--primary) 0%, transparent);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(255, 179, 217, 0);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 0%, transparent);
   }
 }
 
@@ -1815,8 +3470,8 @@ summary[class*="cursor-pointer"],
 }
 
 .glimmer-name-gradient {
-  color: var(--y2k-pink, var(--primary));
-  text-shadow: 0 0 12px color-mix(in srgb, var(--y2k-pink, var(--primary)) 18%, transparent);
+  color: var(--marinara-chat-chrome-text);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--marinara-chat-chrome-text) 18%, transparent);
 }
 
 .glimmer-bubble {
@@ -1890,13 +3545,6 @@ summary[class*="cursor-pointer"],
    ───────────────────────────────────────────── */
 .texting-bubble {
   word-break: break-word;
-  transition:
-    transform 0.15s,
-    box-shadow 0.15s;
-}
-
-.texting-bubble:hover {
-  transform: scale(1.005);
 }
 
 .texting-bubble-user {
@@ -1912,11 +3560,134 @@ summary[class*="cursor-pointer"],
   border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
+/* Roleplay message bubble background. Applied here (via a class + the
+   `--mari-rp-bubble-bg` variable the bubble sets) instead of inline, so card
+   CSS (`.mari-card-css .mari-message-bubble { background: … }`) can override it
+   — an inline background would otherwise beat every card selector. */
+.mari-rp-bubble {
+  background-color: var(--mari-rp-bubble-bg);
+}
+
 /* ─────────────────────────────────────────────
    15. CHAT: ROLEPLAY MODE
    ───────────────────────────────────────────── */
 .rpg-chat-area {
   background: var(--background);
+}
+
+[data-chat-mode="roleplay"] {
+  --mari-roleplay-message-column-width: 58rem;
+}
+
+[data-chat-mode="roleplay"] .rpg-narrator-msg,
+[data-chat-mode="roleplay"] .mari-roleplay-message-row {
+  justify-content: center;
+  width: 100%;
+  padding-left: clamp(0.25rem, 1.5vw, 1.5rem);
+  padding-right: clamp(0.25rem, 1.5vw, 1.5rem);
+}
+
+[data-chat-mode="roleplay"] .rpg-narrator-msg {
+  display: flex;
+}
+
+[data-chat-mode="roleplay"] .rpg-narrator-msg > div {
+  width: min(100%, var(--mari-roleplay-message-column-width));
+}
+
+[data-chat-mode="roleplay"] .mari-roleplay-input-column {
+  width: min(100%, var(--mari-roleplay-message-column-width));
+}
+
+[data-chat-mode="roleplay"] .mari-roleplay-message-row {
+  --mari-roleplay-avatar-slot: calc(2.5rem * var(--roleplay-avatar-scale, 1));
+  --mari-roleplay-avatar-gap: 0.75rem;
+  --mari-roleplay-avatar-space: calc(var(--mari-roleplay-avatar-slot) + var(--mari-roleplay-avatar-gap));
+}
+
+[data-chat-mode="roleplay"] .mari-roleplay-message-row--rect-avatar {
+  --mari-roleplay-avatar-slot: calc(2.75rem * var(--roleplay-avatar-scale, 1));
+}
+
+[data-chat-mode="roleplay"] .mari-roleplay-message-row--wide {
+  --mari-roleplay-avatar-slot: 0rem;
+  --mari-roleplay-avatar-gap: 0rem;
+  --mari-roleplay-avatar-space: 0rem;
+}
+
+[data-chat-mode="roleplay"] .mari-roleplay-message-body {
+  width: min(100%, var(--mari-roleplay-message-column-width));
+  max-width: calc(100% - var(--mari-roleplay-avatar-space, 0rem));
+}
+
+[data-chat-mode="roleplay"] .mari-roleplay-message-body--editing {
+  width: min(100%, var(--mari-roleplay-message-column-width));
+}
+
+[data-chat-mode="roleplay"] .mari-scrollable-roleplay-avatar {
+  position: sticky;
+  top: var(--mari-roleplay-scrollable-avatar-top, max(0.75rem, env(safe-area-inset-top)));
+  align-self: flex-start;
+  z-index: 2;
+}
+
+[data-chat-mode="roleplay"] .mari-rp-bubble.mari-rp-bubble--scrollable-avatar-panel,
+[data-chat-mode="roleplay"] .mari-rp-bubble--scrollable-avatar-panel .mari-roleplay-avatar-panel-rail {
+  overflow: visible;
+}
+
+@media (min-width: 768px) {
+  [data-chat-mode="roleplay"] .mari-roleplay-input-column > .mari-chat-input {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  [data-chat-mode="roleplay"] .mari-roleplay-message-row {
+    display: grid;
+    grid-template-columns:
+      minmax(0, 1fr)
+      var(--mari-roleplay-avatar-slot)
+      minmax(0, var(--mari-roleplay-message-column-width))
+      var(--mari-roleplay-avatar-slot)
+      minmax(0, 1fr);
+    column-gap: var(--mari-roleplay-avatar-gap);
+    row-gap: 0;
+    align-items: start;
+  }
+
+  [data-chat-mode="roleplay"] .mari-roleplay-selection-toggle {
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: end;
+  }
+
+  [data-chat-mode="roleplay"] .mari-message-user .mari-roleplay-selection-toggle {
+    grid-column: 5;
+    justify-self: start;
+  }
+
+  [data-chat-mode="roleplay"] .mari-roleplay-message-row > .mari-message-avatar,
+  [data-chat-mode="roleplay"] .mari-roleplay-message-row > .mari-roleplay-avatar-spacer {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: center;
+  }
+
+  [data-chat-mode="roleplay"] .mari-message-user > .mari-message-avatar,
+  [data-chat-mode="roleplay"] .mari-message-user > .mari-roleplay-avatar-spacer {
+    grid-column: 4;
+  }
+
+  [data-chat-mode="roleplay"] .mari-roleplay-message-body {
+    grid-column: 3;
+    grid-row: 1;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  [data-chat-mode="roleplay"] .mari-roleplay-message-body--editing {
+    width: 100%;
+  }
 }
 
 .rpg-overlay {
@@ -2054,8 +3825,8 @@ summary[class*="cursor-pointer"],
 }
 
 .rpg-char-name {
-  color: color-mix(in srgb, var(--primary) 72%, var(--foreground));
-  text-shadow: 0 0 14px color-mix(in srgb, var(--primary) 20%, transparent);
+  color: var(--marinara-chat-chrome-text);
+  text-shadow: 0 0 14px color-mix(in srgb, var(--marinara-chat-chrome-text) 20%, transparent);
 }
 
 .rpg-streaming {
@@ -2177,7 +3948,7 @@ summary[class*="cursor-pointer"],
 
 .fn-call-card .fn-name {
   font-weight: 600;
-  color: var(--y2k-purple);
+  color: var(--marinara-chat-chrome-text);
   font-family: monospace;
 }
 
@@ -2289,43 +4060,46 @@ summary[class*="cursor-pointer"],
   }
 
   .rpg-chat-messages-mobile {
-    padding-left: 0.75rem !important;
-    padding-right: 0.75rem !important;
-    padding-bottom: 0 !important;
+    padding-left: max(0.5rem, env(safe-area-inset-left)) !important;
+    padding-right: max(0.5rem, env(safe-area-inset-right)) !important;
+  }
+
+  [data-chat-mode="roleplay"] .rpg-narrator-msg {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  [data-chat-mode="roleplay"] .mari-roleplay-message-row {
+    --mari-roleplay-mobile-avatar-space: calc((2.5rem * var(--roleplay-avatar-scale, 1)) + 0.5rem);
+
+    gap: 0.5rem;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  [data-chat-mode="roleplay"] .mari-roleplay-message-row--rect-avatar {
+    --mari-roleplay-mobile-avatar-space: calc((2.75rem * var(--roleplay-avatar-scale, 1)) + 0.5rem);
+  }
+
+  [data-chat-mode="roleplay"] .mari-roleplay-message-row--wide {
+    --mari-roleplay-mobile-avatar-space: 0rem;
+  }
+
+  [data-chat-mode="roleplay"] .mari-roleplay-message-body {
+    max-width: calc(100% - var(--mari-roleplay-mobile-avatar-space, 3rem));
+  }
+
+  [data-chat-mode="roleplay"] .mari-roleplay-message-body--editing {
+    width: calc(100% - var(--mari-roleplay-mobile-avatar-space, 3rem));
   }
 
   .rpg-hud {
     font-size: 0.625rem;
   }
 
-  .char-editor-body {
-    flex-direction: column !important;
-  }
-  .char-editor-tab-rail {
-    width: 100% !important;
-    flex-direction: row !important;
-    overflow-x: auto !important;
-    border-right: none !important;
-    border-bottom: 1px solid var(--border) !important;
-    padding: 0.25rem !important;
-  }
-  .char-editor-tab-rail button {
-    white-space: nowrap;
-  }
-  .char-editor-content {
-    padding: 1em !important;
-  }
-
   .quick-start-cards {
     flex-wrap: wrap;
     justify-content: center;
-  }
-
-  .agent-editor-body {
-    padding: 1em !important;
-  }
-  .agent-editor-body .phase-grid {
-    grid-template-columns: 1fr !important;
   }
 
   .chat-input-container {
@@ -2810,20 +4584,20 @@ summary[class*="cursor-pointer"],
   0%,
   100% {
     text-shadow:
-      0 0 4px rgba(168, 85, 247, 0.4),
-      0 0 10px rgba(168, 85, 247, 0.15);
+      0 0 4px color-mix(in srgb, var(--marinara-chat-chrome-text) 40%, transparent),
+      0 0 10px color-mix(in srgb, var(--marinara-chat-chrome-text) 15%, transparent);
   }
   50% {
     text-shadow:
-      0 0 8px rgba(168, 85, 247, 0.7),
-      0 0 20px rgba(168, 85, 247, 0.3),
-      0 0 30px rgba(168, 85, 247, 0.1);
+      0 0 8px color-mix(in srgb, var(--marinara-chat-chrome-text) 70%, transparent),
+      0 0 20px color-mix(in srgb, var(--marinara-chat-chrome-text) 30%, transparent),
+      0 0 30px color-mix(in srgb, var(--marinara-chat-chrome-text) 10%, transparent);
   }
 }
 
 .anim-text-glow {
   display: inline;
-  color: #c084fc !important; /* purple-400 */
+  color: var(--marinara-chat-chrome-text) !important;
   animation: text-glow 2s ease-in-out infinite;
 }
 
@@ -2843,7 +4617,7 @@ summary[class*="cursor-pointer"],
 .anim-text-pulse {
   display: inline-block;
   animation: text-pulse 1.2s ease-in-out infinite;
-  color: #fb7185 !important; /* rose-400 */
+  color: var(--marinara-chat-chrome-text) !important;
 }
 
 /* Wave — singing, chanting (per-character) */
@@ -3016,7 +4790,7 @@ summary[class*="cursor-pointer"],
 .anim-text-glitch {
   display: inline-block;
   animation: text-glitch 2s steps(1) infinite;
-  color: #e879f9 !important; /* fuchsia-400 */
+  color: var(--marinara-chat-chrome-panel-text) !important;
   text-shadow:
     -1px 0 #f87171,
     1px 0 #60a5fa;
@@ -3284,5 +5058,255 @@ summary[class*="cursor-pointer"],
   }
   100% {
     transform: translate(0, 0);
+  }
+}
+
+.mari-professor-pixel-scene {
+  position: relative;
+  width: min(100%, 24rem);
+  aspect-ratio: 16 / 10;
+  display: grid;
+  place-items: end center;
+  isolation: isolate;
+  overflow: visible;
+}
+
+.home-professor-mari-chat[data-paused="true"] *,
+.home-professor-mari-chat[data-paused="true"] *::before,
+.home-professor-mari-chat[data-paused="true"] *::after {
+  animation-play-state: paused !important;
+}
+
+.mari-professor-pixel-scene::before {
+  content: "";
+  position: absolute;
+  inset: 11% 8% 20%;
+  z-index: -3;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--border) 45%, transparent) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(84, 184, 152, 0.18), rgba(255, 203, 107, 0.16) 48%, rgba(235, 105, 136, 0.14));
+  background-size:
+    22px 22px,
+    22px 22px,
+    auto;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--background) 65%, transparent);
+  clip-path: polygon(7% 0, 100% 0, 94% 100%, 0 92%);
+}
+
+.mari-professor-pixel-scene [data-part="glow"] {
+  position: absolute;
+  inset: 10% 16% 10%;
+  z-index: -2;
+  background:
+    radial-gradient(circle at 38% 42%, rgba(255, 216, 118, 0.28), transparent 35%),
+    radial-gradient(circle at 66% 52%, rgba(84, 184, 152, 0.24), transparent 38%);
+  filter: blur(16px);
+}
+
+.mari-professor-pixel-scene [data-part="desk"] {
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  bottom: 8%;
+  height: 17%;
+  background: linear-gradient(180deg, #ae7a57 0%, #6f4638 100%);
+  border: 2px solid #2a2023;
+  box-shadow:
+    inset 0 4px 0 rgba(255, 225, 166, 0.22),
+    0 0.55rem 0 rgba(0, 0, 0, 0.18);
+}
+
+.mari-professor-pixel-scene [data-part="sprite"] {
+  position: absolute;
+  bottom: var(--mari-professor-sprite-bottom, 15%);
+  width: clamp(8.25rem, 37%, 11rem);
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  filter: drop-shadow(0.45rem 0.55rem 0 rgba(0, 0, 0, 0.2));
+  transform-origin: 52% 100%;
+  transform: translateY(0) rotate(-1deg);
+}
+
+.mari-professor-pixel-scene [data-part="laptop"] {
+  position: absolute;
+  bottom: 15%;
+  width: clamp(10.5rem, 43%, 13rem);
+  height: 31%;
+  transform: translateY(0.15rem);
+  filter: drop-shadow(0 0.45rem 0 rgba(0, 0, 0, 0.18));
+}
+
+.mari-professor-pixel-scene [data-part="screen"] {
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  top: 0;
+  height: 65%;
+  background: linear-gradient(180deg, #26313d, #10151d);
+  border: 3px solid #171015;
+  border-radius: 0.35rem 0.35rem 0.15rem 0.15rem;
+  box-shadow: inset 0 0 0 2px rgba(109, 230, 190, 0.18);
+}
+
+.mari-professor-pixel-scene [data-part="screen"] span {
+  position: absolute;
+  left: 20%;
+  width: 18%;
+  height: 0.32rem;
+  background: #6de6be;
+  box-shadow: 1.8rem 0 0 #ffd26c;
+  opacity: 0.9;
+}
+
+.mari-professor-pixel-scene [data-part="screen"] span:nth-child(1) {
+  top: 31%;
+}
+
+.mari-professor-pixel-scene [data-part="screen"] span:nth-child(2) {
+  top: 49%;
+  width: 28%;
+  animation-delay: 0.2s;
+}
+
+.mari-professor-pixel-scene [data-part="screen"] span:nth-child(3) {
+  top: 67%;
+  width: 12%;
+  animation-delay: 0.4s;
+}
+
+.mari-professor-pixel-scene [data-part="base"] {
+  position: absolute;
+  left: 5%;
+  right: 5%;
+  bottom: 0;
+  height: 38%;
+  background: linear-gradient(180deg, #cad3dc, #778493);
+  border: 3px solid #171015;
+  clip-path: polygon(8% 0, 92% 0, 100% 100%, 0 100%);
+}
+
+.mari-professor-pixel-scene [data-part="base"] i {
+  position: absolute;
+  top: 31%;
+  width: 0.48rem;
+  height: 0.38rem;
+  background: #2e3946;
+}
+
+.mari-professor-pixel-scene [data-part="base"] i:nth-child(1) {
+  left: 25%;
+}
+
+.mari-professor-pixel-scene [data-part="base"] i:nth-child(2) {
+  left: 34%;
+  animation-delay: 0.12s;
+}
+
+.mari-professor-pixel-scene [data-part="base"] i:nth-child(3) {
+  left: 43%;
+  animation-delay: 0.24s;
+}
+
+.mari-professor-pixel-scene [data-part="base"] i:nth-child(4) {
+  left: 52%;
+  animation-delay: 0.36s;
+}
+
+.mari-professor-pixel-scene [data-part="base"] i:nth-child(5) {
+  left: 61%;
+  animation-delay: 0.48s;
+}
+
+.mari-professor-pixel-scene [data-part="base"] i:nth-child(6) {
+  left: 70%;
+  animation-delay: 0.6s;
+}
+
+.mari-professor-pixel-scene[data-state="idle"] [data-part="sprite"] {
+  animation: mari-professor-idle-bob 3.4s ease-in-out infinite;
+}
+
+.mari-professor-pixel-scene[data-state="idle"] [data-part="screen"] span {
+  animation: mari-professor-idle-code-pulse 4.8s steps(1, end) infinite;
+}
+
+.mari-professor-pixel-scene[data-state="active"] [data-part="sprite"] {
+  animation: mari-professor-type-bob 0.82s steps(2, end) infinite;
+}
+
+.mari-professor-pixel-scene[data-state="active"] [data-part="screen"] span {
+  animation: mari-professor-code-blink 1.2s steps(1, end) infinite;
+}
+
+.mari-professor-pixel-scene[data-state="active"] [data-part="base"] i {
+  animation: mari-professor-key-tap 0.7s steps(1, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mari-professor-pixel-scene[data-state="idle"] [data-part="sprite"],
+  .mari-professor-pixel-scene[data-state="idle"] [data-part="screen"] span,
+  .mari-professor-pixel-scene[data-state="active"] [data-part="sprite"],
+  .mari-professor-pixel-scene[data-state="active"] [data-part="screen"] span,
+  .mari-professor-pixel-scene[data-state="active"] [data-part="base"] i {
+    animation: none;
+  }
+}
+
+@keyframes mari-professor-idle-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-0.12rem) rotate(-0.25deg);
+  }
+}
+
+@keyframes mari-professor-idle-code-pulse {
+  0%,
+  68%,
+  100% {
+    opacity: 0.9;
+  }
+  69%,
+  82% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes mari-professor-type-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-0.28rem) rotate(1deg);
+  }
+}
+
+@keyframes mari-professor-code-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.38;
+  }
+}
+
+@keyframes mari-professor-key-tap {
+  0%,
+  65%,
+  100% {
+    transform: translateY(0);
+    background: #2e3946;
+  }
+  66%,
+  82% {
+    transform: translateY(0.16rem);
+    background: #151a22;
   }
 }

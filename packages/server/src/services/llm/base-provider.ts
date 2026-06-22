@@ -7,15 +7,16 @@ import { requestHeadersWithIdentityEncoding, safeFetch, type SafeFetchOptions } 
 
 /**
  * Shared undici Agent with a 5-minute headers timeout (time to first byte)
- * and no body timeout — prevents indefinite hangs while still allowing
- * long-running streaming responses to complete.
+ * and a finite inter-chunk body timeout to prevent half-open streams from
+ * hanging indefinitely while still allowing long-running healthy streams.
  */
 const LLM_HEADERS_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-const llmAgentOptions = { bodyTimeout: 0, headersTimeout: LLM_HEADERS_TIMEOUT };
+const LLM_BODY_TIMEOUT = 120 * 1000; // 2 minutes between body chunks
+const llmAgentOptions = { bodyTimeout: LLM_BODY_TIMEOUT, headersTimeout: LLM_HEADERS_TIMEOUT };
 
 /**
  * Drop-in replacement for `fetch()` that uses a custom undici dispatcher
- * with no body/headers timeout. Use this for all outgoing LLM requests.
+ * with provider-oriented timeout settings. Use this for all outgoing LLM requests.
  */
 export function llmFetch(
   url: string | URL,
@@ -39,6 +40,10 @@ export function llmFetch(
   });
 }
 
+export function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
@@ -50,6 +55,12 @@ export interface ChatMessage {
   tool_calls?: LLMToolCall[];
   /** Base64 data URLs for multimodal image inputs */
   images?: string[];
+  /** Base64 data URLs for provider-native file/document inputs */
+  files?: Array<{
+    type: string;
+    data: string;
+    filename?: string;
+  }>;
   /** Provider-specific metadata (e.g. Gemini parts with thought signatures) */
   providerMetadata?: Record<string, unknown>;
 }
@@ -80,6 +91,7 @@ export interface ChatOptions {
   maxContext?: number;
   topP?: number;
   topK?: number;
+  minP?: number;
   frequencyPenalty?: number;
   presencePenalty?: number;
   stream?: boolean;
@@ -95,11 +107,11 @@ export interface ChatOptions {
   /** Prefer provider APIs that expose reasoning summaries when available */
   captureReasoning?: boolean;
   /** Callback for streaming text tokens as they arrive (used in tool path) */
-  onToken?: (chunk: string) => void;
+  onToken?: (chunk: string) => void | Promise<void>;
   /** Enable extended thinking (reasoning models) */
   enableThinking?: boolean;
   /** Reasoning effort level for models that support it */
-  reasoningEffort?: "low" | "medium" | "high" | "xhigh";
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Output verbosity for GPT-5+ models */
   verbosity?: "low" | "medium" | "high";
   /** OpenRouter-only service tier. */
@@ -120,6 +132,8 @@ export interface ChatOptions {
   responseFormat?: { type: string; [key: string]: unknown };
   /** Raw provider request parameters merged into the outgoing request body. */
   customParameters?: Record<string, unknown>;
+  /** Do not add inferred generation/model parameters; only merge customParameters. */
+  suppressModelParameters?: boolean;
 }
 
 /** Token usage statistics returned by the model */
@@ -137,6 +151,8 @@ export interface LLMUsage {
   acceptedPredictionTokens?: number;
   /** Predicted output tokens rejected by the model but still counted in output usage. */
   rejectedPredictionTokens?: number;
+  /** Provider-reported stream finish reason when usage is returned from a streaming generator. */
+  finishReason?: "stop" | "tool_calls" | "length" | string;
 }
 
 /** Result from a non-streaming chat call that may include tool calls */
@@ -160,12 +176,13 @@ export interface ContextFitResult {
   trimmed: boolean;
 }
 
-type ContextFitOptions = Pick<ChatOptions, "maxContext" | "maxTokens" | "tools">;
+type ContextFitOptions = Pick<ChatOptions, "maxContext" | "maxTokens" | "tools" | "suppressModelParameters">;
 
 const CHARS_PER_TOKEN = 4;
 const MESSAGE_OVERHEAD_TOKENS = 6;
 const IMAGE_TOKEN_ESTIMATE = 256;
-const CONTEXT_SAFETY_MARGIN_TOKENS = 64;
+const MIN_FILE_TOKEN_ESTIMATE = 1_500;
+const CONTEXT_SAFETY_MARGIN_TOKENS = 500;
 const CONTEXT_SAFETY_MARGIN_RATIO = 0.02;
 const MIN_INPUT_BUDGET_TOKENS = 128;
 const MIN_OUTPUT_BUDGET_TOKENS = 128;
@@ -176,6 +193,13 @@ const TRUNCATION_MARKER = "\n\n[Truncated to fit context window]";
 function normalizePositiveInteger(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
   return Math.floor(value);
+}
+
+function estimateFileTokens(file: { data: string }): number {
+  const raw = file.data.includes(",") ? (file.data.split(",", 2)[1] ?? "") : file.data;
+  const approxBytes = Math.floor((raw.length * 3) / 4);
+  const sizeBased = Math.ceil(approxBytes / 3);
+  return Math.max(MIN_FILE_TOKEN_ESTIMATE, sizeBased);
 }
 
 function minDefined(...values: Array<number | undefined>): number | undefined {
@@ -219,6 +243,9 @@ function estimateMessageTokens(message: ChatMessage): number {
   if (message.images?.length) {
     total += message.images.length * IMAGE_TOKEN_ESTIMATE;
   }
+  if (message.files?.length) {
+    total += message.files.reduce((sum, file) => sum + estimateFileTokens(file), 0);
+  }
   if (message.providerMetadata) {
     total += Math.min(estimateStructuredTokens(message.providerMetadata), 512);
   }
@@ -233,6 +260,7 @@ function cloneMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((message) => ({
     ...message,
     ...(message.images ? { images: [...message.images] } : {}),
+    ...(message.files ? { files: message.files.map((file) => ({ ...file })) } : {}),
     ...(message.tool_calls
       ? { tool_calls: message.tool_calls.map((call) => ({ ...call, function: { ...call.function } })) }
       : {}),
@@ -543,6 +571,13 @@ export abstract class BaseLLMProvider {
     return this.maxTokensOverride ?? null;
   }
 
+  /** Returns the configured context window for this provider connection, if known. */
+  public get maxContextValue(): number | null {
+    return typeof this.defaultMaxContext === "number" && Number.isFinite(this.defaultMaxContext)
+      ? this.defaultMaxContext
+      : null;
+  }
+
   protected fitMessagesToContext(messages: ChatMessage[], options: ContextFitOptions) {
     return fitMessagesToContext(messages, options, this.defaultMaxContext);
   }
@@ -582,16 +617,31 @@ export abstract class BaseLLMProvider {
     let content = "";
     const useStream = options.stream ?? !!options.onToken;
     const gen = this.chat(messages, { ...options, stream: useStream });
-    let result = await gen.next();
+    const returnPartialOnStreamFailure = (error: unknown): ChatCompletionResult => {
+      if (!content) throw error;
+      logger.warn(error, "LLM stream failed after partial content; returning partial completion");
+      return { content, toolCalls: [], finishReason: options.signal?.aborted ? "abort" : "error", usage: undefined };
+    };
+
+    let result: IteratorResult<string, LLMUsage | void>;
+    try {
+      result = await gen.next();
+    } catch (error) {
+      return returnPartialOnStreamFailure(error);
+    }
     while (!result.done) {
       content += result.value;
       if (options.onToken) {
-        options.onToken(result.value);
+        await options.onToken(result.value);
       }
-      result = await gen.next();
+      try {
+        result = await gen.next();
+      } catch (error) {
+        return returnPartialOnStreamFailure(error);
+      }
     }
     const usage = result.value || undefined;
-    return { content, toolCalls: [], finishReason: "stop", usage };
+    return { content, toolCalls: [], finishReason: usage?.finishReason ?? "stop", usage };
   }
 
   /**
@@ -599,8 +649,9 @@ export abstract class BaseLLMProvider {
    * Default implementation calls the OpenAI-compatible /embeddings endpoint.
    * Override in provider subclasses that use a different API shape.
    */
-  async embed(texts: string[], model: string): Promise<number[][]> {
+  async embed(texts: string[], model: string, signal?: AbortSignal): Promise<number[][]> {
     const timeoutMs = getEmbeddingRequestTimeoutMs();
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.apiKey}`,
@@ -613,8 +664,8 @@ export abstract class BaseLLMProvider {
       method: "POST",
       headers,
       body: JSON.stringify({ input: texts, model }),
-      signal: AbortSignal.timeout(timeoutMs),
-      agentOptions: { bodyTimeout: 0, headersTimeout: timeoutMs },
+      signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
+      agentOptions: { bodyTimeout: timeoutMs, headersTimeout: timeoutMs },
       bufferResponse: true,
     });
     if (!res.ok) {
@@ -632,20 +683,59 @@ export function parseEmbeddingResponse(json: unknown): number[][] {
     throw new Error("Embedding response did not include an embedding array.");
   }
 
-  return data.map((item) => {
+  const items = data.map((item) => {
     if (!isPlainRecord(item) || !Array.isArray(item.embedding)) {
       throw new Error("Embedding response contained an invalid embedding item.");
     }
-    return item.embedding as number[];
+    const rawIndex = item.index;
+    let index: number | null = null;
+    if (rawIndex !== undefined) {
+      if (!(typeof rawIndex === "number" && Number.isInteger(rawIndex) && rawIndex >= 0)) {
+        throw new Error("Embedding response contained an invalid embedding index.");
+      }
+      index = rawIndex;
+    }
+    return {
+      embedding: item.embedding as number[],
+      index,
+    };
   });
+
+  const indexedCount = items.filter((item) => item.index !== null).length;
+  if (indexedCount > 0 && indexedCount !== items.length) {
+    throw new Error("Embedding response mixed indexed and unindexed items.");
+  }
+
+  if (indexedCount === items.length) {
+    const ordered: number[][] = [];
+    for (const item of items) {
+      if (item.index! >= items.length || ordered[item.index!] !== undefined) {
+        throw new Error("Embedding response contained duplicate or out-of-range indexes.");
+      }
+      ordered[item.index!] = item.embedding;
+    }
+    for (let index = 0; index < items.length; index += 1) {
+      if (!ordered[index]) {
+        throw new Error("Embedding response indexes did not cover every input.");
+      }
+    }
+    return ordered;
+  }
+
+  return items.map((item) => item.embedding);
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function isUnsafeRequestBodyKey(key: string): boolean {
+  return key === "__proto__" || key === "constructor" || key === "prototype";
+}
+
 function deepMergeRequestBody(target: Record<string, unknown>, source: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(source)) {
+    if (isUnsafeRequestBodyKey(key)) continue;
     if (value === undefined) continue;
     const current = target[key];
     if (isPlainRecord(current) && isPlainRecord(value)) {

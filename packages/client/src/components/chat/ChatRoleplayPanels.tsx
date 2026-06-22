@@ -1,28 +1,62 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, Globe, Loader2, PenLine, X } from "lucide-react";
+import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, Loader2, PenLine, X } from "lucide-react";
 import { useUpdateChatMetadata } from "../../hooks/use-chats";
 import { type BudgetSkippedLorebookEntry, useActiveLorebookEntries } from "../../hooks/use-lorebooks";
+import { cn } from "../../lib/utils";
+import { ROLEPLAY_POPOVER_SUBTITLE, ROLEPLAY_POPOVER_TITLE } from "./roleplay-popover-styles";
 
-function WorldInfoEntryRow({
+type LorebookEntryStatus = "normal" | "constant" | "selective";
+
+const LOREBOOK_ENTRY_STATUS_STYLE: Record<
+  LorebookEntryStatus,
+  { label: string; dot: string; row: string; badge: string }
+> = {
+  normal: {
+    label: "NORMAL",
+    dot: "bg-emerald-400",
+    row: "border border-emerald-400/20 bg-emerald-400/10 hover:bg-emerald-400/15",
+    badge: "bg-emerald-400/15 text-emerald-300 ring-1 ring-emerald-400/20",
+  },
+  constant: {
+    label: "CONST",
+    dot: "bg-yellow-300",
+    row: "border border-yellow-300/25 bg-yellow-300/10 hover:bg-yellow-300/15",
+    badge: "bg-yellow-300/15 text-yellow-200 ring-1 ring-yellow-300/20",
+  },
+  selective: {
+    label: "SELECT",
+    dot: "bg-red-400",
+    row: "border border-red-400/25 bg-red-400/10 hover:bg-red-400/15",
+    badge: "bg-red-400/15 text-red-200 ring-1 ring-red-400/20",
+  },
+};
+
+function getLorebookEntryStatus(entry: { constant?: boolean; selective?: boolean }): LorebookEntryStatus {
+  if (entry.constant) return "constant";
+  if (entry.selective) return "selective";
+  return "normal";
+}
+
+function ActiveLorebookEntryRow({
   entry,
 }: {
-  entry: { name: string; keys: string[]; content: string; constant: boolean; order: number };
+  entry: { name: string; keys: string[]; content: string; constant: boolean; selective: boolean; order: number };
 }) {
   const [expanded, setExpanded] = useState(false);
+  const status = getLorebookEntryStatus(entry);
+  const statusStyle = LOREBOOK_ENTRY_STATUS_STYLE[status];
 
   return (
     <div
-      className="cursor-pointer rounded-lg bg-[var(--secondary)] p-2 text-xs transition-colors hover:bg-[var(--accent)]"
+      className={cn("cursor-pointer rounded-lg p-2 text-xs transition-colors", statusStyle.row)}
       onClick={() => setExpanded((prev) => !prev)}
     >
       <div className="flex items-center gap-2">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusStyle.dot)} />
         <span className="truncate font-medium text-[var(--foreground)]/80">{entry.name}</span>
-        {entry.constant && (
-          <span className="shrink-0 rounded bg-amber-400/15 px-1 py-0.5 text-[0.5rem] font-medium text-amber-400">
-            CONST
-          </span>
-        )}
+        <span className={cn("shrink-0 rounded px-1 py-0.5 text-[0.5rem] font-semibold", statusStyle.badge)}>
+          {statusStyle.label}
+        </span>
         <span className="ml-auto shrink-0 text-[0.625rem] text-[var(--muted-foreground)]">#{entry.order}</span>
       </div>
       {entry.keys.length > 0 && (
@@ -120,7 +154,7 @@ function BudgetSkippedEntriesNotice({ entries }: { entries: BudgetSkippedLoreboo
   );
 }
 
-export function WorldInfoPanel({
+export function ActiveLorebookEntriesPanel({
   chatId,
   isMobile,
   onClose,
@@ -135,9 +169,9 @@ export function WorldInfoPanel({
 
   return (
     <>
-      <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-[var(--foreground)]">
-        <Globe size="0.75rem" />
-        Active World Info
+      <h3 className={cn(ROLEPLAY_POPOVER_TITLE, "mb-2")}>
+        <BookOpen size="0.75rem" />
+        Active Context
         {isMobile && (
           <button
             onClick={onClose}
@@ -165,7 +199,7 @@ export function WorldInfoPanel({
           <BudgetSkippedEntriesNotice entries={skippedEntries} />
           <div className="space-y-1.5">
             {entries.map((entry) => (
-              <WorldInfoEntryRow key={entry.id} entry={entry} />
+              <ActiveLorebookEntryRow key={entry.id} entry={entry} />
             ))}
           </div>
         </>
@@ -229,7 +263,7 @@ export function AuthorNotesPanel({
 
   return (
     <>
-      <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-[var(--foreground)]">
+      <h3 className={cn(ROLEPLAY_POPOVER_TITLE, "mb-2")}>
         <PenLine size="0.75rem" />
         Author's Notes
         {isMobile && (
@@ -241,7 +275,7 @@ export function AuthorNotesPanel({
           </button>
         )}
       </h3>
-      <p className="mb-2 text-[0.625rem] text-[var(--muted-foreground)]">
+      <p className={cn(ROLEPLAY_POPOVER_SUBTITLE, "mb-2")}>
         Text here is injected into the prompt at the chosen depth every generation.
       </p>
       <textarea
@@ -268,7 +302,7 @@ export function AuthorNotesPanel({
         />
       </div>
       <p className="mt-1 text-[0.5625rem] text-[var(--muted-foreground)]/60">
-        Depth 0 = end of conversation, 4 = four messages from the end.
+        Depth 0 = after the latest message, 4 = four messages from the end.
       </p>
     </>
   );

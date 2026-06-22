@@ -11,6 +11,7 @@ export const lorebooks = sqliteTable("lorebooks", {
   imagePath: text("image_path"),
   scanDepth: integer("scan_depth").notNull().default(2),
   tokenBudget: integer("token_budget").notNull().default(2048),
+  entryLimit: integer("entry_limit").notNull().default(100),
   recursiveScanning: text("recursive_scanning").notNull().default("false"),
   maxRecursionDepth: integer("max_recursion_depth").notNull().default(3),
   excludeFromVectorization: text("exclude_from_vectorization").notNull().default("false"),
@@ -19,6 +20,8 @@ export const lorebooks = sqliteTable("lorebooks", {
   chatId: text("chat_id"),
   isGlobal: text("is_global").notNull().default("false"),
   enabled: text("enabled").notNull().default("true"),
+  /** JSON object: { mode: "all" | "disabled" | "specific", chatIds: string[] } */
+  scope: text("scope").notNull().default('{"mode":"all","chatIds":[]}'),
   /** Tags for organizing/filtering lorebooks (JSON array of strings) */
   tags: text("tags").notNull().default("[]"),
   generatedBy: text("generated_by"),
@@ -105,7 +108,7 @@ export const lorebookEntries = sqliteTable("lorebook_entries", {
   enabled: text("enabled").notNull().default("true"),
   constant: text("constant").notNull().default("false"),
   selective: text("selective").notNull().default("false"),
-  selectiveLogic: text("selective_logic", { enum: ["and", "or", "not"] })
+  selectiveLogic: text("selective_logic", { enum: ["and", "and_all", "or", "not", "not_all"] })
     .notNull()
     .default("and"),
   probability: integer("probability"),
@@ -160,6 +163,12 @@ export const lorebookEntries = sqliteTable("lorebook_entries", {
 
   /** When true, this entry's content won't trigger further entries during recursive scanning */
   preventRecursion: text("prevent_recursion").notNull().default("false"),
+
+  /** When true, recursive scanning cannot activate this entry */
+  excludeRecursion: text("exclude_recursion").notNull().default("false"),
+
+  /** When true, only recursive scanning can activate this entry */
+  delayUntilRecursion: text("delay_until_recursion").notNull().default("false"),
 
   /** When true, bulk vectorization skips this entry and semantic matching ignores stored vectors */
   excludeFromVectorization: text("exclude_from_vectorization").notNull().default("false"),

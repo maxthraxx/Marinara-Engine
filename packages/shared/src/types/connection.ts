@@ -27,6 +27,8 @@ export interface APIConnection {
   baseUrl: string;
   /** Model identifier (e.g. "gpt-4o", "claude-sonnet-4-20250514") */
   model: string;
+  /** Optional custom picture shown in the Connections panel */
+  imagePath: string | null;
   /** Maximum context window size for this model */
   maxContext: number;
   /** Whether this connection is the default */
@@ -63,6 +65,8 @@ export interface APIConnection {
   maxTokensOverride: number | null;
   /** Maximum number of agent LLM jobs Marinara may run at once for this connection. */
   maxParallelJobs: number;
+  /** Treat this endpoint as local/custom for Professor Mari tool-protocol fallbacks. */
+  treatAsLocalEndpoint: boolean;
   /** Folder this connection belongs to (null = root/unfiled). */
   folderId: string | null;
   /** Manual sort order within a folder (lower = higher). 0 = use default sort. */

@@ -79,8 +79,8 @@ if [ -n "${APK_PATH:-}" ] && [ -f "$APK_PATH" ]; then
     echo "Install on device:"
     echo "  adb install $APK_PATH"
     echo ""
-    echo "Important: this APK is a WebView shell, not a standalone server app."
-    echo "Start Marinara Engine in Termux with ./start-termux.sh before opening it."
+    echo "Important: this APK is a Termux bootstrap + WebView shell, not a native server build."
+    echo "It can open a running Termux server or download Termux and launch setup after Android permission prompts."
     echo ""
     echo "Or copy to phone and open the file to install."
 else

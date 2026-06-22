@@ -1,3 +1,6 @@
+# Scratch / planning files
+.work/
+
 # Dependencies
 node_modules/
 .pnpm-store/
@@ -37,6 +40,10 @@ packages/server/data/
 
 # Logs
 *.log
+
+# Temporary tests
+*.test.ts
+*.spec.ts
 
 # Custom agents (personal)
 .github/agents/qa.agent.md

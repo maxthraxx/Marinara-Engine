@@ -2,7 +2,7 @@
 // Full-Page Connection Editor
 // Click a connection → opens this editor (like presets/characters)
 // ──────────────────────────────────────────────
-import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useUIStore } from "../../stores/ui.store";
 import {
   useConnection,
@@ -23,6 +23,7 @@ import {
   ArrowLeft,
   Save,
   Trash2,
+  Upload,
   Link,
   Wifi,
   MessageSquare,
@@ -37,17 +38,25 @@ import {
   Globe,
   Key,
   Server,
-  Bot,
+  Sparkles,
   ChevronDown,
   ExternalLink,
   ImageIcon,
   RotateCcw,
   SlidersHorizontal,
 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
+import { downloadJsonFile, sanitizeExportFilenamePart } from "../../lib/download-json";
+import {
+  CONNECTION_EXPORT_WARNING,
+  createConnectionExportEnvelope,
+  type ConnectionTransferRow,
+} from "../../lib/connection-transfer";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { HelpTooltip } from "../ui/HelpTooltip";
+import { SettingsCheckbox, SettingsSwitch } from "../panels/settings/SettingControls";
 import {
   GenerationParametersFields,
   ROLEPLAY_PARAMETER_DEFAULTS,
@@ -72,9 +81,11 @@ import {
   imageSourceToDefaultsService,
   normalizeImageGenerationProfile,
   sanitizeImageGenerationProfile,
+  suggestImageStyleProfileIdForModel,
   type APIProvider,
   type ImageDefaultsService,
   type ImageGenerationDefaultsProfile,
+  type ImageStyleProfileSettings,
 } from "@marinara-engine/shared";
 
 /** Links where users can obtain API keys for each provider */
@@ -97,6 +108,23 @@ const DEFAULT_CACHING_AT_DEPTH = 5;
 const MAX_CACHING_AT_DEPTH = 100;
 const DEFAULT_MAX_PARALLEL_JOBS = 1;
 const MAX_PARALLEL_JOBS = 16;
+
+function normalizeEndpointUrlInput(raw: string, label: string): { value: string; error: string | null } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { value: "", error: null };
+
+  const value = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  try {
+    new URL(value);
+  } catch {
+    return { value: trimmed, error: `${label} must be a valid URL, like http://localhost:11434/v1.` };
+  }
+  return { value, error: null };
+}
+
+function canProviderTreatAsLocalEndpoint(provider: APIProvider): boolean {
+  return provider !== "image_generation" && provider !== "claude_subscription" && provider !== "openai_chatgpt";
+}
 
 function normalizeCachingAtDepth(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return DEFAULT_CACHING_AT_DEPTH;
@@ -131,6 +159,7 @@ export function ConnectionEditor() {
 
   const [dirty, setDirty] = useState(false);
   const setEditorDirty = useUIStore((s) => s.setEditorDirty);
+  const imageStyleProfiles = useUIStore((s) => s.imageStyleProfiles);
   useEffect(() => {
     setEditorDirty(dirty);
   }, [dirty, setEditorDirty]);
@@ -143,6 +172,7 @@ export function ConnectionEditor() {
   const [localProvider, setLocalProvider] = useState<APIProvider>("openai");
   const [localBaseUrl, setLocalBaseUrl] = useState("");
   const [localApiKey, setLocalApiKey] = useState("");
+  const [clearStoredApiKeyOnSave, setClearStoredApiKeyOnSave] = useState(false);
   const [localModel, setLocalModel] = useState("");
   const [localMaxContext, setLocalMaxContext] = useState(128000);
   const [localMaxParallelJobs, setLocalMaxParallelJobs] = useState(DEFAULT_MAX_PARALLEL_JOBS);
@@ -160,6 +190,7 @@ export function ConnectionEditor() {
   const [localImageEndpointId, setLocalImageEndpointId] = useState("");
   const [localMaxTokensOverride, setLocalMaxTokensOverride] = useState<number | null>(null);
   const [localClaudeFastMode, setLocalClaudeFastMode] = useState(false);
+  const [localTreatAsLocalEndpoint, setLocalTreatAsLocalEndpoint] = useState(false);
   const [localDefaultParametersEnabled, setLocalDefaultParametersEnabled] = useState(false);
   const [localDefaultParameters, setLocalDefaultParameters] =
     useState<EditableGenerationParameters>(ROLEPLAY_PARAMETER_DEFAULTS);
@@ -187,52 +218,21 @@ export function ConnectionEditor() {
   // Model search
   const [modelSearch, setModelSearch] = useState("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
-  const modelTriggerRef = useRef<HTMLDivElement>(null);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
   const modelSearchInputRef = useRef<HTMLInputElement>(null);
   const comfyWorkflowTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const [dropdownRect, setDropdownRect] = useState<{ top: number; left: number; width: number; maxH: number } | null>(
-    null,
-  );
-
-  useLayoutEffect(() => {
-    if (!showModelDropdown || !modelTriggerRef.current) {
-      setDropdownRect(null);
-      return;
-    }
-
-    const update = () => {
-      if (!modelTriggerRef.current) return;
-      const rect = modelTriggerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom - 8;
-      const spaceAbove = rect.top - 8;
-      // Flip above trigger if there's more space above
-      const openAbove = spaceBelow < 120 && spaceAbove > spaceBelow;
-      const maxH = Math.min(320, openAbove ? spaceAbove : spaceBelow);
-      setDropdownRect({
-        top: openAbove ? rect.top - maxH - 4 : rect.bottom + 4,
-        left: rect.left,
-        width: rect.width,
-        maxH,
-      });
-    };
-
-    update();
-
-    // Recalculate on scroll/resize so the dropdown tracks the trigger
-    const scrollParent =
-      modelTriggerRef.current.closest(".overflow-y-auto, .overflow-auto, .overflow-y-scroll, .overflow-scroll") ??
-      window;
-    scrollParent.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", update, { passive: true });
-    return () => {
-      scrollParent.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
-    };
-  }, [showModelDropdown]);
 
   // Remote models fetched from provider API
   const [remoteModels, setRemoteModels] = useState<RemoteConnectionModel[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const baseUrlValidation = useMemo(
+    () => normalizeEndpointUrlInput(localBaseUrl, "Base URL"),
+    [localBaseUrl],
+  );
+  const embeddingBaseUrlValidation = useMemo(
+    () => normalizeEndpointUrlInput(localEmbeddingBaseUrl, "Embedding endpoint URL"),
+    [localEmbeddingBaseUrl],
+  );
 
   // Populate from server
   useEffect(() => {
@@ -242,6 +242,7 @@ export function ConnectionEditor() {
     setLocalProvider((c.provider as APIProvider) ?? "openai");
     setLocalBaseUrl((c.baseUrl as string) ?? "");
     setLocalApiKey(""); // never pre-fill (it's masked)
+    setClearStoredApiKeyOnSave(false);
     setLocalModel((c.model as string) ?? "");
     setLocalMaxContext(Number(c.maxContext) || 128000);
     setLocalMaxParallelJobs(normalizeMaxParallelJobs(c.maxParallelJobs));
@@ -270,6 +271,7 @@ export function ConnectionEditor() {
     setLocalImageEndpointId((c.imageEndpointId as string) ?? "");
     setLocalMaxTokensOverride(typeof c.maxTokensOverride === "number" ? (c.maxTokensOverride as number) : null);
     setLocalClaudeFastMode(c.claudeFastMode === "true" || c.claudeFastMode === true);
+    setLocalTreatAsLocalEndpoint(c.treatAsLocalEndpoint === "true" || c.treatAsLocalEndpoint === true);
     setLocalDefaultParametersEnabled(!!parseEditableGenerationParameters(c.defaultParameters));
     setLocalDefaultParameters(getEditableGenerationParameters(ROLEPLAY_PARAMETER_DEFAULTS, c.defaultParameters));
     setLocalImageDefaults(
@@ -390,6 +392,30 @@ export function ConnectionEditor() {
     setFetchError(null);
   }, [localProvider]);
 
+  useEffect(() => {
+    if (!showModelDropdown) return;
+
+    const closeDropdown = () => {
+      setShowModelDropdown(false);
+      setModelSearch("");
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && modelDropdownRef.current?.contains(target)) return;
+      closeDropdown();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeDropdown();
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showModelDropdown]);
+
   const handleClose = useCallback(() => {
     if (dirty) {
       setShowUnsavedWarning(true);
@@ -401,11 +427,20 @@ export function ConnectionEditor() {
   const handleSave = useCallback(async () => {
     if (!connectionDetailId) return;
     setSaveError(null);
+    if (baseUrlValidation.error) {
+      setSaveError(baseUrlValidation.error);
+      throw new Error(baseUrlValidation.error);
+    }
+    if (embeddingBaseUrlValidation.error) {
+      setSaveError(embeddingBaseUrlValidation.error);
+      throw new Error(embeddingBaseUrlValidation.error);
+    }
+    const canTreatAsLocalEndpoint = canProviderTreatAsLocalEndpoint(localProvider);
     const payload: Record<string, unknown> = {
       id: connectionDetailId,
       name: localName,
       provider: localProvider,
-      baseUrl: localBaseUrl,
+      baseUrl: baseUrlValidation.value,
       model: localModel,
       maxContext: localMaxContext,
       maxParallelJobs: localMaxParallelJobs,
@@ -413,7 +448,7 @@ export function ConnectionEditor() {
       cachingAtDepth: localCachingAtDepth,
       defaultForAgents: localDefaultForAgents,
       embeddingModel: localEmbeddingModel,
-      embeddingBaseUrl: localEmbeddingBaseUrl,
+      embeddingBaseUrl: embeddingBaseUrlValidation.value,
       embeddingConnectionId: localEmbeddingConnectionId || null,
       promptPresetId: localProvider !== "image_generation" ? localPromptPresetId || null : null,
       openrouterProvider: localOpenrouterProvider || null,
@@ -428,10 +463,13 @@ export function ConnectionEditor() {
           : null,
       maxTokensOverride: localMaxTokensOverride ?? null,
       claudeFastMode: localClaudeFastMode,
+      treatAsLocalEndpoint: canTreatAsLocalEndpoint ? localTreatAsLocalEndpoint : false,
     };
     // Only send API key if user typed a new one
     if (localApiKey.trim()) {
       payload.apiKey = localApiKey;
+    } else if (clearStoredApiKeyOnSave) {
+      payload.apiKey = "";
     }
     try {
       await updateConnection.mutateAsync(payload as { id: string } & Record<string, unknown>);
@@ -453,18 +491,29 @@ export function ConnectionEditor() {
           ),
         });
       }
+      if (baseUrlValidation.value !== localBaseUrl.trim()) {
+        setLocalBaseUrl(baseUrlValidation.value);
+      }
+      if (embeddingBaseUrlValidation.value !== localEmbeddingBaseUrl.trim()) {
+        setLocalEmbeddingBaseUrl(embeddingBaseUrlValidation.value);
+      }
       setDirty(false);
+      setClearStoredApiKeyOnSave(false);
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1500);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Failed to save connection");
+      const message = err instanceof Error ? err.message : "Failed to save connection";
+      setSaveError(message);
+      throw err instanceof Error ? err : new Error(message);
     }
   }, [
     connectionDetailId,
     localName,
     localProvider,
     localBaseUrl,
+    baseUrlValidation,
     localApiKey,
+    clearStoredApiKeyOnSave,
     localModel,
     localMaxContext,
     localMaxParallelJobs,
@@ -473,6 +522,7 @@ export function ConnectionEditor() {
     localDefaultForAgents,
     localEmbeddingModel,
     localEmbeddingBaseUrl,
+    embeddingBaseUrlValidation,
     localEmbeddingConnectionId,
     localPromptPresetId,
     localOpenrouterProvider,
@@ -482,6 +532,7 @@ export function ConnectionEditor() {
     localImageEndpointId,
     localMaxTokensOverride,
     localClaudeFastMode,
+    localTreatAsLocalEndpoint,
     localDefaultParametersEnabled,
     localDefaultParameters,
     selectedImageService,
@@ -506,6 +557,95 @@ export function ConnectionEditor() {
     }
     deleteConnection.mutate(connectionDetailId, { onSuccess: () => closeConnectionDetail() });
   }, [connectionDetailId, deleteConnection, closeConnectionDetail]);
+
+  const handleExportConnection = useCallback(async () => {
+    if (!conn) return;
+    const confirmed = await showConfirmDialog({
+      title: "Export Connection Data",
+      message: CONNECTION_EXPORT_WARNING,
+      confirmLabel: "Export",
+      cancelLabel: "Close",
+    });
+    if (!confirmed) return;
+
+    const currentConnection = conn as Record<string, unknown>;
+    const defaultParameters =
+      localProvider === "image_generation"
+        ? buildImageDefaultParameters(
+            currentConnection.defaultParameters,
+            selectedImageDefaultsService && localImageDefaults
+              ? sanitizeImageGenerationProfile(localImageDefaults, selectedImageDefaultsService)
+              : null,
+          )
+        : localDefaultParametersEnabled
+          ? (localDefaultParameters as unknown as Record<string, unknown>)
+          : null;
+    const imageService =
+      localProvider === "image_generation" ? localImageGenerationSource || localImageService || null : null;
+    const canTreatAsLocalEndpoint = canProviderTreatAsLocalEndpoint(localProvider);
+    const exportRow: ConnectionTransferRow = {
+      ...currentConnection,
+      name: localName,
+      provider: localProvider,
+      baseUrl: localBaseUrl,
+      model: localModel,
+      maxContext: localMaxContext,
+      maxTokensOverride: localMaxTokensOverride ?? null,
+      maxParallelJobs: localMaxParallelJobs,
+      treatAsLocalEndpoint: canTreatAsLocalEndpoint ? localTreatAsLocalEndpoint : false,
+      promptPresetId: localProvider !== "image_generation" ? localPromptPresetId || null : null,
+      defaultParameters,
+      enableCaching: localEnableCaching,
+      cachingAtDepth: localCachingAtDepth,
+      defaultForAgents: localDefaultForAgents,
+      embeddingModel: localEmbeddingModel,
+      embeddingBaseUrl: localEmbeddingBaseUrl,
+      embeddingConnectionId: localEmbeddingConnectionId || null,
+      openrouterProvider: localOpenrouterProvider || null,
+      imageGenerationSource: imageService,
+      imageService,
+      imageEndpointId:
+        localProvider === "image_generation" && selectedImageService === "runpod_comfyui"
+          ? localImageEndpointId || null
+          : null,
+      comfyuiWorkflow: localProvider === "image_generation" ? localComfyuiWorkflow || null : null,
+      claudeFastMode: localClaudeFastMode,
+    };
+
+    downloadJsonFile(
+      createConnectionExportEnvelope([exportRow]),
+      `${sanitizeExportFilenamePart(localName || String(currentConnection.name ?? ""), "connection")}.connection.json`,
+    );
+    toast.success(`Exported ${localName || "connection"}`);
+  }, [
+    conn,
+    localProvider,
+    localName,
+    localBaseUrl,
+    localModel,
+    localMaxContext,
+    localMaxTokensOverride,
+    localMaxParallelJobs,
+    localTreatAsLocalEndpoint,
+    localPromptPresetId,
+    localDefaultParametersEnabled,
+    localDefaultParameters,
+    localEnableCaching,
+    localCachingAtDepth,
+    localDefaultForAgents,
+    localEmbeddingModel,
+    localEmbeddingBaseUrl,
+    localEmbeddingConnectionId,
+    localOpenrouterProvider,
+    localImageGenerationSource,
+    localImageService,
+    selectedImageService,
+    localImageEndpointId,
+    localComfyuiWorkflow,
+    localClaudeFastMode,
+    selectedImageDefaultsService,
+    localImageDefaults,
+  ]);
 
   const handleTestConnection = useCallback(async () => {
     if (!connectionDetailId) return;
@@ -647,6 +787,15 @@ export function ConnectionEditor() {
 
   const markDirty = useCallback(() => setDirty(true), []);
 
+  const handleManualModelChange = useCallback(
+    (model: string) => {
+      setLocalModel(model);
+      setLocalMaxTokensOverride(null);
+      markDirty();
+    },
+    [markDirty],
+  );
+
   const handleJumpToJsonError = useCallback(() => {
     const ta = comfyWorkflowTextareaRef.current;
     if (!ta || !comfyWorkflowValidation || !comfyWorkflowValidation.parseError) return;
@@ -660,6 +809,7 @@ export function ConnectionEditor() {
   const isClaudeSubscriptionProvider = localProvider === "claude_subscription";
   const isOpenAIChatGPTProvider = localProvider === "openai_chatgpt";
   const isLocalAuthProvider = isClaudeSubscriptionProvider || isOpenAIChatGPTProvider;
+  const canTreatAsLocalEndpoint = canProviderTreatAsLocalEndpoint(localProvider);
 
   if (!connectionDetailId) return null;
 
@@ -683,16 +833,13 @@ export function ConnectionEditor() {
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="mari-editor-shell mari-editor-legacy-bridge flex flex-1 flex-col overflow-hidden">
       {/* ── Header ── */}
-      <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3">
-        <button
-          onClick={handleClose}
-          className="shrink-0 rounded-xl p-2 transition-all hover:bg-[var(--accent)] active:scale-95"
-        >
+      <div className="mari-editor-header">
+        <button onClick={handleClose} className="mari-editor-action inline-flex shrink-0">
           <ArrowLeft size="1.125rem" />
         </button>
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-sm">
+        <div className="mari-editor-icon-tile">
           <Link size="1.125rem" />
         </div>
         <input
@@ -701,35 +848,43 @@ export function ConnectionEditor() {
             setLocalName(e.target.value);
             markDirty();
           }}
-          className="min-w-0 flex-1 bg-transparent text-lg font-semibold outline-none placeholder:text-[var(--muted-foreground)]"
+          className="mari-editor-title-input min-w-0 flex-1 placeholder:text-[var(--marinara-editor-muted)]"
           placeholder="Connection name…"
         />
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="mari-editor-actions flex shrink-0">
           {saveError && (
-            <span className="mr-2 flex items-center gap-1 text-[0.625rem] font-medium text-red-400">
+            <span className="mari-editor-status mr-2 text-red-400">
               <AlertCircle size="0.6875rem" /> <span className="max-md:hidden">Save failed</span>
             </span>
           )}
           {savedFlash && !dirty && (
-            <span className="mr-2 flex items-center gap-1 text-[0.625rem] font-medium text-emerald-400">
+            <span className="mari-editor-status mr-2 text-emerald-400">
               <Check size="0.6875rem" /> <span className="max-md:hidden">Saved</span>
             </span>
           )}
-          {dirty && !saveError && (
-            <span className="mr-2 text-[0.625rem] font-medium text-amber-400 max-md:hidden">Unsaved</span>
-          )}
+          {dirty && !saveError && <span className="mari-editor-status mr-2 text-amber-400 max-md:hidden">Unsaved</span>}
           <button
             onClick={handleSave}
             disabled={updateConnection.isPending || saveConnectionDefaults.isPending}
-            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-sky-400 to-blue-500 px-4 py-2 text-xs font-medium text-white shadow-md transition-all hover:shadow-lg active:scale-[0.98] disabled:opacity-50"
+            className="mari-editor-action mari-editor-action--primary inline-flex disabled:opacity-50"
           >
             <Save size="0.8125rem" /> <span className="max-md:hidden">Save</span>
           </button>
           <button
-            onClick={handleDelete}
-            className="rounded-xl p-2 transition-all hover:bg-[var(--destructive)]/15 active:scale-95"
+            onClick={handleExportConnection}
+            className="mari-editor-action inline-flex"
+            title="Export connection"
+            aria-label="Export connection"
           >
-            <Trash2 size="0.9375rem" className="text-[var(--destructive)]" />
+            <Upload size="0.9375rem" />
+          </button>
+          <button
+            onClick={handleDelete}
+            className="mari-editor-action mari-editor-action--danger inline-flex"
+            title="Delete connection"
+            aria-label="Delete connection"
+          >
+            <Trash2 size="0.9375rem" />
           </button>
         </div>
       </div>
@@ -753,8 +908,12 @@ export function ConnectionEditor() {
             </button>
             <button
               onClick={async () => {
-                await handleSave();
-                closeConnectionDetail();
+                try {
+                  await handleSave();
+                  closeConnectionDetail();
+                } catch {
+                  // Keep the editor open so the user can fix the failed save.
+                }
               }}
               className="rounded-lg bg-amber-500/20 px-3 py-1 hover:bg-amber-500/30"
             >
@@ -776,8 +935,8 @@ export function ConnectionEditor() {
       )}
 
       {/* ── Body ── */}
-      <div className="flex-1 overflow-y-auto p-6 max-md:p-4">
-        <div className="mx-auto max-w-2xl space-y-6">
+      <div className="mari-editor-content max-md:p-4">
+        <div className="mari-editor-content-inner space-y-6">
           {/* ── Connection Name ── */}
           <FieldGroup
             label="Connection Name"
@@ -806,6 +965,7 @@ export function ConnectionEditor() {
                 <button
                   key={key}
                   onClick={() => {
+                    if (key === localProvider) return;
                     const defaultModel = MODEL_LISTS[key]?.[0];
                     setLocalProvider(key);
                     // Auto-fill base URL
@@ -813,14 +973,14 @@ export function ConnectionEditor() {
                     // Clear model when switching providers, except xAI where
                     // we can seed the newest supported Grok model.
                     setLocalModel(key === "xai" ? (defaultModel?.id ?? "grok-4.3") : "");
-                    if (key === "xai" && defaultModel?.context) {
-                      setLocalMaxContext(defaultModel.context);
-                    }
-                    // Local subscription/session providers ignore the API key
-                    // field, so clear stale keys from other providers.
-                    if (key === "claude_subscription" || key === "openai_chatgpt") {
-                      setLocalApiKey("");
-                    }
+                    setLocalMaxContext(Number(defaultModel?.context) || 128000);
+                    setLocalMaxTokensOverride(null);
+                    setLocalDefaultParametersEnabled(false);
+                    setLocalDefaultParameters(ROLEPLAY_PARAMETER_DEFAULTS);
+                    // Provider switches must not keep an encrypted key from
+                    // the previous provider under the new provider identity.
+                    setLocalApiKey("");
+                    setClearStoredApiKeyOnSave(true);
                     markDirty();
                   }}
                   className={cn(
@@ -1010,7 +1170,10 @@ export function ConnectionEditor() {
                 setLocalBaseUrl(e.target.value);
                 markDirty();
               }}
-              className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm font-mono ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-70"
+              className={cn(
+                "w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm font-mono ring-1 placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-70",
+                baseUrlValidation.error ? "ring-[var(--destructive)]" : "ring-[var(--border)]",
+              )}
               placeholder={
                 isClaudeSubscriptionProvider
                   ? "Not used — managed by the Claude Agent SDK"
@@ -1023,6 +1186,14 @@ export function ConnectionEditor() {
             {providerDef?.defaultBaseUrl && !localBaseUrl && !isLocalAuthProvider && (
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 Default: {providerDef.defaultBaseUrl}
+              </p>
+            )}
+            {baseUrlValidation.error && (
+              <p className="mt-1 text-[0.625rem] text-[var(--destructive)]">{baseUrlValidation.error}</p>
+            )}
+            {!baseUrlValidation.error && baseUrlValidation.value !== localBaseUrl.trim() && (
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                Will save as {baseUrlValidation.value}
               </p>
             )}
             {localProvider === "claude_subscription" && (
@@ -1129,7 +1300,7 @@ export function ConnectionEditor() {
             help="The specific AI model to use. You can pick from the list or type a custom model ID directly."
           >
             {/* Standard model dropdown + manual input (used for all providers including image_generation) */}
-            <div ref={modelTriggerRef} className="relative">
+            <div ref={modelDropdownRef} className={cn("relative", showModelDropdown && "z-50")}>
               <div
                 onClick={() => setShowModelDropdown(!showModelDropdown)}
                 className={cn(
@@ -1167,172 +1338,131 @@ export function ConnectionEditor() {
               </div>
 
               {showModelDropdown && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => {
-                      setShowModelDropdown(false);
-                      setModelSearch("");
-                    }}
-                    onWheel={(e) => {
-                      // Let scroll pass through to parent
-                      e.currentTarget.style.pointerEvents = "none";
-                      requestAnimationFrame(() => {
-                        (e.currentTarget as HTMLElement).style.pointerEvents = "";
-                      });
-                    }}
-                    onTouchMove={(e) => {
-                      // Let touch-scroll pass through to parent
-                      e.currentTarget.style.pointerEvents = "none";
-                      requestAnimationFrame(() => {
-                        (e.currentTarget as HTMLElement).style.pointerEvents = "";
-                      });
-                    }}
-                  />
-                  <div
-                    className="fixed z-50 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-2xl"
-                    style={
-                      dropdownRect
-                        ? {
-                            top: dropdownRect.top,
-                            left: dropdownRect.left,
-                            width: dropdownRect.width,
-                            maxHeight: dropdownRect.maxH,
-                          }
-                        : undefined
-                    }
-                  >
-                    {/* Fetch from API button */}
-                    <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--card)] p-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleFetchModels();
-                        }}
-                        disabled={fetchModels.isPending}
-                        className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-sky-400/10 px-3 py-2 text-xs font-medium text-sky-400 transition-all hover:bg-sky-400/20 active:scale-[0.98] disabled:opacity-50"
-                      >
-                        {fetchModels.isPending ? (
-                          <Loader2 size="0.75rem" className="animate-spin" />
-                        ) : (
-                          <Globe size="0.75rem" />
-                        )}
-                        {fetchModels.isPending ? "Fetching…" : "Fetch Models from API"}
-                      </button>
-                      {fetchError && <p className="mt-1.5 text-[0.625rem] text-[var(--destructive)]">{fetchError}</p>}
-                      {remoteModels.length > 0 && !fetchError && (
-                        <p className="mt-1 text-[0.625rem] text-emerald-400">
-                          {remoteModels.length} model{remoteModels.length !== 1 ? "s" : ""} available from API
-                        </p>
+                <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-80 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-2xl">
+                  {/* Fetch from API button */}
+                  <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--card)] p-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleFetchModels();
+                      }}
+                      disabled={fetchModels.isPending}
+                      className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-sky-400/10 px-3 py-2 text-xs font-medium text-sky-400 transition-all hover:bg-sky-400/20 active:scale-[0.98] disabled:opacity-50"
+                    >
+                      {fetchModels.isPending ? (
+                        <Loader2 size="0.75rem" className="animate-spin" />
+                      ) : (
+                        <Globe size="0.75rem" />
                       )}
-                    </div>
-
-                    {localProvider === "custom" ? (
-                      <div className="p-3">
-                        <p className="mb-2 text-[0.625rem] text-[var(--muted-foreground)]">
-                          Custom endpoints: type the model ID or fetch from API above.
-                        </p>
-                        <input
-                          value={localModel}
-                          onChange={(e) => {
-                            setLocalModel(e.target.value);
-                            markDirty();
-                          }}
-                          className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-sky-400/50"
-                          placeholder="model-name-or-path"
-                        />
-                        {/* Show fetched models for custom provider */}
-                        {remoteModels.length > 0 && (
-                          <div className="mt-2 max-h-48 overflow-y-auto">
-                            {remoteModels
-                              .filter((m) => {
-                                const q = (modelSearch || localModel).trim().toLowerCase();
-                                if (!q) return true;
-                                return m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q);
-                              })
-                              .map((m) => (
-                                <button
-                                  key={m.id}
-                                  onClick={() => selectModel({ ...m, isRemote: true })}
-                                  className={cn(
-                                    "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-[var(--accent)]",
-                                    localModel === m.id && "bg-sky-400/5",
-                                  )}
-                                >
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-sm font-medium">{m.name}</span>
-                                      {localModel === m.id && <Check size="0.75rem" className="text-sky-400" />}
-                                    </div>
-                                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">{m.id}</span>
-                                  </div>
-                                  <span className="shrink-0 rounded-md bg-sky-400/10 px-1.5 py-0.5 text-[0.5625rem] font-medium text-sky-400">
-                                    API
-                                  </span>
-                                </button>
-                              ))}
-                          </div>
-                        )}
-                        <button
-                          onClick={() => {
-                            setShowModelDropdown(false);
-                            setModelSearch("");
-                          }}
-                          className="mt-2 w-full rounded-lg bg-sky-400/10 px-3 py-1.5 text-xs font-medium text-sky-400 hover:bg-sky-400/20"
-                        >
-                          Done
-                        </button>
-                      </div>
-                    ) : filteredModels.length === 0 ? (
-                      <div className="p-4 text-center text-xs text-[var(--muted-foreground)]">
-                        No models found. Try a different search or type the model ID below.
-                        <input
-                          value={localModel}
-                          onChange={(e) => {
-                            setLocalModel(e.target.value);
-                            markDirty();
-                          }}
-                          className="mt-2 w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-sky-400/50"
-                          placeholder="Custom model ID…"
-                        />
-                      </div>
-                    ) : (
-                      filteredModels.map((m) => (
-                        <button
-                          key={m.id}
-                          onClick={() => selectModel(m)}
-                          className={cn(
-                            "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[var(--accent)]",
-                            localModel === m.id && "bg-sky-400/5",
-                          )}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">{m.name}</span>
-                              {m.isRemote && (
-                                <span className="rounded-md bg-sky-400/10 px-1.5 py-0.5 text-[0.5625rem] font-medium text-sky-400">
-                                  API
-                                </span>
-                              )}
-                              {localModel === m.id && <Check size="0.75rem" className="text-sky-400" />}
-                            </div>
-                            <span className="text-[0.625rem] text-[var(--muted-foreground)]">{m.id}</span>
-                          </div>
-                          <div className="shrink-0 text-right">
-                            {m.context > 0 && (
-                              <div className="text-[0.625rem] font-medium text-sky-400">{formatContext(m.context)}</div>
-                            )}
-                            {m.maxOutput > 0 && (
-                              <div className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                                {formatContext(m.maxOutput)} out
-                              </div>
-                            )}
-                          </div>
-                        </button>
-                      ))
+                      {fetchModels.isPending ? "Fetching…" : "Fetch Models from API"}
+                    </button>
+                    {fetchError && <p className="mt-1.5 text-[0.625rem] text-[var(--destructive)]">{fetchError}</p>}
+                    {remoteModels.length > 0 && !fetchError && (
+                      <p className="mt-1 text-[0.625rem] text-emerald-400">
+                        {remoteModels.length} model{remoteModels.length !== 1 ? "s" : ""} available from API
+                      </p>
                     )}
                   </div>
-                </>
+
+                  {localProvider === "custom" ? (
+                    <div className="p-3">
+                      <p className="mb-2 text-[0.625rem] text-[var(--muted-foreground)]">
+                        Custom endpoints: type the model ID or fetch from API above.
+                      </p>
+                      <input
+                        value={localModel}
+                        onChange={(e) => handleManualModelChange(e.target.value)}
+                        className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-sky-400/50"
+                        placeholder="model-name-or-path"
+                      />
+                      {/* Show fetched models for custom provider */}
+                      {remoteModels.length > 0 && (
+                        <div className="mt-2 max-h-48 overflow-y-auto">
+                          {remoteModels
+                            .filter((m) => {
+                              const q = (modelSearch || localModel).trim().toLowerCase();
+                              if (!q) return true;
+                              return m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q);
+                            })
+                            .map((m) => (
+                              <button
+                                key={m.id}
+                                onClick={() => selectModel({ ...m, isRemote: true })}
+                                className={cn(
+                                  "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-[var(--accent)]",
+                                  localModel === m.id && "bg-sky-400/5",
+                                )}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-medium">{m.name}</span>
+                                    {localModel === m.id && <Check size="0.75rem" className="text-sky-400" />}
+                                  </div>
+                                  <span className="text-[0.625rem] text-[var(--muted-foreground)]">{m.id}</span>
+                                </div>
+                                <span className="shrink-0 rounded-md bg-sky-400/10 px-1.5 py-0.5 text-[0.5625rem] font-medium text-sky-400">
+                                  API
+                                </span>
+                              </button>
+                            ))}
+                        </div>
+                      )}
+                      <button
+                        onClick={() => {
+                          setShowModelDropdown(false);
+                          setModelSearch("");
+                        }}
+                        className="mt-2 w-full rounded-lg bg-sky-400/10 px-3 py-1.5 text-xs font-medium text-sky-400 hover:bg-sky-400/20"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  ) : filteredModels.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-[var(--muted-foreground)]">
+                      No models found. Try a different search or type the model ID below.
+                      <input
+                        value={localModel}
+                        onChange={(e) => handleManualModelChange(e.target.value)}
+                        className="mt-2 w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-sky-400/50"
+                        placeholder="Custom model ID…"
+                      />
+                    </div>
+                  ) : (
+                    filteredModels.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => selectModel(m)}
+                        className={cn(
+                          "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[var(--accent)]",
+                          localModel === m.id && "bg-sky-400/5",
+                        )}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{m.name}</span>
+                            {m.isRemote && (
+                              <span className="rounded-md bg-sky-400/10 px-1.5 py-0.5 text-[0.5625rem] font-medium text-sky-400">
+                                API
+                              </span>
+                            )}
+                            {localModel === m.id && <Check size="0.75rem" className="text-sky-400" />}
+                          </div>
+                          <span className="text-[0.625rem] text-[var(--muted-foreground)]">{m.id}</span>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          {m.context > 0 && (
+                            <div className="text-[0.625rem] font-medium text-sky-400">{formatContext(m.context)}</div>
+                          )}
+                          {m.maxOutput > 0 && (
+                            <div className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                              {formatContext(m.maxOutput)} out
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
               )}
             </div>
 
@@ -1342,8 +1472,7 @@ export function ConnectionEditor() {
                 <input
                   value={localModel}
                   onChange={(e) => {
-                    setLocalModel(e.target.value);
-                    markDirty();
+                    handleManualModelChange(e.target.value);
                   }}
                   className="flex-1 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-[var(--ring)]"
                   placeholder="Or type model ID directly…"
@@ -1461,7 +1590,10 @@ export function ConnectionEditor() {
           {localProvider === "image_generation" && selectedImageDefaultsService && localImageDefaults && (
             <ImageGenerationDefaultsPanel
               service={selectedImageDefaultsService}
+              model={localModel}
+              source={selectedImageService}
               value={localImageDefaults}
+              styleProfiles={imageStyleProfiles}
               expanded={imageDefaultsExpanded}
               onExpandedChange={setImageDefaultsExpanded}
               onChange={(next) => {
@@ -1485,7 +1617,7 @@ export function ConnectionEditor() {
               <div className="flex items-center gap-3">
                 <DraftNumberInput
                   value={localMaxContext}
-                  min={0}
+                  min={1}
                   selectOnFocus
                   onCommit={(nextValue) => {
                     setLocalMaxContext(nextValue);
@@ -1505,7 +1637,7 @@ export function ConnectionEditor() {
           {localProvider !== "image_generation" && !isLocalAuthProvider && (
             <FieldGroup
               label="Max Output Tokens Override"
-              icon={<Zap size="0.875rem" className="text-amber-400" />}
+              icon={<Zap size="0.875rem" className="text-[var(--marinara-chat-chrome-button-text-active)]" />}
               help="Hard cap on max_tokens for the API response (limiting output size). Use this for providers that enforce a lower limit than what the engine calculates (e.g. DeepSeek caps at 8192). Leave empty to let the engine decide."
             >
               <div className="flex items-center gap-3">
@@ -1534,7 +1666,9 @@ export function ConnectionEditor() {
           {localProvider !== "image_generation" && (
             <FieldGroup
               label="Max Parallel Agent Jobs"
-              icon={<SlidersHorizontal size="0.875rem" className="text-fuchsia-400" />}
+              icon={
+                <SlidersHorizontal size="0.875rem" className="text-[var(--marinara-chat-chrome-button-text-active)]" />
+              }
               help="How many agent LLM requests Marinara may run at once for this connection. Higher values can speed up agent-heavy chats on providers that tolerate parallel calls."
             >
               <div className="flex items-center gap-3">
@@ -1560,11 +1694,32 @@ export function ConnectionEditor() {
             </FieldGroup>
           )}
 
+          {canTreatAsLocalEndpoint && (
+            <FieldGroup
+              label="Local / Custom Endpoint"
+              icon={<Server size="0.875rem" className="text-[var(--marinara-chat-chrome-button-text-active)]" />}
+              help="Use this for self-hosted or proxied OpenAI-compatible endpoints, especially custom domains that point at a LAN model server. Professor Mari will use a JSON tool protocol fallback for workspace tools instead of relying only on native tool calls."
+            >
+              <SettingsSwitch
+                label="Treat as local/custom endpoint"
+                checked={localTreatAsLocalEndpoint}
+                onChange={(checked) => {
+                  setLocalTreatAsLocalEndpoint(checked);
+                  markDirty();
+                }}
+              />
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                Enable this if Professor Mari stops after tool use or your endpoint advertises OpenAI compatibility but
+                does not reliably support tool calls.
+              </p>
+            </FieldGroup>
+          )}
+
           {/* ── Prompt Preset Override ── */}
           {localProvider !== "image_generation" && (
             <FieldGroup
               label="Prompt Preset Override"
-              icon={<FileText size="0.875rem" className="text-violet-400" />}
+              icon={<FileText size="0.875rem" className="mari-chrome-accent-icon mari-accent-animated" />}
               help="Optional. When roleplay or visual novel chats use this connection, Marinara assembles this prompt preset instead of the chat's selected prompt preset. Conversation and game mode keep their built-in prompt flows."
             >
               <select
@@ -1593,25 +1748,17 @@ export function ConnectionEditor() {
           {localProvider !== "image_generation" && (
             <FieldGroup
               label="Default Chat Parameters"
-              icon={<Zap size="0.875rem" className="text-purple-400" />}
+              icon={<Zap size="0.875rem" className="mari-chrome-accent-icon mari-accent-animated" />}
               help="Default generation settings for chats that use this connection. Individual chats can still override these in Chat Settings."
             >
-              <label className="flex cursor-pointer items-center gap-3 rounded-xl p-2 transition-colors hover:bg-[var(--secondary)]/50">
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={localDefaultParametersEnabled}
-                    onChange={(e) => {
-                      setLocalDefaultParametersEnabled(e.target.checked);
-                      markDirty();
-                    }}
-                    className="peer sr-only"
-                  />
-                  <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-purple-400/70" />
-                  <div className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
-                </div>
-                <span className="text-sm">Use custom defaults for this connection</span>
-              </label>
+              <SettingsSwitch
+                label="Use custom defaults for this connection"
+                checked={localDefaultParametersEnabled}
+                onChange={(checked) => {
+                  setLocalDefaultParametersEnabled(checked);
+                  markDirty();
+                }}
+              />
 
               {localDefaultParametersEnabled ? (
                 <div className="rounded-xl bg-[var(--secondary)]/40 p-3 ring-1 ring-[var(--border)]">
@@ -1636,29 +1783,21 @@ export function ConnectionEditor() {
           {(localProvider === "anthropic" || localProvider === "openrouter") && (
             <FieldGroup
               label="Prompt Caching"
-              icon={<Zap size="0.875rem" className="text-amber-400" />}
+              icon={<Zap size="0.875rem" className="text-[var(--marinara-chat-chrome-button-text-active)]" />}
               help={
                 localProvider === "anthropic"
                   ? "Enables Anthropic prompt caching, which caches your system prompt and conversation history between requests. Reduces latency and costs for multi-turn conversations. Cache lasts 5 minutes and is refreshed on each use."
                   : "For OpenRouter Claude models, sends the cache_control flag needed for Anthropic prompt caching. Most non-Claude OpenRouter models cache automatically and do not need this toggle."
               }
             >
-              <label className="flex items-center gap-3 cursor-pointer rounded-xl p-2 transition-colors hover:bg-[var(--secondary)]/50">
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={localEnableCaching}
-                    onChange={(e) => {
-                      setLocalEnableCaching(e.target.checked);
-                      markDirty();
-                    }}
-                    className="peer sr-only"
-                  />
-                  <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-amber-400/70" />
-                  <div className="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
-                </div>
-                <span className="text-sm">Enable prompt caching</span>
-              </label>
+              <SettingsSwitch
+                label="Enable prompt caching"
+                checked={localEnableCaching}
+                onChange={(checked) => {
+                  setLocalEnableCaching(checked);
+                  markDirty();
+                }}
+              />
               <p className="text-[0.625rem] text-[var(--muted-foreground)] px-2">
                 {localProvider === "anthropic"
                   ? "Caches the system prompt explicitly and uses automatic caching for conversation history. Read tokens cost 90% less than regular input tokens. Cache writes cost 25% more on first use."
@@ -1691,33 +1830,26 @@ export function ConnectionEditor() {
           {/* ── Default for Agents ── */}
           <FieldGroup
             label={isImageGenerationProvider ? "Default for Illustrator" : "Default for Agents"}
-            icon={<Bot size="0.875rem" className="text-teal-400" />}
+            icon={<Sparkles size="0.875rem" className="text-sky-400" />}
             help={
               isImageGenerationProvider
                 ? "When enabled, the Illustrator agent will use this image generation connection by default whenever it does not have a specific Image Generation Connection assigned."
                 : "When enabled, all agents that don't have a specific connection override will use this connection instead of the chat's active connection."
             }
           >
-            <label className="flex items-center gap-3 cursor-pointer select-none px-2 py-1">
-              <div className="relative">
-                <input
-                  type="checkbox"
-                  checked={localDefaultForAgents}
-                  onChange={(e) => {
-                    setLocalDefaultForAgents(e.target.checked);
-                    markDirty();
-                  }}
-                  className="peer sr-only"
-                />
-                <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-teal-400/70" />
-                <div className="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
-              </div>
-              <span className="text-sm">
-                {isImageGenerationProvider
+            <SettingsSwitch
+              label={
+                isImageGenerationProvider
                   ? "Use as default Illustrator agent connection"
-                  : "Use as default agent connection"}
-              </span>
-            </label>
+                  : "Use as default agent connection"
+              }
+              checked={localDefaultForAgents}
+              onChange={(checked) => {
+                setLocalDefaultForAgents(checked);
+                markDirty();
+              }}
+              className="px-2 py-1"
+            />
             {isImageGenerationProvider && (
               <p className="px-2 text-[0.625rem] text-[var(--muted-foreground)]">
                 Only one image generation connection should be marked as the default for the Illustrator agent.
@@ -1732,12 +1864,29 @@ export function ConnectionEditor() {
               icon={<Zap size="0.875rem" className="text-amber-400" />}
               help="When enabled, asks the Claude Agent SDK to use its faster routing tier — quicker responses but the SDK may use a smaller model behind the scenes (Sonnet/Haiku) even if you've selected Opus. Currently a no-op on every modern Claude model: Opus 4.7 has no faster variant to route to, and Anthropic dropped support for downgrading on the rest. The toggle is here for the day Anthropic re-enables it. Leave off."
             >
-              <label className="flex items-start gap-3 rounded-xl bg-[var(--secondary)] px-3 py-2.5 ring-1 ring-[var(--border)]">
-                <input
-                  type="checkbox"
-                  checked={localClaudeFastMode}
-                  onChange={async (e) => {
-                    const next = e.target.checked;
+              <SettingsSwitch
+                label={<span className="font-medium text-[var(--foreground)]">Use Claude Code fast-mode routing</span>}
+                description={
+                  <>
+                    <span className="mt-0.5 block text-[var(--muted-foreground)]">
+                      <strong className="text-amber-400">99% of users should leave this off.</strong> Fast mode is
+                      effectively a dead feature today — Claude/Anthropic removed support for downgrading current models,
+                      and Opus 4.7 has no faster variant to route to. Turning it on does nothing useful for roleplay
+                      quality and may add overhead. The toggle exists only so we don&apos;t have to ship a new release if
+                      Anthropic re-enables it. Leave off until that happens.
+                    </span>
+                    <span className="mt-1.5 flex items-start gap-1 text-[var(--muted-foreground)]">
+                      <AlertCircle size="0.625rem" className="mt-px shrink-0 text-amber-400" />
+                      <span>
+                        <strong className="text-amber-400">Doesn&apos;t work on Claude Opus 4.7 yet.</strong> There is no
+                        faster Opus 4.7 variant for the SDK to route to, so this toggle is a no-op when Opus 4.7 is the
+                        selected model.
+                      </span>
+                    </span>
+                  </>
+                }
+                checked={localClaudeFastMode}
+                onChange={async (next) => {
                     if (next) {
                       const confirmed = await showConfirmDialog({
                         title: "YOU DON'T WANT THIS SETTING ON!",
@@ -1751,28 +1900,11 @@ export function ConnectionEditor() {
                     }
                     setLocalClaudeFastMode(next);
                     markDirty();
-                  }}
-                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-amber-400"
-                />
-                <div className="min-w-0 flex-1 text-[0.6875rem] leading-relaxed">
-                  <div className="font-medium text-[var(--foreground)]">Use Claude Code fast-mode routing</div>
-                  <p className="mt-0.5 text-[var(--muted-foreground)]">
-                    <strong className="text-amber-400">99% of users should leave this off.</strong> Fast mode is
-                    effectively a dead feature today — Claude/Anthropic removed support for downgrading current models,
-                    and Opus 4.7 has no faster variant to route to. Turning it on does nothing useful for roleplay
-                    quality and may add overhead. The toggle exists only so we don&apos;t have to ship a new release if
-                    Anthropic re-enables it. Leave off until that happens.
-                  </p>
-                  <p className="mt-1.5 flex items-start gap-1 text-[var(--muted-foreground)]">
-                    <AlertCircle size="0.625rem" className="mt-px shrink-0 text-amber-400" />
-                    <span>
-                      <strong className="text-amber-400">Doesn&apos;t work on Claude Opus 4.7 yet.</strong> There is no
-                      faster Opus 4.7 variant for the SDK to route to, so this toggle is a no-op when Opus 4.7 is the
-                      selected model.
-                    </span>
-                  </p>
-                </div>
-              </label>
+                }}
+                labelPosition="start"
+                className="items-start justify-between rounded-xl bg-[var(--secondary)] px-3 py-2.5 ring-1 ring-[var(--border)]"
+                labelClassName="min-w-0 flex-1 text-[0.6875rem] leading-relaxed"
+              />
             </FieldGroup>
           )}
 
@@ -1780,7 +1912,7 @@ export function ConnectionEditor() {
           {localProvider !== "image_generation" && localProvider !== "claude_subscription" && (
             <FieldGroup
               label="Embedding Model"
-              icon={<Server size="0.875rem" className="text-violet-400" />}
+              icon={<Server size="0.875rem" className="mari-chrome-accent-icon mari-accent-animated" />}
               help="Optional. The model used for generating embeddings when vectorizing lorebook entries. Leave empty to skip semantic matching. Examples: text-embedding-3-small, text-embedding-ada-002."
             >
               <input
@@ -1808,9 +1940,23 @@ export function ConnectionEditor() {
                     setLocalEmbeddingBaseUrl(e.target.value);
                     markDirty();
                   }}
-                  className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm font-mono ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  className={cn(
+                    "w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm font-mono ring-1 placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]",
+                    embeddingBaseUrlValidation.error ? "ring-[var(--destructive)]" : "ring-[var(--border)]",
+                  )}
                   placeholder="e.g. http://localhost:5002/v1"
                 />
+                {embeddingBaseUrlValidation.error && (
+                  <p className="mt-1 text-[0.625rem] text-[var(--destructive)]">
+                    {embeddingBaseUrlValidation.error}
+                  </p>
+                )}
+                {!embeddingBaseUrlValidation.error &&
+                  embeddingBaseUrlValidation.value !== localEmbeddingBaseUrl.trim() && (
+                    <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                      Will save as {embeddingBaseUrlValidation.value}
+                    </p>
+                  )}
                 <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                   Optional. A separate base URL for your embedding backend. Useful when running two instances of
                   llama.cpp on different ports — one for chat, one for embeddings. Leave empty to use the
@@ -1887,7 +2033,7 @@ export function ConnectionEditor() {
                 <button
                   onClick={handleTestImage}
                   disabled={testImageGeneration.isPending}
-                  className="flex items-center gap-1.5 rounded-xl bg-violet-400/10 px-4 py-2.5 text-xs font-medium text-violet-400 ring-1 ring-violet-400/20 transition-all hover:bg-violet-400/20 active:scale-[0.98] disabled:opacity-50"
+                  className="mari-chrome-accent-surface mari-accent-animated flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-medium transition-all active:scale-[0.98] disabled:opacity-50"
                   title={dirty ? "Save first to test image generation" : undefined}
                 >
                   {testImageGeneration.isPending ? (
@@ -2108,7 +2254,7 @@ function FieldGroup({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-2">
+    <div className="mari-editor-panel space-y-2 p-3">
       <div className="flex items-center gap-1.5">
         {icon}
         <h3 className="text-xs font-semibold text-[var(--foreground)]">{label}</h3>
@@ -2155,14 +2301,20 @@ function TestResultCard({
 
 function ImageGenerationDefaultsPanel({
   service,
+  model,
+  source,
   value,
+  styleProfiles,
   expanded,
   onExpandedChange,
   onChange,
   onReset,
 }: {
   service: ImageDefaultsService;
+  model: string;
+  source?: string | null;
   value: ImageGenerationDefaultsProfile;
+  styleProfiles: ImageStyleProfileSettings;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   onChange: (next: ImageGenerationDefaultsProfile) => void;
@@ -2172,9 +2324,17 @@ function ImageGenerationDefaultsPanel({
     onChange({ ...value, seed });
   };
 
+  const updateStyleProfile = (styleProfileId: string) => {
+    onChange({ ...value, styleProfileId: styleProfileId || null });
+  };
+
   const automatic1111 = value.automatic1111 ?? createDefaultImageGenerationProfile("automatic1111").automatic1111!;
   const comfyui = value.comfyui ?? createDefaultImageGenerationProfile("comfyui").comfyui!;
   const novelai = value.novelai ?? createDefaultImageGenerationProfile("novelai").novelai!;
+  const suggestedStyleProfileId = suggestImageStyleProfileIdForModel(model, source, service);
+  const suggestedStyleProfile = suggestedStyleProfileId
+    ? styleProfiles.profiles.find((profile) => profile.id === suggestedStyleProfileId)
+    : null;
 
   const updateAutomatic1111 = (patch: Partial<typeof automatic1111>) => {
     onChange({
@@ -2248,6 +2408,37 @@ function ImageGenerationDefaultsPanel({
 
             <div className="grid gap-2 sm:grid-cols-2">
               <NumberSetting label="Seed" value={value.seed} min={-1} max={4_294_967_295} onCommit={updateSeed} />
+              <label className="flex flex-col gap-1 rounded-lg bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Style Profile</span>
+                  {suggestedStyleProfile && suggestedStyleProfile.id !== value.styleProfileId && (
+                    <button
+                      type="button"
+                      onClick={() => updateStyleProfile(suggestedStyleProfile.id)}
+                      className="rounded-md bg-[var(--secondary)] px-1.5 py-0.5 text-[0.55rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    >
+                      Use {suggestedStyleProfile.name}
+                    </button>
+                  )}
+                </div>
+                <select
+                  value={value.styleProfileId ?? ""}
+                  onChange={(event) => updateStyleProfile(event.target.value)}
+                  className="rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1.5 text-xs text-[var(--foreground)]"
+                >
+                  <option value="">Use global default</option>
+                  {styleProfiles.profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+                {suggestedStyleProfile && (
+                  <span className="text-[0.55rem] text-[var(--muted-foreground)]">
+                    Suggested from model/source: {suggestedStyleProfile.name}
+                  </span>
+                )}
+              </label>
               {service === "automatic1111" ? (
                 <>
                   <NumberSetting
@@ -2378,15 +2569,13 @@ function ImageGenerationDefaultsPanel({
                     onChange={(scheduler) => updateAutomatic1111({ scheduler })}
                   />
                 </div>
-                <label className="flex cursor-pointer items-center gap-3 rounded-lg bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]">
-                  <input
-                    type="checkbox"
-                    checked={automatic1111.restoreFaces}
-                    onChange={(event) => updateAutomatic1111({ restoreFaces: event.target.checked })}
-                    className="h-4 w-4 accent-sky-400"
-                  />
-                  <span className="text-xs text-[var(--foreground)]">Restore faces</span>
-                </label>
+                <SettingsCheckbox
+                  label="Restore faces"
+                  checked={automatic1111.restoreFaces}
+                  onChange={(checked) => updateAutomatic1111({ restoreFaces: checked })}
+                  className="bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]"
+                  labelClassName="text-[var(--foreground)]"
+                />
               </>
             ) : service === "comfyui" ? (
               <>
@@ -2416,23 +2605,14 @@ function ImageGenerationDefaultsPanel({
                     onChange={(scheduler) => updateComfyUi({ scheduler })}
                   />
                 </div>
-                <label className="flex cursor-pointer items-start gap-3 rounded-lg bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]">
-                  <input
-                    type="checkbox"
-                    checked={comfyui.uploadPlaceholderOnMissingReference}
-                    onChange={(event) => updateComfyUi({ uploadPlaceholderOnMissingReference: event.target.checked })}
-                    className="mt-0.5 h-4 w-4 accent-sky-400"
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-xs text-[var(--foreground)]">
-                      Upload a 1x1 placeholder when no reference image is provided
-                    </span>
-                    <span className="mt-0.5 block text-[0.55rem] text-[var(--muted-foreground)]">
-                      Custom workflows using %reference_image% or %reference_image_name% receive a tiny PNG instead of
-                      the raw placeholder text.
-                    </span>
-                  </span>
-                </label>
+                <SettingsCheckbox
+                  label="Upload a 1x1 placeholder when no reference image is provided"
+                  description="Custom workflows using %reference_image% or %reference_image_name% receive a tiny PNG instead of the raw placeholder text."
+                  checked={comfyui.uploadPlaceholderOnMissingReference}
+                  onChange={(checked) => updateComfyUi({ uploadPlaceholderOnMissingReference: checked })}
+                  className="bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]"
+                  labelClassName="text-[var(--foreground)]"
+                />
                 <p className="text-[0.55rem] text-[var(--muted-foreground)]">
                   Custom ComfyUI workflows can use %steps%, %cfg%, %sampler%, %scheduler%, %denoise%, %clip_skip%,
                   %reference_image% / %reference_image_01%-%reference_image_04%, and %reference_image_name% /

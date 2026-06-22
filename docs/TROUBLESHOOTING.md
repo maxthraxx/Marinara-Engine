@@ -48,9 +48,18 @@ See the [LAN / mobile access FAQ](FAQ.md#how-do-i-access-marinara-engine-from-my
 
 ## Android APK Stuck on Connecting or Waiting for Server
 
-The APK is not a standalone Marinara Engine app. It is a WebView shell that opens the local Termux server on the same Android device.
+The APK is a Termux bootstrap + WebView shell. It opens the local Termux server on the same Android device and can download/install Termux through Android's normal user-approved installer flow, but Termux still owns the actual Linux/Node runtime.
 
 If the APK stays on the connection screen:
+
+1. Tap **Install / Start Marinara**.
+2. If Termux is missing, approve Android's install prompts so Marinara can install the F-Droid Termux APK.
+3. If Android asks for **Run commands in Termux environment**, grant it.
+4. If Termux blocks external commands, paste the copied `allow-external-apps` command into Termux once, then tap **Install / Start Marinara** again.
+5. Wait for the launcher to finish and start the server.
+6. Return to the APK.
+
+Manual fallback:
 
 1. Open Termux.
 2. Go to the Marinara Engine folder.
@@ -84,9 +93,9 @@ The default v1.5.7 storage path no longer uses the persistent SQLite file as liv
 
 ---
 
-## Spotify DJ Login Fails on a Remote or LAN Install
+## Music DJ Spotify Login Fails on a Remote or LAN Install
 
-The Spotify DJ agent uses OAuth, and Spotify [tightened its redirect-URI rules in February 2025](https://developer.spotify.com/blog/2025-02-12-increasing-the-security-requirements-for-integrating-with-spotify): registered redirect URIs must be either `https://<any-host>` or one of the loopback literals `http://127.0.0.1` / `http://[::1]`. `localhost` and LAN IPs (e.g. `http://192.168.1.42:7860`) are rejected at registration. That means the redirect URI Marinara shows in the agent editor depends on how you reach the server:
+Music DJ's Spotify mode uses OAuth, and Spotify [tightened its redirect-URI rules in February 2025](https://developer.spotify.com/blog/2025-02-12-increasing-the-security-requirements-for-integrating-with-spotify): registered redirect URIs must be either `https://<any-host>` or one of the loopback literals `http://127.0.0.1` / `http://[::1]`. `localhost` and LAN IPs (e.g. `http://192.168.1.42:7860`) are rejected at registration. That means the redirect URI Marinara shows in the agent editor depends on how you reach the server:
 
 - **Localhost** — the editor shows `http://127.0.0.1:<PORT>/api/spotify/callback`. Register that and the popup callback completes normally.
 - **HTTPS deployment** — when the request reaches Marinara as `https://...` (own TLS via `SSL_CERT`/`SSL_KEY`, or a reverse proxy that sends `X-Forwarded-Proto: https`), the editor shows `https://<your-host>/api/spotify/callback`. Register that.

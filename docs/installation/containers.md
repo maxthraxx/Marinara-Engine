@@ -10,7 +10,7 @@ docker compose up -d
 
 Then open **<http://127.0.0.1:7860>**.
 
-The Compose file tracks `ghcr.io/pasta-devs/marinara-engine:latest`. Every tagged release also publishes immutable version tags, such as `ghcr.io/pasta-devs/marinara-engine:1.6.1`, plus the matching lite tag `ghcr.io/pasta-devs/marinara-engine:1.6.1-lite`.
+The Compose file tracks `ghcr.io/pasta-devs/marinara-engine:latest`. Every tagged release also publishes immutable version tags, such as `ghcr.io/pasta-devs/marinara-engine:2.0.0`, plus the matching lite tag `ghcr.io/pasta-devs/marinara-engine:2.0.0-lite`.
 
 Compose binds to `127.0.0.1` by default. To expose the container to your LAN, change the port mapping to `${PORT:-7860}:7860`, set `BASIC_AUTH_USER`, `BASIC_AUTH_PASS`, and `ADMIN_SECRET`, then restart. See [Access Control](../CONFIGURATION.md#access-control).
 
@@ -27,6 +27,33 @@ To pull the latest image and restart:
 ```bash
 docker compose down && docker compose pull && docker compose up -d
 ```
+
+### Staging Image
+
+An unstable `ghcr.io/pasta-devs/marinara-engine:staging` image is published from the latest `staging` branch build. Use it only for testing unreleased changes.
+
+Use a separate data volume for staging so unstable builds cannot mutate your stable release data:
+
+```bash
+docker run -d \
+  --name marinara-staging \
+  -p 127.0.0.1:7860:7860 \
+  -v marinara-staging-data:/app/data \
+  ghcr.io/pasta-devs/marinara-engine:staging
+```
+
+To update that staging container:
+
+```bash
+docker pull ghcr.io/pasta-devs/marinara-engine:staging
+docker rm -f marinara-staging 2>/dev/null || true
+docker run -d --name marinara-staging \
+  -p 127.0.0.1:7860:7860 \
+  -v marinara-staging-data:/app/data \
+  ghcr.io/pasta-devs/marinara-engine:staging
+```
+
+> **Warning:** The staging image may be broken, may change behavior without release notes, and may not support downgrading data back to stable builds. `:latest` remains the recommended stable release image.
 
 ### Build from Source
 
@@ -101,7 +128,7 @@ docker build -f Dockerfile.lite -t marinara-engine:lite .
 docker run -d -p 127.0.0.1:7860:7860 -v marinara-data:/app/data marinara-engine:lite
 ```
 
-> **Note:** The lite image is published alongside each versioned release (e.g. `ghcr.io/pasta-devs/marinara-engine:1.5.4-lite`). It is **not** published on every push to `main`.
+> **Note:** The lite image is published alongside each versioned release (e.g. `ghcr.io/pasta-devs/marinara-engine:2.0.0-lite`). It is **not** published on every push to `main`.
 
 ## Updating
 

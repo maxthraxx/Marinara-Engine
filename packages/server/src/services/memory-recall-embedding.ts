@@ -5,6 +5,7 @@ import { isLocalEmbedderAvailable } from "./local-embedder.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "./llm/local-sidecar.js";
 import { createLLMProvider } from "./llm/provider-registry.js";
 import type { MemoryRecallEmbeddingSource } from "./memory-recall.js";
+import { sidecarModelService } from "./sidecar/sidecar-model.service.js";
 import { createConnectionsStorage } from "./storage/connections.storage.js";
 
 type ConnectionStorage = ReturnType<typeof createConnectionsStorage>;
@@ -35,6 +36,14 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function isLocalSidecarEmbeddingSupported(): boolean {
+  return (
+    sidecarModelService.getResolvedBackend() === "llama_cpp" &&
+    sidecarModelService.isEnabled() &&
+    sidecarModelService.getConfiguredModelRef() !== null
+  );
+}
+
 export async function resolveMemoryRecallEmbeddingSource(
   db: DB,
   options: {
@@ -58,13 +67,20 @@ export async function resolveMemoryRecallEmbeddingSource(
     nonEmptyString(chatMeta.embeddingConnectionId) ?? nonEmptyString(activeConnection.embeddingConnectionId);
 
   if (embeddingConnId === LOCAL_SIDECAR_CONNECTION_ID) {
+    if (!isLocalSidecarEmbeddingSupported()) {
+      logger.warn(
+        "[memory-recall] Local sidecar was selected for embeddings, but sidecar embeddings require an enabled llama.cpp local model",
+      );
+      return null;
+    }
+
     const provider = getLocalSidecarProvider();
     const label = "Local Model sidecar";
     return {
       label,
-      async embed(texts: string[]) {
+      async embed(texts: string[], signal?: AbortSignal) {
         try {
-          return await provider.embed(texts, LOCAL_SIDECAR_MODEL);
+          return await provider.embed(texts, LOCAL_SIDECAR_MODEL, signal);
         } catch (err) {
           logger.warn(err, "[memory-recall] Configured embedding source %s failed", label);
           return null;
@@ -106,9 +122,9 @@ export async function resolveMemoryRecallEmbeddingSource(
 
   return {
     label,
-    async embed(texts: string[]) {
+    async embed(texts: string[], signal?: AbortSignal) {
       try {
-        return await provider.embed(texts, embeddingModel);
+        return await provider.embed(texts, embeddingModel, signal);
       } catch (err) {
         logger.warn(err, "[memory-recall] Configured embedding source %s failed", label);
         return null;
@@ -126,6 +142,6 @@ export async function isMemoryRecallVectorizerAvailable(
     activeBaseUrl?: string | null;
   },
 ): Promise<boolean> {
-  if (isLocalEmbedderAvailable()) return true;
-  return (await resolveMemoryRecallEmbeddingSource(db, options)) !== null;
+  if ((await resolveMemoryRecallEmbeddingSource(db, options)) !== null) return true;
+  return isLocalEmbedderAvailable();
 }

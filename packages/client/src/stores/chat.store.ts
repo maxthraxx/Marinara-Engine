@@ -4,7 +4,7 @@
 import { create } from "zustand";
 import type { AvatarCropValue } from "../lib/utils";
 import { subscribeWithSelector } from "zustand/middleware";
-import type { Chat, ChatMode, Message } from "@marinara-engine/shared";
+import type { Chat, ChatMode, ConversationPresenceStatus, Message } from "@marinara-engine/shared";
 import { useAgentStore } from "./agent.store";
 import { useGameStateStore } from "./game-state.store";
 
@@ -12,6 +12,16 @@ const STORAGE_KEY = "marinara-active-chat-id";
 const DRAFTS_KEY = "marinara-input-drafts";
 
 type NotificationAvatarCrop = AvatarCropValue | null;
+
+type DelayedCharacterStatus = ConversationPresenceStatus;
+
+export type DelayedCharacterInfo = {
+  name: string;
+  status: DelayedCharacterStatus;
+  characterIds?: string[];
+  characterNames?: string[];
+  characterStatuses?: Record<string, DelayedCharacterStatus>;
+};
 
 /** Read drafts from localStorage so typed input survives reloads, tab closes, and app restarts. */
 function loadDrafts(): Map<string, string> {
@@ -41,6 +51,15 @@ function saveDrafts(m: Map<string, string>) {
   }
 }
 
+function abortGenerationForChat(chatId: string, controller?: AbortController) {
+  controller?.abort();
+  fetch("/api/generate/abort", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chatId }),
+  }).catch(() => {});
+}
+
 interface ChatState {
   activeChatId: string | null;
   activeChat: Chat | null;
@@ -63,6 +82,8 @@ interface ChatState {
   streamBuffer: string;
   /** Per-chat stream text for active generations, so switching chats does not lose in-flight UI state. */
   streamBuffers: Map<string, string>;
+  /** Chat IDs whose live stream has been replaced by the saved message while agents continue. */
+  committedStreamChatIds: Set<string>;
   thinkingBuffer: string;
   /** Per-chat live thinking text for active generations. */
   thinkingBuffers: Map<string, string>;
@@ -72,16 +93,18 @@ interface ChatState {
   regenerateMessageId: string | null;
   /** During group chat individual mode, the character currently streaming. */
   streamingCharacterId: string | null;
+  /** Smart response queues keyed by chatId. */
+  responseQueues: Map<string, string[]>;
   /** Character name(s) shown in typing indicator when generation is active. */
   typingCharacterName: string | null;
   /** Human-readable label for the current server-side generation phase (e.g. "Running agents..."). */
   generationPhase: string | null;
   /** Character name + status shown during DND/idle delay (before generation starts). */
-  delayedCharacterInfo: { name: string; status: string } | null;
+  delayedCharacterInfo: DelayedCharacterInfo | null;
   /** Per-chat typing state so switching chats restores the correct indicator. */
   perChatTyping: Map<string, string>;
   /** Per-chat delayed state so switching chats restores the correct indicator. */
-  perChatDelayed: Map<string, { name: string; status: string }>;
+  perChatDelayed: Map<string, DelayedCharacterInfo>;
   swipeIndex: Map<string, number>; // messageId → active swipe index
   /** When true, ChatArea should open the settings drawer on next render. */
   shouldOpenSettings: boolean;
@@ -120,9 +143,10 @@ interface ChatState {
   addMessage: (message: Message) => void;
   updateLastMessage: (content: string) => void;
   setStreaming: (streaming: boolean, chatId?: string) => void;
+  setStreamCommitted: (chatId: string, committed: boolean) => void;
   setMariPhase: (chatId: string, phase: "thinking" | "updating" | "idle") => void;
   setAbortController: (chatId: string, controller: AbortController | null) => void;
-  stopGeneration: () => void;
+  stopGeneration: (chatId?: string) => void;
   appendStreamBuffer: (text: string, chatId?: string) => void;
   setStreamBuffer: (text: string, chatId?: string) => void;
   clearStreamBuffer: (chatId?: string) => void;
@@ -131,11 +155,15 @@ interface ChatState {
   clearThinkingBuffer: (chatId?: string) => void;
   setRegenerateMessageId: (id: string | null) => void;
   setStreamingCharacterId: (id: string | null) => void;
+  setResponseQueue: (chatId: string, characterIds: string[]) => void;
+  removeFromResponseQueue: (chatId: string, characterId: string) => void;
+  completeQueuedResponse: (chatId: string, characterId: string | null | undefined) => void;
+  clearResponseQueue: (chatId: string) => void;
   setTypingCharacterName: (name: string | null) => void;
   setGenerationPhase: (phase: string | null) => void;
-  setDelayedCharacterInfo: (info: { name: string; status: string } | null) => void;
+  setDelayedCharacterInfo: (info: DelayedCharacterInfo | null) => void;
   setPerChatTyping: (chatId: string, name: string | null) => void;
-  setPerChatDelayed: (chatId: string, info: { name: string; status: string } | null) => void;
+  setPerChatDelayed: (chatId: string, info: DelayedCharacterInfo | null) => void;
   clearPerChatState: (chatId: string) => void;
   setSwipeIndex: (messageId: string, index: number) => void;
   setShouldOpenSettings: (v: boolean) => void;
@@ -185,11 +213,13 @@ export const useChatStore = create<ChatState>()(
     mariPhaseByChatId: new Map(),
     streamBuffer: "",
     streamBuffers: new Map(),
+    committedStreamChatIds: new Set(),
     thinkingBuffer: "",
     thinkingBuffers: new Map(),
     abortControllers: new Map(),
     regenerateMessageId: null,
     streamingCharacterId: null,
+    responseQueues: new Map(),
     typingCharacterName: null,
     generationPhase: null,
     delayedCharacterInfo: null,
@@ -283,10 +313,23 @@ export const useChatStore = create<ChatState>()(
       }),
 
     setStreaming: (streaming, chatId) =>
-      set({
-        isStreaming: streaming,
-        streamingChatId: streaming ? (chatId ?? null) : null,
-        ...(!streaming ? { generationPhase: null } : {}),
+      set((state) => {
+        const committed = new Set(state.committedStreamChatIds);
+        const targetChatId = chatId ?? state.streamingChatId;
+        if (targetChatId) committed.delete(targetChatId);
+        return {
+          isStreaming: streaming,
+          streamingChatId: streaming ? (chatId ?? null) : null,
+          committedStreamChatIds: committed,
+          ...(!streaming ? { generationPhase: null } : {}),
+        };
+      }),
+    setStreamCommitted: (chatId, committed) =>
+      set((state) => {
+        const next = new Set(state.committedStreamChatIds);
+        if (committed) next.add(chatId);
+        else next.delete(chatId);
+        return { committedStreamChatIds: next };
       }),
     setMariPhase: (chatId, phase) =>
       set((state) => {
@@ -309,18 +352,17 @@ export const useChatStore = create<ChatState>()(
         else m.delete(chatId);
         return { abortControllers: m };
       }),
-    stopGeneration: () => {
-      const { streamingChatId, abortControllers } = useChatStore.getState();
-      if (streamingChatId) {
-        const ctrl = abortControllers.get(streamingChatId);
-        if (ctrl) ctrl.abort();
-        // Explicitly tell the server to abort — the SSE close event may not
-        // fire reliably, so this ensures the backend (e.g. KoboldCPP) stops.
-        fetch("/api/generate/abort", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chatId: streamingChatId }),
-        }).catch(() => {});
+    stopGeneration: (chatId) => {
+      const { activeChatId, streamingChatId, abortControllers } = useChatStore.getState();
+      const targetIds = chatId
+        ? [chatId]
+        : activeChatId && abortControllers.has(activeChatId)
+          ? [activeChatId]
+          : streamingChatId
+            ? [streamingChatId]
+            : [...abortControllers.keys()];
+      for (const targetChatId of new Set(targetIds)) {
+        abortGenerationForChat(targetChatId, abortControllers.get(targetChatId));
       }
     },
     appendStreamBuffer: (text, chatId) =>
@@ -398,6 +440,46 @@ export const useChatStore = create<ChatState>()(
 
     setStreamingCharacterId: (id) => set({ streamingCharacterId: id }),
 
+    setResponseQueue: (chatId, characterIds) =>
+      set((state) => {
+        const unique = characterIds.filter((id, index) => id && characterIds.indexOf(id) === index);
+        const queues = new Map(state.responseQueues);
+        if (unique.length > 0) queues.set(chatId, unique);
+        else queues.delete(chatId);
+        return { responseQueues: queues };
+      }),
+
+    removeFromResponseQueue: (chatId, characterId) =>
+      set((state) => {
+        const current = state.responseQueues.get(chatId) ?? [];
+        if (!current.includes(characterId)) return state;
+        const nextQueue = current.filter((id) => id !== characterId);
+        const queues = new Map(state.responseQueues);
+        if (nextQueue.length > 0) queues.set(chatId, nextQueue);
+        else queues.delete(chatId);
+        return { responseQueues: queues };
+      }),
+
+    completeQueuedResponse: (chatId, characterId) =>
+      set((state) => {
+        if (!characterId) return state;
+        const current = state.responseQueues.get(chatId) ?? [];
+        if (current[0] !== characterId) return state;
+        const queues = new Map(state.responseQueues);
+        const nextQueue = current.slice(1);
+        if (nextQueue.length > 0) queues.set(chatId, nextQueue);
+        else queues.delete(chatId);
+        return { responseQueues: queues };
+      }),
+
+    clearResponseQueue: (chatId) =>
+      set((state) => {
+        if (!state.responseQueues.has(chatId)) return state;
+        const queues = new Map(state.responseQueues);
+        queues.delete(chatId);
+        return { responseQueues: queues };
+      }),
+
     setTypingCharacterName: (name) => set({ typingCharacterName: name, delayedCharacterInfo: null }),
 
     setGenerationPhase: (phase) => set({ generationPhase: phase }),
@@ -414,7 +496,7 @@ export const useChatStore = create<ChatState>()(
         return { perChatTyping: m, perChatDelayed: d };
       }),
 
-    setPerChatDelayed: (chatId: string, info: { name: string; status: string } | null) =>
+    setPerChatDelayed: (chatId: string, info: DelayedCharacterInfo | null) =>
       set((state) => {
         const d = new Map(state.perChatDelayed);
         if (info) d.set(chatId, info);
@@ -429,13 +511,16 @@ export const useChatStore = create<ChatState>()(
         const t = new Map(state.perChatTyping);
         const d = new Map(state.perChatDelayed);
         const thoughts = new Map(state.thinkingBuffers);
+        const committed = new Set(state.committedStreamChatIds);
         t.delete(chatId);
         d.delete(chatId);
         thoughts.delete(chatId);
+        committed.delete(chatId);
         return {
           perChatTyping: t,
           perChatDelayed: d,
           thinkingBuffers: thoughts,
+          committedStreamChatIds: committed,
           ...(state.activeChatId === chatId ? { thinkingBuffer: "" } : {}),
         };
       }),
@@ -560,6 +645,10 @@ export const useChatStore = create<ChatState>()(
       }),
 
     reset: () => {
+      const { abortControllers } = useChatStore.getState();
+      for (const [chatId, controller] of abortControllers) {
+        abortGenerationForChat(chatId, controller);
+      }
       set({
         activeChatId: null,
         activeChat: null,
@@ -569,11 +658,13 @@ export const useChatStore = create<ChatState>()(
         mariPhaseByChatId: new Map(),
         streamBuffer: "",
         streamBuffers: new Map(),
+        committedStreamChatIds: new Set(),
         thinkingBuffer: "",
         thinkingBuffers: new Map(),
         abortControllers: new Map(),
         regenerateMessageId: null,
         streamingCharacterId: null,
+        responseQueues: new Map(),
         typingCharacterName: null,
         generationPhase: null,
         delayedCharacterInfo: null,

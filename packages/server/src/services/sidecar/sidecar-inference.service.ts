@@ -7,7 +7,7 @@
 
 import { randomUUID } from "crypto";
 import type { SceneAnalysis } from "@marinara-engine/shared";
-import { sanitizeApiError } from "../llm/base-provider.js";
+import { fitMessagesToContext, llmFetch, sanitizeApiError, type ChatMessage } from "../llm/base-provider.js";
 import { sidecarModelService } from "./sidecar-model.service.js";
 import { sidecarProcessService } from "./sidecar-process.service.js";
 import { resolveSidecarRequestModel } from "./sidecar-request-model.js";
@@ -27,6 +27,8 @@ export function isInferenceBusy(): boolean {
 
 const MAX_OUTPUT_TOKENS = 8192;
 const SCENE_ANALYSIS_MAX_TOKENS = 4096;
+const STREAM_IDLE_TIMEOUT_MS = 120_000;
+const MAX_ACCUMULATED_TEXT_CHARS = 4_000_000;
 
 type SidecarMessage = {
   role: "system" | "user" | "assistant";
@@ -51,6 +53,7 @@ type SidecarChatCompletionResponse = {
 };
 
 type SidecarChatCompletionChunk = {
+  error?: unknown;
   choices?: Array<{
     delta?: {
       content?: unknown;
@@ -62,6 +65,81 @@ type SidecarChatCompletionChunk = {
     };
   }>;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function extractSidecarErrorMessage(parsed: Record<string, unknown>): string | null {
+  const error = parsed.error;
+  if (typeof error === "string") return error;
+  if (isRecord(error)) {
+    const message = error.message;
+    if (typeof message === "string" && message.trim()) return message;
+    const detail = error.detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+  }
+  return null;
+}
+
+function normalizeResponseFormat(responseFormat?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!responseFormat) return undefined;
+  if (responseFormat.type !== "json_schema") return responseFormat;
+
+  const jsonSchema = isRecord(responseFormat.json_schema) ? responseFormat.json_schema : {};
+  const schema = isRecord(jsonSchema.schema)
+    ? jsonSchema.schema
+    : isRecord(responseFormat.schema)
+      ? responseFormat.schema
+      : {};
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: typeof jsonSchema.name === "string" && jsonSchema.name.trim() ? jsonSchema.name.trim() : "response",
+      schema,
+      strict: typeof jsonSchema.strict === "boolean" ? jsonSchema.strict : true,
+    },
+  };
+}
+
+function formatStreamOutput(content: string, reasoning: string): string {
+  return content.trim() || reasoning.trim();
+}
+
+function isContextOverflowError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return [
+    /context\s+(window|length|size|limit|overflow)/,
+    /ctx\s*(size|limit|overflow)/,
+    /prompt.*(too long|too large|exceed|overflow|context)/,
+    /(exceed|exceeds|exceeded|overflow).*(context|ctx|token|prompt)/,
+    /too many tokens/,
+    /maximum context/,
+    /n_ctx/,
+  ].some((pattern) => pattern.test(message));
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  return error instanceof Error && /aborted|abort/i.test(`${error.name} ${error.message}`);
+}
+
+function isStreamStallError(error: unknown): boolean {
+  return error instanceof Error && /stalled waiting for tokens/i.test(error.message);
+}
+
+function isProviderStreamError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("llama-server stream error:");
+}
+
+function markStreamedBeforeError(error: unknown): void {
+  if (error && typeof error === "object") {
+    (error as { sidecarStreamedTokens?: boolean }).sidecarStreamedTokens = true;
+  }
+}
+
+function streamedBeforeError(error: unknown): boolean {
+  return !!(error && typeof error === "object" && (error as { sidecarStreamedTokens?: boolean }).sidecarStreamedTokens);
+}
 
 function getRequestModel(): string {
   return resolveSidecarRequestModel(
@@ -150,97 +228,175 @@ async function streamChatCompletion(options: {
   messages: SidecarMessage[];
   maxTokens: number;
   responseFormat?: Record<string, unknown>;
+  signal?: AbortSignal;
 }): Promise<string> {
   const baseUrl = await sidecarProcessService.ensureReady();
+  const backend = sidecarModelService.getResolvedBackend();
   const generation = getRuntimeGenerationSettings();
-  const maxTokens = Math.min(Math.max(1, Math.floor(options.maxTokens)), generation.maxTokens);
-  const response = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  const config = sidecarModelService.getConfig();
+  const requestedMaxTokens = Math.min(Math.max(1, Math.floor(options.maxTokens)), MAX_OUTPUT_TOKENS);
+  const responseFormat = normalizeResponseFormat(options.responseFormat);
+  const fitted = fitMessagesToContext(options.messages as ChatMessage[], {
+    maxContext: config.contextSize,
+    maxTokens: requestedMaxTokens,
+  });
+  const fittedMessages = fitted.messages.map((message) => ({
+    role: message.role as SidecarMessage["role"],
+    content: typeof message.content === "string" ? message.content : "",
+  }));
+  const maxTokens = Math.max(1, Math.min(fitted.maxTokens ?? requestedMaxTokens, requestedMaxTokens));
+  const structuredOutput = !!responseFormat;
+
+  const send = async (sendMaxTokens: number): Promise<string> => {
+    const requestBody: Record<string, unknown> = {
       model: getRequestModel(),
       stream: true,
-      messages: options.messages,
-      max_tokens: maxTokens,
-      temperature: generation.temperature,
-      top_p: generation.topP,
-      ...(generation.topK > 0 ? { top_k: generation.topK } : {}),
-      ...(options.responseFormat ? { response_format: options.responseFormat } : {}),
-    }),
-    signal: AbortSignal.timeout(5 * 60_000),
-  });
+      messages: fittedMessages,
+      max_tokens: sendMaxTokens,
+      temperature: structuredOutput ? 0 : generation.temperature,
+      top_p: structuredOutput ? 1 : generation.topP,
+      ...(!structuredOutput && generation.topK > 0 ? { top_k: generation.topK } : {}),
+    };
+    if (responseFormat && backend !== "mlx") {
+      requestBody.response_format = responseFormat;
+    }
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    throw new Error(`llama-server error ${response.status}: ${sanitizeApiError(errorText || response.statusText)}`);
-  }
+    const response = await llmFetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+      signal: options.signal,
+    });
 
-  if (!response.body) {
-    throw new Error("llama-server returned no response body");
-  }
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      throw new Error(`llama-server error ${response.status}: ${sanitizeApiError(errorText || response.statusText)}`);
+    }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let content = "";
-  let reasoning = "";
+    if (!response.body) {
+      throw new Error("llama-server returned no response body");
+    }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let content = "";
+    let reasoning = "";
+    let emittedText = false;
+    const readChunk = async () => {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      try {
+        return await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error("llama-server stream stalled waiting for tokens")),
+              STREAM_IDLE_TIMEOUT_MS,
+            );
+          }),
+        ]);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    };
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+    const truncateAccumulatedText = (): string => {
+      const truncated = formatStreamOutput(content, reasoning).slice(0, MAX_ACCUMULATED_TEXT_CHARS);
+      content = truncated;
+      reasoning = "";
+      return truncated;
+    };
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data: ")) continue;
+    const appendText = (nextContent: string, nextReasoning: string): string | null => {
+      content += nextContent;
+      reasoning += nextReasoning;
+      if (nextContent || nextReasoning) emittedText = true;
+      if (content.length + reasoning.length > MAX_ACCUMULATED_TEXT_CHARS) {
+        return truncateAccumulatedText();
+      }
+      return null;
+    };
 
-      const data = trimmed.slice(6);
+    const readSseData = (line: string): string | null => {
+      if (!line.startsWith("data:")) return null;
+      return line.slice(5).trimStart();
+    };
+
+    const handlePayload = (data: string): string | null => {
       if (data === "[DONE]") {
-        return content;
+        return formatStreamOutput(content, reasoning);
       }
 
-      try {
-        const parsed = JSON.parse(data) as SidecarChatCompletionChunk;
+      const parsed = JSON.parse(data) as SidecarChatCompletionChunk;
+      const providerError = extractSidecarErrorMessage(parsed as Record<string, unknown>);
+      if (providerError) throw new Error(`llama-server stream error: ${sanitizeApiError(providerError)}`);
 
-        const choice = parsed.choices?.[0];
-        if (!choice) continue;
-        const extracted = extractChoiceContent(choice);
-        content += extracted.content;
-        reasoning += extracted.reasoning;
-      } catch {
-        // Ignore malformed chunks and keep streaming.
+      const choice = parsed.choices?.[0];
+      if (!choice) return null;
+      const extracted = extractChoiceContent(choice);
+      return appendText(extracted.content, extracted.reasoning);
+    };
+
+    const flushTrailingPayload = (): string | null => {
+      const trailing = readSseData(buffer.trim());
+      if (trailing == null) return null;
+      if (trailing === "[DONE]") return null;
+      try {
+        return handlePayload(trailing);
+      } catch (err) {
+        if (isProviderStreamError(err)) throw err;
+        // Ignore malformed trailing chunk after the stream has ended.
+        return null;
       }
-    }
-  }
+    };
 
-  if (buffer.trim().startsWith("data: ")) {
-    const trailing = buffer.trim().slice(6);
-    if (trailing !== "[DONE]") {
-      try {
-        const parsed = JSON.parse(trailing) as SidecarChatCompletionChunk;
-        const choice = parsed.choices?.[0];
-        if (choice) {
-          const extracted = extractChoiceContent(choice);
-          content += extracted.content;
-          reasoning += extracted.reasoning;
+    try {
+      while (true) {
+        const { done, value } = await readChunk();
+
+        buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = done ? "" : (lines.pop() ?? "");
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          const data = readSseData(trimmed);
+          if (data == null) continue;
+          const output = handlePayload(data);
+          if (output !== null) return output;
         }
+        if (done) break;
+      }
+    } catch (err) {
+      if (emittedText) markStreamedBeforeError(err);
+      if (isProviderStreamError(err)) throw err;
+      const partial = formatStreamOutput(content, reasoning);
+      const partialIsUsable = partial && !structuredOutput && (isAbortLikeError(err) || isStreamStallError(err));
+      if (partialIsUsable) return partial;
+      throw err;
+    } finally {
+      try {
+        await reader.cancel();
       } catch {
-        // Ignore malformed trailing chunk.
+        // Already closed.
       }
     }
-  }
 
-  const trimmedContent = content.trim();
-  if (trimmedContent) {
-    return trimmedContent;
-  }
+    const trailingOutput = flushTrailingPayload();
+    if (trailingOutput !== null) return trailingOutput;
+    return formatStreamOutput(content, reasoning);
+  };
 
-  return reasoning.trim();
+  try {
+    return await send(maxTokens);
+  } catch (err) {
+    if (maxTokens > 512 && !streamedBeforeError(err) && isContextOverflowError(err)) {
+      return await send(Math.max(512, Math.floor(maxTokens / 2)));
+    }
+    throw err;
+  }
 }
 
 export async function runTestMessage(): Promise<SidecarTestMessageOutput> {
@@ -252,36 +408,41 @@ export async function runTestMessage(): Promise<SidecarTestMessageOutput> {
     const config = sidecarModelService.getConfig();
     const shouldKeepRunning = config.useForTrackers || config.useForGameScene;
     const baseUrl = await sidecarProcessService.ensureReady({ forceStart: true });
+    const backend = sidecarModelService.getResolvedBackend();
     const nonce = `marinara-${randomUUID().slice(0, 8)}`;
 
     try {
+      const body: Record<string, unknown> = {
+        model: getRequestModel(),
+        stream: false,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a local runtime smoke test. Follow the user's format exactly and do not omit the verification token.",
+          },
+          {
+            role: "user",
+            content: `Reply in exactly two lines.
+Line 1: TOKEN ${nonce}
+Line 2: one short sentence confirming that the local sidecar test succeeded.`,
+          },
+        ] satisfies SidecarMessage[],
+        max_tokens: 48,
+        temperature: 0.2,
+        top_p: 0.9,
+      };
+      if (backend !== "mlx") {
+        body.reasoning_format = "none";
+        body.chat_template_kwargs = { enable_thinking: false };
+      }
+
       const response = await fetch(`${baseUrl}/v1/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          model: getRequestModel(),
-          stream: false,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are a local runtime smoke test. Follow the user's format exactly and do not omit the verification token.",
-            },
-            {
-              role: "user",
-              content: `Reply in exactly two lines.
-Line 1: TOKEN ${nonce}
-Line 2: one short sentence confirming that the local sidecar test succeeded.`,
-            },
-          ] satisfies SidecarMessage[],
-          max_tokens: 48,
-          temperature: 0.2,
-          top_p: 0.9,
-          reasoning_format: "none",
-          chat_template_kwargs: { enable_thinking: false },
-        }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(45_000),
       });
 
@@ -470,6 +631,7 @@ const SCENE_ANALYSIS_SCHEMA = {
       type: ["object", "null"] as const,
       properties: {
         segment: { type: "number" as const },
+        title: { type: "string" as const },
         prompt: { type: "string" as const },
         characters: {
           type: "array" as const,
@@ -487,7 +649,7 @@ const SCENE_ANALYSIS_SCHEMA = {
   required: ["background", "music", "ambient", "weather", "timeOfDay", "reputationChanges", "segmentEffects"] as const,
 };
 
-export async function analyzeScene(systemPrompt: string, userPrompt: string): Promise<SceneAnalysis> {
+export async function analyzeScene(systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<SceneAnalysis> {
   return withRequestTracking(async () => {
     const raw = await streamChatCompletion({
       messages: [
@@ -497,15 +659,20 @@ export async function analyzeScene(systemPrompt: string, userPrompt: string): Pr
       maxTokens: SCENE_ANALYSIS_MAX_TOKENS,
       responseFormat: {
         type: "json_schema",
-        schema: SCENE_ANALYSIS_SCHEMA,
+        json_schema: {
+          name: "scene_analysis",
+          schema: SCENE_ANALYSIS_SCHEMA,
+          strict: true,
+        },
       },
+      signal,
     });
 
     return extractJsonPayload<SceneAnalysis>(raw);
   });
 }
 
-export async function runTrackerPrompt(systemPrompt: string, userPrompt: string): Promise<string> {
+export async function runTrackerPrompt(systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<string> {
   return withRequestTracking(async () => {
     return await streamChatCompletion({
       messages: [
@@ -513,6 +680,7 @@ export async function runTrackerPrompt(systemPrompt: string, userPrompt: string)
         { role: "user", content: userPrompt },
       ],
       maxTokens: MAX_OUTPUT_TOKENS,
+      signal,
     });
   });
 }

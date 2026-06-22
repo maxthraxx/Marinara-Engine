@@ -101,9 +101,9 @@
 
 ## Latest Release
 
-Current stable release: **[v1.6.1](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v1.6.1)**.
+Current stable release: **[v2.0.0](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v2.0.0)**.
 
-See [CHANGELOG.md](CHANGELOG.md) for detailed release notes. Tagged releases use the `vX.Y.Z` format and are published on the [Releases](https://github.com/Pasta-Devs/Marinara-Engine/releases) page. If you download an Android APK from a release, it is an optional WebView shell and still requires Marinara Engine to be running through Termux on the same Android device.
+See [CHANGELOG.md](CHANGELOG.md) for detailed release notes. Tagged releases use the `vX.Y.Z` format and are published on the [Releases](https://github.com/Pasta-Devs/Marinara-Engine/releases) page. Android APKs are Termux bootstrap + WebView shells: they can download Termux from F-Droid, launch Android's installer, start the Termux setup flow after required permission prompts, then open the local Marinara server on the same device.
 
 ---
 
@@ -120,17 +120,20 @@ More detailed public [roadmap](https://github.com/orgs/Pasta-Devs/projects/1).
 
 ## Installation
 
-| Platform            | Guide                                                                         |
-| ------------------- | ----------------------------------------------------------------------------- |
-| 🐳 Docker / Podman  | [Container Installation Guide](docs/installation/containers.md) — recommended |
-| 🪟 Windows          | [Windows Installation Guide](docs/installation/windows.md)                    |
-| 🍎🐧 macOS / Linux  | [macOS / Linux Installation Guide](docs/installation/macos-linux.md)          |
-| 🤖 Android (Termux) | [Android (Termux) Installation Guide](docs/installation/android-termux.md)    |
-| 📱 iOS / iPadOS     | [iOS / iPadOS PWA Guide](docs/installation/ios-pwa.md)                        |
+| Platform                     | Guide                                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------------------------------- |
+| 🐳 Docker / Podman           | [Container Installation Guide](docs/installation/containers.md) — recommended                   |
+| 🪟 Windows                   | [Windows Installation Guide](docs/installation/windows.md)                                      |
+| 🍎🐧 macOS / Linux           | [macOS / Linux Installation Guide](docs/installation/macos-linux.md)                            |
+| 🤖 Android APK Bootstrap     | [Android APK Guide](android/README.md) — guided tap-through install/start shell                 |
+| 🤖 Android Manual Termux     | [Android (Termux) Installation Guide](docs/installation/android-termux.md) — manual fallback    |
+| 📱 iOS / iPadOS              | [iOS / iPadOS PWA Guide](docs/installation/ios-pwa.md)                                          |
 
-> **Android APK note:** APK files attached to GitHub Releases are not standalone Android server builds. They are optional WebView shells and require the Termux install path above to be running on the same Android device.
+> **Recommended Android path:** download the Android APK from the latest GitHub Release, open it, then tap **Install / Start Marinara**. The APK can download Termux from F-Droid, hand it to Android's installer, request Termux command permission, start the setup command, and open the local Marinara server when it is ready. Android still shows its required install/permission prompts.
 
 Each guide covers installation, updating, and LAN access for that platform. See [Configuration Reference](docs/CONFIGURATION.md) for environment variables setup. Having trouble? See [FAQ](docs/FAQ.md) and [Troubleshooting](docs/TROUBLESHOOTING.md).
+
+Upgrading from an older release? See [Upgrading to v2.0.0](docs/UPGRADING.md) for the platform-by-platform path from v1.6.1.
 
 Security defaults are intentionally local-first: loopback access works out of the box, ordinary LAN and public clients require Basic Auth unless you explicitly opt back in, and Tailscale (`100.64.0.0/10`) plus Docker bridge (`172.16.0.0/12`) traffic are trusted by default for easier private installs. Set `BYPASS_AUTH_TAILSCALE=false` or `BYPASS_AUTH_DOCKER=false` if you want those clients to authenticate too. `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK=true` restores unauthenticated access for other trusted private networks; public clients still require `ALLOW_UNAUTHENTICATED_REMOTE=true`. Powerful actions such as backups, bulk import, update apply, sidecar install/download/delete, haptics, and custom tool mutation also require `ADMIN_SECRET`; see [Access Control](docs/CONFIGURATION.md#access-control).
 
@@ -148,7 +151,7 @@ Character expression sprites with automatic emotion switching, custom scene back
 
 ### AI Agent System
 
-25+ built-in agents that run alongside your chat — world state tracking, quest management, combat, expression detection, background selection, narrative direction, prose analysis, Spotify DJ, CYOA choices, and more. All disabled by default; enable only what you want, or create custom agents.
+20+ built-in agents that run alongside your chat — world state tracking, quest management, combat, expression detection, background selection, Narrative Director, prose analysis, Music DJ for Spotify/YouTube, CYOA choices, and more. Add only the agents you want to each chat, or create/import custom agents.
 
 ### Prompt Engineering
 
@@ -170,13 +173,14 @@ Export individual chats or bulk transcript zips as JSONL or plain text. Fully lo
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md)         | Installation guide index (all platforms)                        |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)       | Environment variables and `.env` reference                      |
+| [docs/IMAGE_GENERATION.md](docs/IMAGE_GENERATION.md) | Image provider setup, style profiles, and prompt cleanup        |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)   | Common issues and fixes                                         |
 | [docs/FAQ.md](docs/FAQ.md)                           | Frequently asked questions (LAN access, etc.)                   |
 | [docs/MACROS.md](docs/MACROS.md)                     | Prompt macro syntax, including weighted random choices          |
 | [docs/PROFESSOR_MARI.md](docs/PROFESSOR_MARI.md)     | Built-in assistant capabilities, limits, and safety notes       |
 | [docs/FRONTEND.md](docs/FRONTEND.md)                 | Frontend architecture, components, hooks, and API reference     |
 | [docs/ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) | Code ownership map and module-boundary refactor groundwork      |
-| [android/README.md](android/README.md)               | Android WebView wrapper (APK) guide                             |
+| [android/README.md](android/README.md)               | Android Termux bootstrap + WebView shell guide                  |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                   | Contributor workflow, validation, versioning, and release steps |
 | [CHANGELOG.md](CHANGELOG.md)                         | Release notes                                                   |
 | [CLAUDE.md](CLAUDE.md)                               | Maintainer notes for contributors using Claude                  |

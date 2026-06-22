@@ -25,6 +25,7 @@ export const createConnectionSchema = z.object({
   baseUrl: z.string().url().or(z.literal("")).default(""),
   apiKey: z.string().default(""),
   model: z.string().default(""),
+  imagePath: z.string().nullable().default(null),
   maxContext: z.number().int().min(1).default(128000),
   isDefault: z.boolean().default(false),
   useForRandom: z.boolean().default(false),
@@ -42,6 +43,7 @@ export const createConnectionSchema = z.object({
   promptPresetId: z.string().nullable().default(null),
   maxTokensOverride: z.number().int().min(1).nullable().default(null),
   maxParallelJobs: z.number().int().min(1).max(16).default(1),
+  treatAsLocalEndpoint: z.boolean().default(false),
   claudeFastMode: z.boolean().default(false),
 });
 

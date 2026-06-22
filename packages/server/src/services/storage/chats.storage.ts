@@ -1,13 +1,15 @@
 // ──────────────────────────────────────────────
 // Storage: Chats
 // ──────────────────────────────────────────────
-import { eq, desc, and, gt, inArray, isNull } from "drizzle-orm";
+import { eq, desc, and, gt, inArray, isNull, isNotNull } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import {
   chats,
   messages,
   messageSwipes,
   gameStateSnapshots,
+  gameCheckpoints,
+  gameEngineState,
   chatImages,
   oocInfluences,
   conversationNotes,
@@ -76,6 +78,35 @@ function parseMetadata(raw: unknown): MetadataPatch {
     }
   }
   return typeof raw === "object" ? (raw as MetadataPatch) : {};
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeConversationStatusOverrides(current: unknown, incoming: unknown): unknown {
+  if (incoming === null) return null;
+  if (incoming === undefined) return current;
+  if (isPlainRecord(current) && isPlainRecord(incoming)) {
+    const merged = { ...current, ...incoming };
+    // Strip null tombstones (explicit deletion signals from the client)
+    for (const key of Object.keys(merged)) {
+      if (merged[key] === null) delete merged[key];
+    }
+    return merged;
+  }
+  return incoming;
+}
+
+function mergeMetadataPatch(current: MetadataPatch, patch: MetadataPatch): MetadataPatch {
+  const merged = { ...current, ...patch };
+  if (Object.prototype.hasOwnProperty.call(patch, "conversationStatusOverrides")) {
+    merged.conversationStatusOverrides = mergeConversationStatusOverrides(
+      current.conversationStatusOverrides,
+      patch.conversationStatusOverrides,
+    );
+  }
+  return merged;
 }
 
 function readUnreadCount(value: unknown): number {
@@ -160,6 +191,28 @@ async function invalidateMemoryChunksFrom(db: DB, chatId: string, createdAt: str
 
 /** Create the chat storage facade used by routes and importers. */
 export function createChatsStorage(db: DB) {
+  async function deleteGameStateForMessages(messageIds: string[]) {
+    const ids = Array.from(new Set(messageIds.filter(Boolean)));
+    if (ids.length === 0) return;
+
+    const CHUNK = 500;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const snapshots = await db
+        .select({ id: gameStateSnapshots.id })
+        .from(gameStateSnapshots)
+        .where(inArray(gameStateSnapshots.messageId, chunk));
+      const snapshotIds = snapshots.map((row) => row.id).filter(Boolean);
+
+      for (let j = 0; j < snapshotIds.length; j += CHUNK) {
+        const snapshotChunk = snapshotIds.slice(j, j + CHUNK);
+        await db.delete(gameCheckpoints).where(inArray(gameCheckpoints.snapshotId, snapshotChunk));
+      }
+      await db.delete(gameCheckpoints).where(inArray(gameCheckpoints.messageId, chunk));
+      await db.delete(gameStateSnapshots).where(inArray(gameStateSnapshots.messageId, chunk));
+    }
+  }
+
   async function collectFreshConversationSchedules(
     characterIds: string[],
     excludeChatId?: string,
@@ -221,7 +274,7 @@ export function createChatsStorage(db: DB) {
         characterIds: JSON.stringify(input.characterIds),
         groupId: input.groupId ?? null,
         personaId: input.personaId,
-        promptPresetId: input.mode === "conversation" ? null : input.promptPresetId,
+        promptPresetId: input.promptPresetId,
         connectionId: input.connectionId,
         metadata: JSON.stringify(metadata),
         createdAt: timestamp.createdAt,
@@ -286,6 +339,13 @@ export function createChatsStorage(db: DB) {
       return rows[0] ?? null;
     },
 
+    async touch(id: string, opts?: { tx?: Pick<DB, "select" | "update"> }) {
+      const conn = opts?.tx ?? db;
+      await conn.update(chats).set({ updatedAt: now() }).where(eq(chats.id, id));
+      const rows = await conn.select().from(chats).where(eq(chats.id, id));
+      return rows[0] ?? null;
+    },
+
     /**
      * Set the folder assignment for a chat, propagating to every branch that
      * shares its groupId. The sidebar collapses each group to a single visible
@@ -336,12 +396,49 @@ export function createChatsStorage(db: DB) {
 
         const current = parseMetadata(existing.metadata);
         const patch = typeof patchOrUpdater === "function" ? await patchOrUpdater({ ...current }) : patchOrUpdater;
-        const merged = { ...current, ...patch };
+        const merged = mergeMetadataPatch(current, patch);
 
         await db
           .update(chats)
           .set({
             metadata: JSON.stringify(merged),
+            ...(opts.touchUpdatedAt !== false && { updatedAt: now() }),
+          })
+          .where(eq(chats.id, id));
+        return this.getById(id);
+      });
+    },
+
+    /**
+     * Patch metadata and the denormalized `characterIds` column together inside a single per-chat
+     * critical section. Both columns are written in one row update under the same metadata patch queue
+     * as `patchMetadata`, so a concurrent metadata-queued writer can neither interleave between the two
+     * writes nor leave `characterIds` reflecting an older party than the queued-final metadata. The
+     * updater receives the fresh metadata and returns the metadata patch plus the `characterIds` array
+     * to mirror; the reloaded chat returned reflects both writes. Used by the game party handlers.
+     */
+    async patchMetadataWithCharacterIds(
+      id: string,
+      updater: (
+        current: MetadataPatch,
+      ) =>
+        | { metadata: MetadataPatch; characterIds: string[] }
+        | Promise<{ metadata: MetadataPatch; characterIds: string[] }>,
+      opts: { touchUpdatedAt?: boolean } = {},
+    ) {
+      return withMetadataPatchQueue(id, async () => {
+        const existing = await this.getById(id);
+        if (!existing) return null;
+
+        const current = parseMetadata(existing.metadata);
+        const { metadata: patch, characterIds } = await updater({ ...current });
+        const merged = mergeMetadataPatch(current, patch);
+
+        await db
+          .update(chats)
+          .set({
+            metadata: JSON.stringify(merged),
+            characterIds: JSON.stringify(characterIds),
             ...(opts.touchUpdatedAt !== false && { updatedAt: now() }),
           })
           .where(eq(chats.id, id));
@@ -410,6 +507,8 @@ export function createChatsStorage(db: DB) {
       // Clean up agent data referencing this chat
       await db.delete(agentRuns).where(eq(agentRuns.chatId, id));
       await db.delete(agentMemory).where(eq(agentMemory.chatId, id));
+      await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, id));
+      await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, id));
 
       // Clean up gallery images (DB records + files on disk)
       await db.delete(chatImages).where(eq(chatImages.chatId, id));
@@ -426,6 +525,8 @@ export function createChatsStorage(db: DB) {
       for (const chat of groupChats) {
         await db.delete(agentRuns).where(eq(agentRuns.chatId, chat.id));
         await db.delete(agentMemory).where(eq(agentMemory.chatId, chat.id));
+        await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, chat.id));
+        await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, chat.id));
         await db.delete(chatImages).where(eq(chatImages.chatId, chat.id));
         const galleryDir = join(GALLERY_DIR, chat.id);
         if (existsSync(galleryDir)) rmSync(galleryDir, { recursive: true, force: true });
@@ -435,6 +536,32 @@ export function createChatsStorage(db: DB) {
     },
 
     // ── Messages ──
+
+    async lastContactByCharacter(chatId: string): Promise<Record<string, string>> {
+      // Aggregate in JS rather than via SQL GROUP BY / MAX(): the default
+      // file-storage backend's query builder implements where()/orderBy() but
+      // not groupBy() (and doesn't evaluate sql`MAX()` aggregates), so the SQL
+      // form throws "groupBy is not a function" there. Selecting the plain
+      // columns and reducing here works on both the file store and libsql.
+      // created_at is a TEXT (ISO) column, so lexicographic `>` is chronological.
+      const rows = await db
+        .select({
+          characterId: messages.characterId,
+          createdAt: messages.createdAt,
+        })
+        .from(messages)
+        .where(and(eq(messages.chatId, chatId), isNotNull(messages.characterId)));
+      const result: Record<string, string> = {};
+      for (const row of rows) {
+        const characterId = row.characterId;
+        const createdAt = row.createdAt;
+        if (!characterId || !createdAt) continue;
+        if (!result[characterId] || createdAt > result[characterId]) {
+          result[characterId] = createdAt;
+        }
+      }
+      return result;
+    },
 
     async countMessages(chatId: string): Promise<number> {
       const rows = await db.select({ id: messages.id }).from(messages).where(eq(messages.chatId, chatId));
@@ -714,6 +841,7 @@ export function createChatsStorage(db: DB) {
 
     async removeMessage(id: string) {
       const existing = await this.getMessage(id);
+      if (existing) await deleteGameStateForMessages([id]);
       await db.delete(messages).where(eq(messages.id, id));
       if (existing) {
         await invalidateMemoryChunksFrom(db, existing.chatId, existing.createdAt);
@@ -730,13 +858,14 @@ export function createChatsStorage(db: DB) {
           ? and(inArray(messages.id, chunk), eq(messages.chatId, chatId))
           : inArray(messages.id, chunk);
         const existingRows = await db
-          .select({ chatId: messages.chatId, createdAt: messages.createdAt })
+          .select({ id: messages.id, chatId: messages.chatId, createdAt: messages.createdAt })
           .from(messages)
           .where(condition);
         for (const row of existingRows) {
           const current = earliestByChat.get(row.chatId);
           if (!current || row.createdAt < current) earliestByChat.set(row.chatId, row.createdAt);
         }
+        await deleteGameStateForMessages(existingRows.map((row) => row.id));
         await db.delete(messages).where(condition);
       }
       for (const [affectedChatId, createdAt] of earliestByChat) {
@@ -887,6 +1016,22 @@ export function createChatsStorage(db: DB) {
           .update(gameStateSnapshots)
           .set({ swipeIndex: snapshot.swipeIndex - 1 })
           .where(eq(gameStateSnapshots.id, snapshot.id));
+      }
+
+      // Mirror the prune for turn-game (UNO) snapshots so anchors stay aligned
+      // with the message's swipes after one is removed.
+      await db
+        .delete(gameEngineState)
+        .where(and(eq(gameEngineState.messageId, messageId), eq(gameEngineState.swipeIndex, index)));
+      const engineSnapshotsToShift = await db
+        .select()
+        .from(gameEngineState)
+        .where(and(eq(gameEngineState.messageId, messageId), gt(gameEngineState.swipeIndex, index)));
+      for (const snapshot of engineSnapshotsToShift) {
+        await db
+          .update(gameEngineState)
+          .set({ swipeIndex: snapshot.swipeIndex - 1 })
+          .where(eq(gameEngineState.id, snapshot.id));
       }
 
       await db

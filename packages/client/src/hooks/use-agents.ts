@@ -18,6 +18,7 @@ export interface AgentConfigRow {
   phase: string;
   enabled: string;
   connectionId: string | null;
+  imagePath: string | null;
   promptTemplate: string;
   settings: string;
   createdAt: string;
@@ -38,6 +39,13 @@ export interface AgentRunRow {
   success: boolean;
   error: string | null;
   createdAt: string;
+}
+
+function upsertAgentConfig(rows: AgentConfigRow[] | undefined, agent: AgentConfigRow) {
+  if (!rows) return [agent];
+  const existingIndex = rows.findIndex((row) => row.id === agent.id);
+  if (existingIndex === -1) return [agent, ...rows];
+  return rows.map((row) => (row.id === agent.id ? agent : row));
 }
 
 export function useAgentConfigs(enabled = true) {
@@ -77,6 +85,18 @@ export function useUpdateAgent() {
   });
 }
 
+export function useUploadAgentImage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, image }: { id: string; image: string }) =>
+      api.post<AgentConfigRow>(`/agents/${id}/image`, { image }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: agentKeys.all });
+      qc.invalidateQueries({ queryKey: agentKeys.detail(variables.id) });
+    },
+  });
+}
+
 export function useUpdateAgentByType() {
   const qc = useQueryClient();
   return useMutation({
@@ -91,8 +111,12 @@ export function useUpdateAgentByType() {
 export function useCreateAgent() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Record<string, unknown>) => api.post("/agents", data),
-    onSuccess: () => {
+    mutationFn: (data: Record<string, unknown>) => api.post<AgentConfigRow>("/agents", data),
+    onSuccess: (agent) => {
+      if (agent?.id) {
+        qc.setQueryData(agentKeys.detail(agent.id), agent);
+        qc.setQueryData<AgentConfigRow[] | undefined>(agentKeys.all, (rows) => upsertAgentConfig(rows, agent));
+      }
       qc.invalidateQueries({ queryKey: agentKeys.all });
     },
   });

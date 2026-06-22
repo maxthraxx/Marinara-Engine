@@ -1,5 +1,10 @@
 import { X } from "lucide-react";
-import type { CharacterStat } from "@marinara-engine/shared";
+import {
+  isTrackerFieldLocked,
+  removeTrackerFieldLockPrefix,
+  renameTrackerFieldLockPrefix,
+  type CharacterStat,
+} from "@marinara-engine/shared";
 import { cn } from "../../../../lib/utils";
 import { TRACKER_BAR, TRACKER_TEXT_ROW } from "../../lib/tracker-panel.constants";
 import type { TrackerStatDensity, TrackerStatDisplayScale } from "../../tracker-panel.types";
@@ -7,6 +12,7 @@ import { visibleText } from "../../lib/tracker-display";
 import { getStatPercent, getTrackerStatDisplayScale } from "../../lib/tracker-stat-layout";
 import { FittedText, InlineAddRow, InlineEdit, InlineNumber } from "./InlineControls";
 import { EmptySection } from "./SectionControls";
+import { useTrackerLockContext } from "../TrackerLockContext";
 
 type StatListVisualTone = "plain" | "instrument";
 
@@ -66,6 +72,13 @@ function StatBar({
   compactNameRhythm = false,
   wideColumnCell = false,
   visualTone = "plain",
+  nameLocked,
+  valueLocked,
+  maxLocked,
+  lockMode,
+  onToggleNameLock,
+  onToggleValueLock,
+  onToggleMaxLock,
 }: {
   stat: CharacterStat;
   onUpdateName?: (name: string) => void;
@@ -81,6 +94,13 @@ function StatBar({
   compactNameRhythm?: boolean;
   wideColumnCell?: boolean;
   visualTone?: StatListVisualTone;
+  nameLocked?: boolean;
+  valueLocked?: boolean;
+  maxLocked?: boolean;
+  lockMode?: boolean;
+  onToggleNameLock?: () => void;
+  onToggleValueLock?: () => void;
+  onToggleMaxLock?: () => void;
 }) {
   const percent = getStatPercent(stat);
   const isCompact = density === "compact";
@@ -197,7 +217,9 @@ function StatBar({
             scrollOnHover={nameMode === "scroll"}
             fitPreview={nameMode === "truncate"}
             fitMinScale={0.56}
-            editHintMode="overlay"
+            locked={nameLocked}
+            lockMode={lockMode}
+            onToggleLock={onToggleNameLock}
           />
         ) : nameMode === "truncate" ? (
           <FittedText
@@ -221,11 +243,28 @@ function StatBar({
         )}
         {onUpdateValue && onUpdateMax ? (
           <div className={valueGroupClass}>
-            <InlineNumber value={stat.value} onChange={onUpdateValue} title="Value" className={valueInputClass} />
+            <InlineNumber
+              value={stat.value}
+              onChange={onUpdateValue}
+              title="Value"
+              className={valueInputClass}
+              locked={valueLocked}
+              lockMode={lockMode}
+              onToggleLock={onToggleValueLock}
+            />
             <span className="px-px text-[color:color-mix(in_srgb,var(--tracker-profile-number-text)_58%,transparent)]">
               /
             </span>
-            <InlineNumber value={stat.max} onChange={onUpdateMax} min={0} title="Max" className={valueInputClass} />
+            <InlineNumber
+              value={stat.max}
+              onChange={onUpdateMax}
+              min={0}
+              title="Max"
+              className={valueInputClass}
+              locked={maxLocked}
+              lockMode={lockMode}
+              onToggleLock={onToggleMaxLock}
+            />
           </div>
         ) : (
           <div className={valueGroupClass} title={`${stat.value} / ${stat.max}`}>
@@ -274,6 +313,7 @@ export function StatList({
   fillWideColumns = false,
   showWideColumnGhost = false,
   visualTone = "plain",
+  getLockKey,
 }: {
   stats: CharacterStat[];
   onUpdate?: (stats: CharacterStat[]) => void;
@@ -289,7 +329,9 @@ export function StatList({
   fillWideColumns?: boolean;
   showWideColumnGhost?: boolean;
   visualTone?: StatListVisualTone;
+  getLockKey?: (index: number, field: "name" | "value" | "max", stat: CharacterStat) => string;
 }) {
+  const { fieldLocks, lockMode, onToggleFieldLock, onUpdateFieldLocks } = useTrackerLockContext();
   if (stats.length === 0) {
     return onAdd && addMode ? (
       <InlineAddRow onClick={onAdd} title="Add stat" className="border-t-0" />
@@ -299,14 +341,28 @@ export function StatList({
   }
   const updateStat = (index: number, updated: CharacterStat) => {
     if (!onUpdate) return;
+    const previous = stats[index];
+    if (previous && previous.name !== updated.name) {
+      const fromKey = getLockKey?.(index, "name", previous);
+      const toKey = getLockKey?.(index, "name", updated);
+      if (fromKey && toKey) {
+        onUpdateFieldLocks?.((locks) =>
+          renameTrackerFieldLockPrefix(locks, fromKey.replace(/\.name$/, ""), toKey.replace(/\.name$/, "")),
+        );
+      }
+    }
     const next = [...stats];
     next[index] = updated;
     onUpdate(next);
   };
   const removeStat = (index: number) => {
     if (!onUpdate) return;
+    const nameLockKey = getLockKey?.(index, "name", stats[index]!);
+    if (nameLockKey) onUpdateFieldLocks?.((locks) => removeTrackerFieldLockPrefix(locks, nameLockKey.replace(/\.name$/, "")));
     onUpdate(stats.filter((_, statIndex) => statIndex !== index));
   };
+  const buildLockToggle = (index: number, field: "name" | "value" | "max") =>
+    getLockKey && onToggleFieldLock ? () => onToggleFieldLock(getLockKey(index, field, stats[index]!)) : undefined;
   const displayScale = getTrackerStatDisplayScale(
     stats.length,
     density,
@@ -358,6 +414,13 @@ export function StatList({
             compactNameRhythm={compactNameRhythm}
             wideColumnCell={wideColumnCell}
             visualTone={visualTone}
+            nameLocked={getLockKey ? isTrackerFieldLocked(fieldLocks, getLockKey(index, "name", stat)) : false}
+            valueLocked={getLockKey ? isTrackerFieldLocked(fieldLocks, getLockKey(index, "value", stat)) : false}
+            maxLocked={getLockKey ? isTrackerFieldLocked(fieldLocks, getLockKey(index, "max", stat)) : false}
+            lockMode={lockMode}
+            onToggleNameLock={buildLockToggle(index, "name")}
+            onToggleValueLock={buildLockToggle(index, "value")}
+            onToggleMaxLock={buildLockToggle(index, "max")}
           />
         ))}
         {shouldRenderWideColumnGhost && (

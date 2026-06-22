@@ -3,6 +3,7 @@
 // sections into actual content at assembly time.
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
+import { logger } from "../../lib/logger.js";
 import { resolveCharacterScopedMacros, stripMacroComments } from "@marinara-engine/shared";
 import type {
   CharacterMacroProfile,
@@ -17,9 +18,7 @@ import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createAgentsStorage } from "../storage/agents.storage.js";
 import { processLorebooks, type LorebookFinalContentResolver, type LorebookScanResult } from "../lorebook/index.js";
 import { wrapContent } from "./format-engine.js";
-import { getCharacterDescriptionWithExtensions } from "./character-description-extensions.js";
 import { agentRuns } from "../../db/schema/index.js";
-import { gameStateSnapshots } from "../../db/schema/index.js";
 import { eq, and, desc } from "drizzle-orm";
 
 /** Context required for expanding markers. */
@@ -143,12 +142,12 @@ async function expandCharacter(config: MarkerConfig, ctx: MarkerContext): Promis
       "backstory",
       "appearance",
       "system_prompt",
-      "post_history_instructions",
     ];
 
     const charParts: string[] = [];
     for (const field of fields) {
       if (field === "name") continue; // Name is used as the parent tag, not a child field
+      if (field === "post_history_instructions") continue; // Injected after chat history by the assembler.
       // Skip per-character scenario when a group scenario override is active
       if (field === "scenario" && ctx.groupScenarioOverrideText) continue;
       const value = cardPromptText(getCharacterField(data, field));
@@ -188,7 +187,7 @@ async function expandCharacter(config: MarkerConfig, ctx: MarkerContext): Promis
 function characterMacroProfileFromData(data: CharacterData): CharacterMacroProfile {
   return {
     name: data.name ?? "Character",
-    description: getCharacterDescriptionWithExtensions(data),
+    description: data.description ?? "",
     personality: data.personality ?? "",
     backstory: data.extensions?.backstory ?? "",
     appearance: data.extensions?.appearance ?? "",
@@ -204,7 +203,7 @@ function getCharacterField(data: CharacterData, field: string): string {
     case "name":
       return data.name;
     case "description":
-      return getCharacterDescriptionWithExtensions(data);
+      return data.description;
     case "personality":
       return data.personality;
     case "scenario":
@@ -368,18 +367,10 @@ async function expandChatHistory(config: MarkerConfig, ctx: MarkerContext): Prom
 
   // Add chat_history / last_message wrapping based on format
   if (messages.length > 0 && ctx.wrapFormat !== "none") {
-    // Find the last user message index — this becomes <last_message>
-    let lastUserIdx = -1;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i]!.role === "user") {
-        lastUserIdx = i;
-        break;
-      }
-    }
-
-    // Everything before the last user message is "chat history",
-    // the last user message gets "last_message" wrapping
-    const historyEnd = lastUserIdx >= 0 ? lastUserIdx : messages.length;
+    // Everything before the final chat turn is "chat history"; the final turn gets
+    // "last_message" wrapping, regardless of whether it is user or assistant.
+    const lastMessageIdx = messages.length - 1;
+    const historyEnd = lastMessageIdx;
 
     if (ctx.wrapFormat === "xml") {
       if (historyEnd > 0) {
@@ -389,22 +380,18 @@ async function expandChatHistory(config: MarkerConfig, ctx: MarkerContext): Prom
           content: `${messages[historyEnd - 1]!.content}\n</chat_history>`,
         };
       }
-      if (lastUserIdx >= 0) {
-        messages[lastUserIdx] = {
-          ...messages[lastUserIdx]!,
-          content: `<last_message>\n${messages[lastUserIdx]!.content}\n</last_message>`,
-        };
-      }
+      messages[lastMessageIdx] = {
+        ...messages[lastMessageIdx]!,
+        content: `<last_message>\n${messages[lastMessageIdx]!.content}\n</last_message>`,
+      };
     } else if (ctx.wrapFormat === "markdown") {
       if (historyEnd > 0) {
         messages[0] = { ...messages[0]!, content: `## Chat History\n${messages[0]!.content}` };
       }
-      if (lastUserIdx >= 0) {
-        messages[lastUserIdx] = {
-          ...messages[lastUserIdx]!,
-          content: `## Last Message\n${messages[lastUserIdx]!.content}`,
-        };
-      }
+      messages[lastMessageIdx] = {
+        ...messages[lastMessageIdx]!,
+        content: `## Last Message\n${messages[lastMessageIdx]!.content}`,
+      };
     }
   }
 
@@ -469,19 +456,10 @@ async function expandAgentData(config: MarkerConfig, ctx: MarkerContext): Promis
     return { content: "" };
   }
 
-  // Special case: world-state uses game_state_snapshots for richer structured data
-  if (agentType === "world-state") {
-    const wsStorage = createAgentsStorage(ctx.db);
-    const wsConfig = await wsStorage.getByType("world-state");
-    if (wsConfig && wsConfig.enabled !== "true") return { content: "" };
-    return expandWorldStateAgent(ctx);
-  }
-
   // Generic: find latest successful agent run for this chat
   const agentsStorage = createAgentsStorage(ctx.db);
   const agentConfig = await agentsStorage.getByType(agentType);
   if (!agentConfig) return { content: "" };
-  if (agentConfig.enabled !== "true") return { content: "" };
 
   const latestRuns = await ctx.db
     .select()
@@ -495,116 +473,21 @@ async function expandAgentData(config: MarkerConfig, ctx: MarkerContext): Promis
   const run = latestRuns[0];
   if (!run) return { content: "" };
 
-  const resultData = JSON.parse(run.resultData);
+  let resultData: unknown;
+  try {
+    resultData = JSON.parse(run.resultData);
+  } catch (err) {
+    logger.warn(
+      err,
+      "[prompt] Skipping malformed agent result data for %s in chat %s",
+      agentType,
+      ctx.chatId,
+    );
+    return { content: "" };
+  }
+
   // Format result data as readable text
   return { content: formatAgentResult(resultData) };
-}
-
-async function expandWorldStateAgent(ctx: MarkerContext): Promise<ExpandedMarker> {
-  // Prefer committed game state — uncommitted snapshots from swipes/regens
-  // are normally skipped so the prompt stays clean between swipes.
-  const committedRows = await ctx.db
-    .select()
-    .from(gameStateSnapshots)
-    .where(and(eq(gameStateSnapshots.chatId, ctx.chatId), eq(gameStateSnapshots.committed, 1)))
-    .orderBy(desc(gameStateSnapshots.createdAt))
-    .limit(1);
-
-  let snap = committedRows[0];
-
-  // Fallback: if no committed snapshot exists yet (e.g. first agent run),
-  // use the latest snapshot regardless of committed status so world state
-  // data isn't silently dropped until the next user message.
-  if (!snap) {
-    const anyRows = await ctx.db
-      .select()
-      .from(gameStateSnapshots)
-      .where(eq(gameStateSnapshots.chatId, ctx.chatId))
-      .orderBy(desc(gameStateSnapshots.createdAt))
-      .limit(1);
-    snap = anyRows[0];
-  }
-
-  if (!snap) return { content: "" };
-
-  // Only include fields from agents that are currently active.
-  // World-state's own fields (date/time/location/weather/temperature) are always included
-  // since this function is only called when world-state is enabled.
-  const active = new Set(ctx.activeAgentIds);
-  const hasCharTracker = active.size === 0 || active.has("character-tracker");
-  const hasPersonaStats = active.size === 0 || active.has("persona-stats");
-  const hasQuest = active.size === 0 || active.has("quest");
-  const hasCustomTracker = active.size === 0 || active.has("custom-tracker");
-
-  const parts: string[] = [];
-  if (snap.date) parts.push(`Date: ${snap.date}`);
-  if (snap.time) parts.push(`Time: ${snap.time}`);
-  if (snap.location) parts.push(`Location: ${snap.location}`);
-  if (snap.weather) parts.push(`Weather: ${snap.weather}`);
-  if (snap.temperature) parts.push(`Temperature: ${snap.temperature}`);
-
-  if (hasCharTracker) {
-    const presentChars = JSON.parse(snap.presentCharacters);
-    if (Array.isArray(presentChars) && presentChars.length > 0) {
-      const charLines = presentChars.map((c: any) => {
-        if (typeof c === "string") return `- ${c}`;
-        const details: string[] = [];
-        if (c.mood) details.push(`mood: ${c.mood}`);
-        if (c.appearance) details.push(`appearance: ${c.appearance}`);
-        if (c.outfit) details.push(`outfit: ${c.outfit}`);
-        if (c.thoughts) details.push(`thoughts: ${c.thoughts}`);
-        if (Array.isArray(c.stats) && c.stats.length > 0) {
-          const statStr = c.stats.map((s: any) => `${s.name}: ${s.value}${s.max ? `/${s.max}` : ""}`).join(", ");
-          details.push(`stats: ${statStr}`);
-        }
-        const detailStr = details.length > 0 ? ` (${details.join("; ")})` : "";
-        return `- ${c.emoji ?? ""} ${c.name ?? c}${detailStr}`;
-      });
-      parts.push(`Present Characters:\n${charLines.join("\n")}`);
-    }
-  }
-
-  // Persona stats (needs/condition bars)
-  if (hasPersonaStats && snap.personaStats) {
-    const psBars = typeof snap.personaStats === "string" ? JSON.parse(snap.personaStats) : snap.personaStats;
-    if (Array.isArray(psBars) && psBars.length > 0) {
-      const barLines = psBars.map((b: any) => `- ${b.name}: ${b.value}/${b.max}`);
-      parts.push(`Persona Stats:\n${barLines.join("\n")}`);
-    }
-  }
-
-  if (snap.playerStats) {
-    const stats = typeof snap.playerStats === "string" ? JSON.parse(snap.playerStats) : snap.playerStats;
-    const statParts: string[] = [];
-    if (hasPersonaStats && stats.status) statParts.push(`Status: ${stats.status}`);
-    if (hasQuest && Array.isArray(stats.activeQuests) && stats.activeQuests.length > 0) {
-      const questLines = stats.activeQuests.map((q: any) => {
-        const objectives = Array.isArray(q.objectives)
-          ? q.objectives.map((o: any) => `  ${o.completed ? "[x]" : "[ ]"} ${o.text}`).join("\n")
-          : "";
-        return `- ${q.name}${q.completed ? " (completed)" : ""}${objectives ? "\n" + objectives : ""}`;
-      });
-      statParts.push(`Active Quests:\n${questLines.join("\n")}`);
-    }
-    if (hasPersonaStats && Array.isArray(stats.inventory) && stats.inventory.length > 0) {
-      const invLines = stats.inventory.map(
-        (item: any) =>
-          `- ${item.name}${item.quantity > 1 ? ` x${item.quantity}` : ""}${item.description ? ` — ${item.description}` : ""}`,
-      );
-      statParts.push(`Inventory:\n${invLines.join("\n")}`);
-    }
-    if (hasPersonaStats && Array.isArray(stats.stats) && stats.stats.length > 0) {
-      const statLines = stats.stats.map((s: any) => `- ${s.name}: ${s.value}${s.max ? `/${s.max}` : ""}`);
-      statParts.push(`Stats:\n${statLines.join("\n")}`);
-    }
-    if (hasCustomTracker && Array.isArray(stats.customTrackerFields) && stats.customTrackerFields.length > 0) {
-      const customLines = stats.customTrackerFields.map((f: any) => `- ${f.name}: ${f.value}`);
-      statParts.push(`Custom:\n${customLines.join("\n")}`);
-    }
-    if (statParts.length > 0) parts.push(statParts.join("\n"));
-  }
-
-  return { content: parts.join("\n") };
 }
 
 function formatAgentResult(data: unknown): string {

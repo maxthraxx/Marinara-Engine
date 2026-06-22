@@ -27,6 +27,7 @@ export const apiConnections = sqliteTable("api_connections", {
   /** Encrypted API key */
   apiKeyEncrypted: text("api_key_encrypted").notNull().default(""),
   model: text("model").notNull().default(""),
+  imagePath: text("image_path"),
   maxContext: integer("max_context").notNull().default(128000),
   isDefault: text("is_default").notNull().default("false"),
   /** Whether this connection is part of the random-selection pool */
@@ -61,6 +62,8 @@ export const apiConnections = sqliteTable("api_connections", {
   maxTokensOverride: integer("max_tokens_override"),
   /** Maximum number of agent LLM jobs Marinara may run at once for this connection. */
   maxParallelJobs: integer("max_parallel_jobs").notNull().default(1),
+  /** Treat as a local/custom endpoint for Professor Mari JSON tool fallback behavior. */
+  treatAsLocalEndpoint: text("treat_as_local_endpoint").notNull().default("false"),
   /**
    * Claude (Subscription) only. When "true", Marinara passes `settings.fastMode = true`
    * to the Claude Agent SDK, asking the SDK to use its faster, cheaper routing tier

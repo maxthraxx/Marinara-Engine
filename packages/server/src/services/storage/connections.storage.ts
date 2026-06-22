@@ -41,6 +41,17 @@ export function createConnectionsStorage(db: DB) {
       return { ...row, apiKey: decryptApiKey(row.apiKeyEncrypted) };
     },
 
+    /** Get the image-generation connection marked as default for Illustrator (with decrypted key). */
+    async getDefaultForImageGeneration() {
+      const rows = await db
+        .select()
+        .from(apiConnections)
+        .where(and(eq(apiConnections.defaultForAgents, "true"), eq(apiConnections.provider, "image_generation")));
+      const row = rows[0] ?? null;
+      if (!row) return null;
+      return { ...row, apiKey: decryptApiKey(row.apiKeyEncrypted) };
+    },
+
     async create(input: CreateConnectionInput) {
       const id = newId();
       const timestamp = now();
@@ -74,6 +85,7 @@ export function createConnectionsStorage(db: DB) {
         baseUrl: input.baseUrl ?? "",
         apiKeyEncrypted: encryptApiKey(input.apiKey ?? ""),
         model: input.model ?? "",
+        imagePath: input.imagePath ?? null,
         maxContext: input.maxContext ?? 128000,
         isDefault: String(input.isDefault ?? false),
         useForRandom: String(input.useForRandom ?? false),
@@ -92,6 +104,7 @@ export function createConnectionsStorage(db: DB) {
         promptPresetId: input.promptPresetId ?? null,
         maxTokensOverride: input.maxTokensOverride ?? null,
         claudeFastMode: String(input.claudeFastMode ?? false),
+        treatAsLocalEndpoint: String(input.treatAsLocalEndpoint ?? false),
         createdAt: timestamp,
         updatedAt: timestamp,
       });
@@ -109,6 +122,7 @@ export function createConnectionsStorage(db: DB) {
       if (data.baseUrl !== undefined) updateFields.baseUrl = data.baseUrl;
       if (data.apiKey !== undefined) updateFields.apiKeyEncrypted = encryptApiKey(data.apiKey);
       if (data.model !== undefined) updateFields.model = data.model;
+      if (data.imagePath !== undefined) updateFields.imagePath = data.imagePath;
       if (data.maxContext !== undefined) updateFields.maxContext = data.maxContext;
       if (data.isDefault !== undefined) {
         if (data.isDefault) {
@@ -182,6 +196,9 @@ export function createConnectionsStorage(db: DB) {
       if (data.claudeFastMode !== undefined) {
         updateFields.claudeFastMode = String(data.claudeFastMode);
       }
+      if (data.treatAsLocalEndpoint !== undefined) {
+        updateFields.treatAsLocalEndpoint = String(data.treatAsLocalEndpoint);
+      }
       await db.update(apiConnections).set(updateFields).where(eq(apiConnections.id, id));
       return this.getById(id);
     },
@@ -199,9 +216,10 @@ export function createConnectionsStorage(db: DB) {
         baseUrl: source.baseUrl,
         apiKeyEncrypted: source.apiKeyEncrypted,
         model: source.model,
+        imagePath: source.imagePath,
         maxContext: source.maxContext,
         isDefault: "false",
-        useForRandom: source.useForRandom,
+        useForRandom: "false",
         defaultForAgents: "false",
         enableCaching: source.enableCaching,
         cachingAtDepth: source.cachingAtDepth,
@@ -218,6 +236,7 @@ export function createConnectionsStorage(db: DB) {
         maxTokensOverride: source.maxTokensOverride,
         maxParallelJobs: source.maxParallelJobs,
         claudeFastMode: source.claudeFastMode,
+        treatAsLocalEndpoint: source.treatAsLocalEndpoint,
         createdAt: timestamp,
         updatedAt: timestamp,
       });

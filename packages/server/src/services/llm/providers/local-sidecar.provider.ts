@@ -7,7 +7,7 @@ import { resolveSidecarRequestModel } from "../../sidecar/sidecar-request-model.
 import { getEmbeddingRequestTimeoutMs } from "../../../config/runtime-config.js";
 
 function isNotFoundError(error: unknown): boolean {
-  return error instanceof Error && /\(404\)|\b404\b/.test(error.message);
+  return error instanceof Error && /\(404\)|\b404\b|\(501\)|\b501\b|not enabled|not supported/i.test(error.message);
 }
 
 export class LocalSidecarProvider extends BaseLLMProvider {
@@ -28,8 +28,25 @@ export class LocalSidecarProvider extends BaseLLMProvider {
     );
   }
 
-  private applyRuntimeSettings(options: ChatOptions): ChatOptions {
+  private assertToolCallsAvailable(options: ChatOptions): void {
+    if (!options.tools?.length) return;
     const config = sidecarModelService.getConfig();
+    if (sidecarModelService.getResolvedBackend() === "mlx") {
+      throw new Error(
+        "Local sidecar tool calls are not supported on the MLX backend. Use llama.cpp with Native Tool Calls enabled or choose a remote tool-capable connection.",
+      );
+    }
+    if (sidecarModelService.getResolvedBackend() === "llama_cpp" && !config.enableNativeToolCalls) {
+      throw new Error(
+        "Local sidecar native tool calls are disabled. Open Local AI Model > Runtime Settings and enable Native Tool Calls before using tools with the local sidecar.",
+      );
+    }
+  }
+
+  private applyRuntimeSettings(options: ChatOptions): ChatOptions {
+    if (options.suppressModelParameters) return options;
+    const config = sidecarModelService.getConfig();
+    const structuredOutput = !!options.responseFormat || !!options.tools?.length;
     const requestedMaxTokens =
       typeof options.maxTokens === "number" && Number.isFinite(options.maxTokens)
         ? Math.max(1, Math.floor(options.maxTokens))
@@ -37,48 +54,79 @@ export class LocalSidecarProvider extends BaseLLMProvider {
     return {
       ...options,
       maxTokens: requestedMaxTokens !== undefined ? Math.min(requestedMaxTokens, config.maxTokens) : config.maxTokens,
-      temperature: config.temperature,
-      topP: config.topP,
-      topK: config.topK,
+      temperature: structuredOutput ? 0 : config.temperature,
+      topP: structuredOutput ? 1 : config.topP,
+      topK: structuredOutput ? 0 : config.topK,
+      minP: structuredOutput ? 0 : options.minP,
+    };
+  }
+
+  private applyBackendRequestConstraints(options: ChatOptions): ChatOptions {
+    if (sidecarModelService.getResolvedBackend() !== "mlx") {
+      return options;
+    }
+
+    return {
+      ...options,
+      responseFormat: undefined,
     };
   }
 
   async *chat(messages: ChatMessage[], options: ChatOptions): AsyncGenerator<string, LLMUsage | void, unknown> {
+    this.assertToolCallsAvailable(options);
     const delegate = await this.createDelegate();
+    const runtimeOptions = this.applyBackendRequestConstraints(this.applyRuntimeSettings(options));
     return yield* delegate.chat(messages, {
-      ...this.applyRuntimeSettings(options),
+      ...runtimeOptions,
       model: this.getRequestModel(),
     });
   }
 
   async chatComplete(messages: ChatMessage[], options: ChatOptions): Promise<ChatCompletionResult> {
+    this.assertToolCallsAvailable(options);
     const delegate = await this.createDelegate();
+    const runtimeOptions = this.applyBackendRequestConstraints(this.applyRuntimeSettings(options));
     return delegate.chatComplete(messages, {
-      ...this.applyRuntimeSettings(options),
+      ...runtimeOptions,
       model: this.getRequestModel(),
     });
   }
 
-  async embed(texts: string[], _model: string): Promise<number[][]> {
-    const baseUrl = await sidecarProcessService.ensureReady({ forceStart: true });
+  async embed(texts: string[], _model: string, signal?: AbortSignal): Promise<number[][]> {
+    if (sidecarModelService.getResolvedBackend() === "mlx") {
+      throw new Error("Local sidecar embeddings are not supported on the MLX backend.");
+    }
+    if (!sidecarModelService.isEnabled()) {
+      throw new Error(
+        "Local sidecar embeddings require the local model to be enabled for trackers or game scene analysis.",
+      );
+    }
+
+    const baseUrl = await sidecarProcessService.ensureReady();
     const requestModel = this.getRequestModel();
 
     try {
-      return await this.requestOpenAIEmbeddings(baseUrl, texts, requestModel);
+      return await this.requestOpenAIEmbeddings(baseUrl, texts, requestModel, signal);
     } catch (error) {
       if (!isNotFoundError(error)) throw error;
-      return this.requestLegacyEmbeddings(baseUrl, texts);
+      return this.requestLegacyEmbeddings(baseUrl, texts, signal);
     }
   }
 
-  private async requestOpenAIEmbeddings(baseUrl: string, texts: string[], model: string): Promise<number[][]> {
+  private async requestOpenAIEmbeddings(
+    baseUrl: string,
+    texts: string[],
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<number[][]> {
     const timeoutMs = getEmbeddingRequestTimeoutMs();
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const response = await llmFetch(`${baseUrl}/v1/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ input: texts, model }),
-      signal: AbortSignal.timeout(timeoutMs),
-      agentOptions: { bodyTimeout: 0, headersTimeout: timeoutMs },
+      signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
+      agentOptions: { bodyTimeout: timeoutMs, headersTimeout: timeoutMs },
       bufferResponse: true,
     });
     if (!response.ok) {
@@ -88,16 +136,17 @@ export class LocalSidecarProvider extends BaseLLMProvider {
     return parseEmbeddingResponse(await response.json());
   }
 
-  private async requestLegacyEmbeddings(baseUrl: string, texts: string[]): Promise<number[][]> {
+  private async requestLegacyEmbeddings(baseUrl: string, texts: string[], signal?: AbortSignal): Promise<number[][]> {
     const timeoutMs = getEmbeddingRequestTimeoutMs();
     const embeddings: number[][] = [];
     for (const text of texts) {
+      const timeoutSignal = AbortSignal.timeout(timeoutMs);
       const response = await llmFetch(`${baseUrl}/embedding`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: text }),
-        signal: AbortSignal.timeout(timeoutMs),
-        agentOptions: { bodyTimeout: 0, headersTimeout: timeoutMs },
+        signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
+        agentOptions: { bodyTimeout: timeoutMs, headersTimeout: timeoutMs },
         bufferResponse: true,
       });
       if (!response.ok) {

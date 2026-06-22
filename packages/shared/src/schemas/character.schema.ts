@@ -9,12 +9,23 @@ export const depthPromptSchema = z.object({
   role: z.enum(["system", "user", "assistant"]).default("system"),
 });
 
-export const altDescriptionSchema = z.object({
-  id: z.string().default(""),
-  label: z.string().default("Extension"),
-  content: z.string().default(""),
-  active: z.boolean().default(true),
-});
+const characterBookPositionSchema = z.union([
+  z.enum(["before_char", "after_char", "at_depth", "depth"]),
+  z.literal(0),
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+  z.literal(4),
+  z.literal(5),
+  z.literal(6),
+]);
+
+const characterBookRoleSchema = z.union([
+  z.enum(["system", "user", "assistant"]),
+  z.literal(0),
+  z.literal(1),
+  z.literal(2),
+]);
 
 export const characterExtensionsSchema = z
   .object({
@@ -24,26 +35,29 @@ export const characterExtensionsSchema = z
     depth_prompt: depthPromptSchema.default({}),
     backstory: z.string().default(""),
     appearance: z.string().default(""),
-    altDescriptions: z.array(altDescriptionSchema).default([]),
   })
   .passthrough();
 
-export const characterBookEntrySchema = z.object({
-  keys: z.array(z.string()).default([]),
-  content: z.string().default(""),
-  extensions: z.record(z.unknown()).default({}),
-  enabled: z.boolean().default(true),
-  insertion_order: z.number().default(100),
-  case_sensitive: z.boolean().default(false),
-  name: z.string().default(""),
-  priority: z.number().default(100),
-  id: z.number().default(0),
-  comment: z.string().default(""),
-  selective: z.boolean().default(false),
-  secondary_keys: z.array(z.string()).default([]),
-  constant: z.boolean().default(false),
-  position: z.enum(["before_char", "after_char"]).catch("before_char").default("before_char"),
-});
+export const characterBookEntrySchema = z
+  .object({
+    keys: z.array(z.string()).default([]),
+    content: z.string().default(""),
+    extensions: z.record(z.unknown()).default({}),
+    enabled: z.boolean().default(true),
+    insertion_order: z.number().default(100),
+    case_sensitive: z.boolean().default(false),
+    name: z.string().default(""),
+    priority: z.number().default(100),
+    id: z.number().default(0),
+    comment: z.string().default(""),
+    selective: z.boolean().default(false),
+    secondary_keys: z.array(z.string()).default([]),
+    constant: z.boolean().default(false),
+    position: characterBookPositionSchema.catch("before_char").default("before_char"),
+    depth: z.number().optional(),
+    role: characterBookRoleSchema.optional(),
+  })
+  .passthrough();
 
 export const characterBookSchema = z.object({
   name: z.string().default(""),
@@ -55,23 +69,25 @@ export const characterBookSchema = z.object({
   entries: z.array(characterBookEntrySchema).default([]),
 });
 
-export const characterDataSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().default(""),
-  personality: z.string().default(""),
-  scenario: z.string().default(""),
-  first_mes: z.string().default(""),
-  mes_example: z.string().default(""),
-  creator_notes: z.string().default(""),
-  system_prompt: z.string().default(""),
-  post_history_instructions: z.string().default(""),
-  tags: z.array(z.string()).default([]),
-  creator: z.string().default(""),
-  character_version: z.string().default(""),
-  alternate_greetings: z.array(z.string()).default([]),
-  extensions: characterExtensionsSchema.default({}),
-  character_book: characterBookSchema.nullable().default(null),
-});
+export const characterDataSchema = z
+  .object({
+    name: z.string().min(1),
+    description: z.string().default(""),
+    personality: z.string().default(""),
+    scenario: z.string().default(""),
+    first_mes: z.string().default(""),
+    mes_example: z.string().default(""),
+    creator_notes: z.string().default(""),
+    system_prompt: z.string().default(""),
+    post_history_instructions: z.string().default(""),
+    tags: z.array(z.string()).default([]),
+    creator: z.string().default(""),
+    character_version: z.string().default(""),
+    alternate_greetings: z.array(z.string()).default([]),
+    extensions: characterExtensionsSchema.default({}),
+    character_book: characterBookSchema.nullable().default(null),
+  })
+  .passthrough();
 
 export const characterCardV2Schema = z.object({
   spec: z.literal("chara_card_v2"),

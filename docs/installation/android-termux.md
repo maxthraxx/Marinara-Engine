@@ -2,7 +2,7 @@
 
 Marinara Engine runs on Android via [Termux](https://f-droid.org/en/packages/com.termux/), a terminal emulator and Linux environment for Android.
 
-> **Important:** The Android APK is not a standalone Marinara Engine server app. It is only a WebView shell for the Termux-served app, so follow the Termux setup below first and keep `./start-termux.sh` running when you open the APK.
+> **Important:** The Android APK is a Termux bootstrap + WebView shell, not a native Android server build. It can download Termux from F-Droid, hand it to Android's installer, start the Termux setup flow, and then open the local server, but Android still requires the user to approve install and command-permission prompts.
 
 ## Prerequisites
 
@@ -10,10 +10,23 @@ Install **Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/). 
 
 ## Installation
 
+### Release APK Bootstrap
+
+1. Download the Android APK from the [latest GitHub Release](https://github.com/Pasta-Devs/Marinara-Engine/releases).
+2. Install and open **Marinara Engine**.
+3. Tap **Install / Start Marinara**.
+4. If Termux is missing, approve Android's install prompts so Marinara can download and install the F-Droid Termux APK.
+5. Grant **Run commands in Termux environment** when Android asks.
+6. If Termux blocks external commands, paste the copied `allow-external-apps` command into Termux once, then tap **Install / Start Marinara** again.
+7. Wait for the Termux launcher to install dependencies, build Marinara Engine, and start the server.
+8. Return to **Marinara Engine**. The APK retries until `http://127.0.0.1:<PORT>` is ready.
+
+### Manual Termux Install
+
 Open Termux and run:
 
 ```bash
-pkg update && pkg install -y git nodejs && git clone https://github.com/Pasta-Devs/Marinara-Engine.git && cd Marinara-Engine && chmod +x start-termux.sh && ./start-termux.sh
+pkg update && pkg install -y git nodejs-lts && git clone https://github.com/Pasta-Devs/Marinara-Engine.git && cd Marinara-Engine && chmod +x start-termux.sh && ./start-termux.sh
 ```
 
 This one-liner:
@@ -28,7 +41,7 @@ The Termux launcher installs dependencies, builds the app, prepares local file-b
 
 > **Note:** The first run takes a few minutes because it builds the app on your device. Subsequent runs are much faster.
 
-After installation, open **<http://127.0.0.1:7860>** in your Android browser, or install the PWA from the "Add to Home Screen" prompt for a more native experience.
+After installation, open **`http://127.0.0.1:<PORT>`** in your Android browser, or install the PWA from the "Add to Home Screen" prompt for a more native experience.
 
 ## Starting the App Again
 
@@ -46,11 +59,11 @@ cd Marinara-Engine
 ./start-termux.sh --skip-update
 ```
 
-## Optional: Android App Shell (APK)
+## Android App Shell (APK)
 
-If you want a dedicated home-screen icon that opens Marinara Engine like a native app, see [android/README.md](../../android/README.md). The APK is a WebView wrapper around the Termux-served app — the Termux server must be running for the APK to work.
+If you want a dedicated home-screen icon that opens Marinara Engine like a native app, see [android/README.md](../../android/README.md). The APK is a Termux bootstrap + WebView wrapper around the Termux-served app. It opens the local server when it is already running and provides setup actions when it is not.
 
-Release-page APK downloads follow the same rule: they are optional shells, not standalone Android server builds.
+Release-page APK downloads still rely on Termux for the local Linux/Node runtime. The APK reduces the setup dance by downloading Termux and launching Android's installer for the user, but it cannot bypass Android's user-visible install and command-permission prompts.
 
 ## Accessing from Another Device
 

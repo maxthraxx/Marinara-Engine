@@ -54,9 +54,9 @@ Tools like [Tailscale](https://tailscale.com/) give each device a stable IP addr
 - Check that no firewall is blocking the configured port (default `7860`).
 - See the [Troubleshooting](TROUBLESHOOTING.md#app-not-loading-on-mobile--another-device) page for more help.
 
-### Using the Spotify DJ agent on a LAN install?
+### Using Music DJ with Spotify on a LAN install?
 
-Spotify's OAuth rules only allow `https://` or `http://127.0.0.1` redirect URIs, so the agent editor will show a `127.0.0.1` URI even when you're accessing Marinara from another device. Either put the server behind HTTPS or use the paste-back fallback in the agent editor — both flows are covered in [Spotify DJ login fails on a remote or LAN install](TROUBLESHOOTING.md#spotify-dj-login-fails-on-a-remote-or-lan-install).
+Spotify's OAuth rules only allow `https://` or `http://127.0.0.1` redirect URIs, so the agent editor will show a `127.0.0.1` URI even when you're accessing Marinara from another device. Either put the server behind HTTPS or use the paste-back fallback in the agent editor — both flows are covered in [Music DJ Spotify login fails on a remote or LAN install](TROUBLESHOOTING.md#music-dj-spotify-login-fails-on-a-remote-or-lan-install).
 
 </details>
 
@@ -66,18 +66,20 @@ Spotify's OAuth rules only allow `https://` or `http://127.0.0.1` redirect URIs,
 <summary><strong>Is the Android APK a standalone app?</strong></summary>
 <br>
 
-No. The Android APK is a WebView shell, not a standalone Marinara Engine server build.
+Not exactly. The Android APK is a Termux bootstrap + WebView shell, not a native Android server build.
 
-The APK only opens `http://127.0.0.1:<PORT>` on the same Android device. That means Marinara Engine must already be installed and running in Termux before the APK can load anything.
+The APK opens `http://127.0.0.1:<PORT>` on the same Android device. If the Termux server is already running, it loads immediately. If not, the APK can help launch setup through Termux.
 
-Use this flow:
+Fast path:
 
-1. Install Termux from F-Droid.
-2. Follow the [Android (Termux) Installation Guide](installation/android-termux.md).
-3. Start Marinara Engine with `./start-termux.sh`.
-4. Open the APK if you want a dedicated home-screen shell.
+1. Install the APK from GitHub Releases.
+2. Open it and tap **Install / Start Marinara**.
+3. Approve Android's install prompts if Marinara needs to install Termux from F-Droid.
+4. Grant **Run commands in Termux environment** if Android asks.
+5. If Termux blocks external commands, paste the copied `allow-external-apps` command into Termux once.
+6. Wait for Termux to install/build/start Marinara Engine, then return to the APK.
 
-If you downloaded only the APK from a GitHub Release and skipped Termux, the app will not start by itself.
+Manual fallback: follow the [Android (Termux) Installation Guide](installation/android-termux.md), run `./start-termux.sh`, then open the APK as a dedicated home-screen shell.
 
 </details>
 
@@ -87,7 +89,7 @@ If you downloaded only the APK from a GitHub Release and skipped Termux, the app
 <summary><strong>What can Professor Mari do?</strong></summary>
 <br>
 
-Professor Mari is Marinara Engine's built-in assistant character. She can explain the app, help with setup, create characters and personas, create lorebooks, start new Conversation or Roleplay chats, navigate panels, and fetch existing items so she can review or update them. She is a guide and helper, not a replacement for the docs or release notes when something is version-specific or recently changed.
+Professor Mari is Marinara Engine's built-in assistant character. She can explain the app, help with setup, create characters and personas, create lorebooks, start new Conversation or Roleplay chats, navigate panels, fetch existing items so she can review or update them, and use read-only Fandom/MediaWiki lookups. She is a guide and helper, not a replacement for the docs or release notes when something is version-specific or recently changed.
 
 Editing existing content needs more care than creating new content. Ask Mari to fetch the character, persona, lorebook, chat, or preset before editing it, and give her the specific field or behavior you want changed. Character edits keep a recoverable version snapshot, but persona edits overwrite without a snapshot, so back up personas before asking her to change one.
 
@@ -194,9 +196,10 @@ If you want to post your persona message first without triggering a reply, enabl
 ---
 
 <a id="what-happens-if-i-enable-an-agent-and-also-have-similar-instructions-in-my-preset"></a>
+<a id="what-happens-if-i-add-an-agent-and-also-have-similar-instructions-in-my-preset"></a>
 
 <details>
-<summary><strong>What happens if I enable an agent and also have similar instructions in my preset?</strong></summary>
+<summary><strong>What happens if I add an agent to a chat and also have similar instructions in my preset?</strong></summary>
 <br>
 
 Both contribute to the prompt, but in different ways: a preset section is static text concatenated every turn, while an agent runs at request time and produces its own output. If both target the same behavior, the model receives both — usually redundant, occasionally conflicting, and always extra tokens.
@@ -204,16 +207,16 @@ Both contribute to the prompt, but in different ways: a preset section is static
 Common overlaps to watch for:
 
 - Writing-style or anti-repetition directives in the preset and the **Prose Guardian** agent.
-- Plot-steering, twist, pacing, or "what should happen next" directives in the preset and the **Narrative Director** or **Secret Plot Driver** agents.
+- Plot-steering, twist, pacing, or "what should happen next" directives in the preset and the **Narrative Director** agent, including its Secret Plot option.
 - "Track time / weather / location" instructions and the **World State** agent.
 - "Track character mood / outfit / stats" instructions and the **Character Tracker** agent.
 - Quest-tracking, combat-mechanics, or persona-stat instructions and their respective agents.
 - HTML/CSS visual-styling prompts and the **Immersive HTML** agent.
-- "Summarize past events" instructions and the **Automated Chat Summary** agent.
+- "Summarize past events" instructions and the manual or automated summary tools.
 
-**The general rule:** pick one place to express each behavior. If you've enabled an agent that covers a behavior, you can usually remove the matching preset directive. If you'd rather keep your preset version (e.g., it's tuned for a particular character), disable the corresponding agent.
+**The general rule:** pick one place to express each behavior. If you've added an agent that covers a behavior, you can usually remove the matching preset directive. If you'd rather keep your preset version (e.g., it's tuned for a particular character), remove the corresponding agent from that chat or turn off the related chat-level option.
 
-For story direction, choose the tool by how persistent you want the guidance to be. Use **Narrative Director** for occasional next-beat steering. Use **Secret Plot Driver** when you want hidden long-term arc memory and scene directions across turns. Use a preset only when the instruction should be static every turn.
+For story direction, choose the tool by how persistent you want the guidance to be. Use **Narrative Director** for occasional next-beat steering. Turn on its **Secret Plot** option when you want hidden long-term arc memory and scene directions across turns. Use a preset only when the instruction should be static every turn.
 
 **One important exception:** the `agent_data` marker section, and the `{{agent::TYPE}}` macro, are the _intended_ way to thread an agent's output into a specific spot in the preset. That's wiring, not overlap — several agents (World State, Quest Tracker, Character Tracker, and others) set this up for you by default. The pattern to avoid is hand-writing preset sections that duplicate an agent's _behavior_, not using the marker section that carries the agent's _output_.
 

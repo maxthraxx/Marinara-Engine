@@ -1,6 +1,6 @@
 // ──────────────────────────────────────────────
 // Full-Page Preset Editor
-// Tabs: Overview · Sections · Parameters · Review
+// Tabs: Overview · Sections · Prompts
 // ──────────────────────────────────────────────
 import { useState, useCallback, useEffect, useMemo, useRef, type FC, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -51,19 +51,23 @@ import {
   X,
   AlertTriangle,
   Maximize2,
-  BookOpen,
   ListChecks,
   Shuffle,
-  ToggleLeft,
   Copy,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
+import { MacroTextarea } from "../ui/MacroTextarea";
+import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { api } from "../../lib/api-client";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
-import { SUPPORTED_MACROS, type WrapFormat, type MarkerType } from "@marinara-engine/shared";
+import { type WrapFormat, type MarkerType } from "@marinara-engine/shared";
 import { useQuoteFormatter } from "../../hooks/use-quote-formatter";
+import { EditorTabRail } from "../ui/EditorTabRail";
+import { useTouchFolderDrag } from "../../hooks/use-touch-folder-drag";
+import { getTouchReorderDropIndex } from "../../lib/touch-reorder";
+import { SettingsSwitch } from "../panels/settings/SettingControls";
 
 /** Intercept Tab in a textarea to insert 2 spaces instead of changing focus. */
 function handleTextareaTab(
@@ -90,14 +94,14 @@ function handleTextareaTab(
 const TABS = [
   { id: "overview", label: "Overview", icon: FileText },
   { id: "sections", label: "Sections", icon: Layers },
-  { id: "review", label: "AI Review", icon: Sparkles },
+  { id: "prompts", label: "Prompts", icon: MessageSquare },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
 const ROLE_COLORS: Record<string, string> = {
   system: "text-blue-400",
   user: "text-green-400",
-  assistant: "text-purple-400",
+  assistant: "mari-chrome-accent-text mari-accent-animated",
 };
 
 const ROLE_ICONS: Record<string, FC<{ size: string | number; className?: string }>> = {
@@ -132,8 +136,56 @@ function reorderIdsByOffset(items: Array<{ id: string }>, index: number, offset:
   return ids;
 }
 
+function reorderItems<T>(items: T[], sourceIndex: number, targetIndex: number): T[] | null {
+  if (sourceIndex < 0 || sourceIndex >= items.length || targetIndex < 0 || targetIndex >= items.length) return null;
+  if (sourceIndex === targetIndex) return null;
+  const next = [...items];
+  const [moved] = next.splice(sourceIndex, 1);
+  if (moved === undefined) return null;
+  next.splice(targetIndex, 0, moved);
+  return next;
+}
+
+function reorderIdsToGap(items: Array<{ id: string }>, sourceIndex: number, targetGapIndex: number): string[] | null {
+  if (sourceIndex < 0 || sourceIndex >= items.length || targetGapIndex < 0 || targetGapIndex > items.length)
+    return null;
+  let insertAt = targetGapIndex;
+  if (sourceIndex < insertAt) insertAt--;
+  if (sourceIndex === insertAt) return null;
+  const ids = items.map((item) => item.id);
+  const [moved] = ids.splice(sourceIndex, 1);
+  if (!moved) return null;
+  ids.splice(insertAt, 0, moved);
+  return ids;
+}
+
+function reorderItemsToGap<T>(items: T[], sourceIndex: number, targetGapIndex: number): T[] | null {
+  if (sourceIndex < 0 || sourceIndex >= items.length || targetGapIndex < 0 || targetGapIndex > items.length)
+    return null;
+  let insertAt = targetGapIndex;
+  if (sourceIndex < insertAt) insertAt--;
+  if (sourceIndex === insertAt) return null;
+  const next = [...items];
+  const [moved] = next.splice(sourceIndex, 1);
+  if (moved === undefined) return null;
+  next.splice(insertAt, 0, moved);
+  return next;
+}
+
 function readBoolFlag(value: unknown): boolean {
   return value === true || value === "true";
+}
+
+type ChoiceDisplayMode = "auto" | "buttons" | "listbox";
+type ChoiceOptionSort = "manual" | "alphabetical";
+type VariableOptionDraft = { id: string; label: string; value: string };
+
+function readChoiceDisplayMode(value: unknown): ChoiceDisplayMode {
+  return value === "buttons" || value === "listbox" ? value : "auto";
+}
+
+function readChoiceOptionSort(value: unknown): ChoiceOptionSort {
+  return value === "alphabetical" ? "alphabetical" : "manual";
 }
 
 function readMarkerConfig(value: unknown) {
@@ -186,22 +238,37 @@ export function PresetEditor() {
   const [localWrapFormat, setLocalWrapFormat] = useState<WrapFormat>("xml");
   const [localAuthor, setLocalAuthor] = useState("");
   const [localParams, setLocalParams] = useState<Record<string, unknown>>({});
+  const [localParamsParseFailed, setLocalParamsParseFailed] = useState(false);
+  const [localConversationPrompt, setLocalConversationPrompt] = useState("");
+  const [localGamePrompt, setLocalGamePrompt] = useState("");
+  const hydratedPresetIdRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
   const formatQuotes = useQuoteFormatter();
+
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  }, [dirty]);
 
   // Populate local state when data loads
   useEffect(() => {
-    if (!data) return;
+    if (!data || !presetDetailId) return;
+    if (dirtyRef.current && hydratedPresetIdRef.current === presetDetailId) return;
     const p = data.preset as any;
+    hydratedPresetIdRef.current = presetDetailId;
     setLocalName(p.name ?? "");
     setLocalDescription(p.description ?? "");
     setLocalWrapFormat((p.wrapFormat ?? "xml") as WrapFormat);
     setLocalAuthor(p.author ?? "");
+    setLocalConversationPrompt(p.conversationPrompt ?? "");
+    setLocalGamePrompt(p.gamePrompt ?? "");
     try {
       setLocalParams(typeof p.parameters === "string" ? JSON.parse(p.parameters) : (p.parameters ?? {}));
+      setLocalParamsParseFailed(false);
     } catch {
       setLocalParams({});
+      setLocalParamsParseFailed(true);
     }
-  }, [data]);
+  }, [data, presetDetailId]);
 
   const handleClose = useCallback(() => {
     if (dirty) {
@@ -211,26 +278,54 @@ export function PresetEditor() {
     closePresetDetail();
   }, [dirty, closePresetDetail]);
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     if (!presetDetailId) return;
-    updatePreset.mutate(
-      {
-        id: presetDetailId,
-        name: localName,
-        description: localDescription,
-        wrapFormat: localWrapFormat,
-        author: localAuthor,
-        parameters: localParams,
-      },
-      {
-        onSuccess: () => {
-          setDirty(false);
-          setShowSaved(true);
-          setTimeout(() => setShowSaved(false), 1500);
-        },
-      },
-    );
-  }, [presetDetailId, localName, localDescription, localWrapFormat, localAuthor, localParams, updatePreset]);
+    const payload: { id: string } & Record<string, unknown> = {
+      id: presetDetailId,
+      name: localName,
+      description: localDescription,
+      wrapFormat: localWrapFormat,
+      author: localAuthor,
+      conversationPrompt: localConversationPrompt,
+      gamePrompt: localGamePrompt,
+    };
+    if (!localParamsParseFailed) payload.parameters = localParams;
+    await updatePreset.mutateAsync(payload);
+    setDirty(false);
+    setShowSaved(true);
+    setTimeout(() => setShowSaved(false), 1500);
+  }, [
+    presetDetailId,
+    localName,
+    localDescription,
+    localWrapFormat,
+    localAuthor,
+    localParamsParseFailed,
+    localParams,
+    localConversationPrompt,
+    localGamePrompt,
+    updatePreset,
+  ]);
+
+  const handleExportPreset = useCallback(async () => {
+    if (!presetDetailId) return;
+    if (dirty) {
+      const shouldSave = await showConfirmDialog({
+        title: "Save before exporting?",
+        message: "You have unsaved preset edits. Save them before exporting so the file includes the latest changes?",
+        confirmLabel: "Save and export",
+        cancelLabel: "Cancel",
+      });
+      if (!shouldSave) return;
+      try {
+        await handleSave();
+      } catch {
+        toast.error("Could not save preset before export.");
+        return;
+      }
+    }
+    api.download(`/prompts/${presetDetailId}/export`);
+  }, [dirty, handleSave, presetDetailId]);
 
   const handleDelete = useCallback(async () => {
     if (!presetDetailId) return;
@@ -325,16 +420,13 @@ export function PresetEditor() {
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="mari-editor-shell mari-editor-legacy-bridge flex flex-1 flex-col overflow-hidden">
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3 max-md:gap-2 max-md:px-3">
-        <button
-          onClick={handleClose}
-          className="rounded-xl p-2 transition-all hover:bg-[var(--accent)] active:scale-95"
-        >
+      <div className="mari-editor-header">
+        <button onClick={handleClose} className="mari-editor-action inline-flex">
           <ArrowLeft size="1.125rem" />
         </button>
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-purple-400 to-violet-500 text-white shadow-sm max-md:h-8 max-md:w-8">
+        <div className="mari-editor-icon-tile mari-panel-gradient-surface mari-panel-gradient--presets">
           <FileText size="1.125rem" className="max-md:!h-[0.875rem] max-md:!w-[0.875rem]" />
         </div>
         <input
@@ -344,21 +436,21 @@ export function PresetEditor() {
             setLocalName(e.target.value);
             markDirty();
           }}
-          className="h-10 min-w-0 flex-1 self-stretch bg-transparent text-lg font-semibold outline-none placeholder:text-[var(--muted-foreground)] max-md:text-base"
+          className="mari-editor-title-input min-w-0 flex-1 placeholder:text-[var(--marinara-editor-muted)]"
           placeholder="Preset name…"
         />
-        <div className="flex items-center gap-1.5">
+        <div className="mari-editor-actions flex">
           <button
             onClick={handleSave}
             disabled={updatePreset.isPending}
-            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-purple-400 to-violet-500 px-4 py-2 text-xs font-medium text-white shadow-md transition-all hover:shadow-lg active:scale-[0.98] disabled:opacity-50"
+            className="mari-editor-action mari-editor-action--primary inline-flex disabled:opacity-50"
           >
             <Save size="0.8125rem" /> Save
           </button>
           <button
-            onClick={() => api.download(`/prompts/${presetDetailId}/export`)}
-            className="rounded-xl p-2 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Export preset"
+            onClick={handleExportPreset}
+            className="mari-editor-action inline-flex"
+            title={dirty ? "Save current edits before exporting" : "Export preset"}
           >
             <svg
               width="0.9375rem"
@@ -377,11 +469,8 @@ export function PresetEditor() {
               <rect x="3" y="15" width="14" height="2" rx="1" fill="currentColor" />
             </svg>
           </button>
-          <button
-            onClick={handleDelete}
-            className="rounded-xl p-2 transition-all hover:bg-[var(--destructive)]/15 active:scale-95"
-          >
-            <Trash2 size="0.9375rem" className="text-[var(--destructive)]" />
+          <button onClick={handleDelete} className="mari-editor-action mari-editor-action--danger inline-flex">
+            <Trash2 size="0.9375rem" />
           </button>
         </div>
       </div>
@@ -395,12 +484,12 @@ export function PresetEditor() {
 
       {/* Unsaved warning */}
       {showUnsavedWarning && (
-        <div className="flex items-center justify-between bg-amber-500/10 px-4 py-2 text-xs text-amber-400">
+        <div className="flex items-center justify-between bg-[var(--warning)]/10 px-4 py-2 text-xs text-[var(--warning)]">
           <span>You have unsaved changes.</span>
           <div className="flex gap-2">
             <button
               onClick={() => setShowUnsavedWarning(false)}
-              className="rounded-lg px-3 py-1 hover:bg-[var(--accent)]"
+              className="mari-editor-action mari-editor-action--compact px-3 py-1"
             >
               Keep editing
             </button>
@@ -411,11 +500,15 @@ export function PresetEditor() {
               Discard
             </button>
             <button
-              onClick={() => {
-                handleSave();
-                closePresetDetail();
+              onClick={async () => {
+                try {
+                  await handleSave();
+                  closePresetDetail();
+                } catch {
+                  // Keep the editor open so the user can fix the failed save.
+                }
               }}
-              className="rounded-lg bg-amber-500/20 px-3 py-1 hover:bg-amber-500/30"
+              className="mari-editor-action mari-editor-action--primary mari-editor-action--compact px-3 py-1"
             >
               Save & close
             </button>
@@ -424,32 +517,12 @@ export function PresetEditor() {
       )}
 
       {/* ── Body: Tab rail + Content ── */}
-      <div className="flex flex-1 overflow-hidden @max-5xl:flex-col">
-        {/* Tab rail */}
-        <nav className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[var(--border)] bg-[var(--card)] p-2 @max-5xl:w-full @max-5xl:flex-row @max-5xl:overflow-x-auto @max-5xl:border-r-0 @max-5xl:border-b @max-5xl:p-1.5">
-          {TABS.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "flex items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium transition-all @max-5xl:whitespace-nowrap @max-5xl:px-2.5 @max-5xl:py-1.5",
-                  activeTab === tab.id
-                    ? "bg-gradient-to-r from-purple-400/15 to-violet-500/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/20"
-                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                )}
-              >
-                <Icon size="0.875rem" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </nav>
+      <div className="mari-editor-body @max-5xl:flex-col">
+        <EditorTabRail tabs={TABS} activeId={activeTab} onChange={setActiveTab} />
 
         {/* Content area */}
-        <div className="flex-1 overflow-y-auto p-6 @max-5xl:p-4">
-          <div className="mx-auto max-w-2xl space-y-6">
+        <div className="mari-editor-content @max-5xl:p-4">
+          <div className="mari-editor-content-inner space-y-6">
             {/* ── Overview Tab ── */}
             {activeTab === "overview" && (
               <OverviewTab
@@ -502,8 +575,21 @@ export function PresetEditor() {
               />
             )}
 
-            {/* ── Review Tab ── */}
-            {activeTab === "review" && <ReviewTab presetId={presetDetailId} />}
+            {/* ── Prompts Tab ── */}
+            {activeTab === "prompts" && (
+              <PromptsTab
+                conversationPrompt={localConversationPrompt}
+                onConversationPromptChange={(v) => {
+                  setLocalConversationPrompt(v);
+                  markDirty();
+                }}
+                gamePrompt={localGamePrompt}
+                onGamePromptChange={(v) => {
+                  setLocalGamePrompt(v);
+                  markDirty();
+                }}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -545,7 +631,7 @@ function OverviewTab({
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
           placeholder="Preset name…"
-          className="w-full rounded-xl bg-[var(--secondary)] p-3 text-sm text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+          className="mari-editor-field w-full p-3 text-sm"
         />
       </FieldGroup>
 
@@ -558,7 +644,7 @@ function OverviewTab({
           onFocus={(e) => e.target.select()}
           onChange={(e) => onDescriptionChange(e.target.value)}
           placeholder="What does this preset do?"
-          className="min-h-[5rem] w-full rounded-xl bg-[var(--secondary)] p-3 text-sm text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+          className="mari-editor-field min-h-[5rem] w-full p-3 text-sm"
         />
       </FieldGroup>
 
@@ -574,8 +660,8 @@ function OverviewTab({
               className={cn(
                 "flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-medium transition-all",
                 wrapFormat === fmt
-                  ? "bg-purple-400/15 text-purple-400 ring-1 ring-purple-400/30"
-                  : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                  ? "mari-chrome-accent-surface mari-accent-animated"
+                  : "mari-editor-action text-[var(--marinara-editor-muted)]",
               )}
             >
               {fmt === "xml" ? (
@@ -604,7 +690,7 @@ function OverviewTab({
           onFocus={(e) => e.target.select()}
           onChange={(e) => onAuthorChange(e.target.value)}
           placeholder="Your name (optional)"
-          className="w-full rounded-xl bg-[var(--secondary)] p-2.5 text-sm text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+          className="mari-editor-field w-full p-2.5 text-sm"
         />
       </FieldGroup>
 
@@ -612,6 +698,68 @@ function OverviewTab({
         <StatCard label="Sections" value={sectionCount} />
         <StatCard label="Groups" value={groupCount} />
       </div>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════
+//  Prompts Tab
+// ═══════════════════════════════════════════════
+
+function PromptsTab({
+  conversationPrompt,
+  onConversationPromptChange,
+  gamePrompt,
+  onGamePromptChange,
+}: {
+  conversationPrompt: string;
+  onConversationPromptChange: (v: string) => void;
+  gamePrompt: string;
+  onGamePromptChange: (v: string) => void;
+}) {
+  const quoteFormat = useUIStore((s) => s.quoteFormat);
+  const formatPrompt = useCallback(
+    (textarea: HTMLTextAreaElement) => applyTextareaQuoteFormat(textarea, quoteFormat),
+    [quoteFormat],
+  );
+
+  return (
+    <>
+      <FieldGroup
+        label="Conversation Mode"
+        help="Used as the prompt preset's Conversation prompt in Chat Settings and the conversation setup wizard."
+      >
+        <MacroTextarea
+          value={conversationPrompt}
+          onChange={onConversationPromptChange}
+          title="Edit Conversation Mode Prompt"
+          placeholder="Leave empty to use Marinara's built-in conversation prompt."
+          className="mari-editor-field min-h-[12rem] w-full p-3 font-mono text-xs"
+          formatOnChange={formatPrompt}
+          spellCheck={false}
+        />
+      </FieldGroup>
+
+      <FieldGroup label="Roleplay Mode" help="Roleplay prompt structure continues to come from this preset's Sections.">
+        <div className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+          Uses the assembled prompt from Sections.
+        </div>
+      </FieldGroup>
+
+      <FieldGroup
+        label="Game Mode"
+        help="Used as the prompt preset's Game prompt in Chat Settings and the game setup wizard."
+      >
+        <MacroTextarea
+          value={gamePrompt}
+          onChange={onGamePromptChange}
+          title="Edit Game Mode Prompt"
+          placeholder="Leave empty to use Marinara's built-in game prompt."
+          className="mari-editor-field min-h-[12rem] w-full p-3 font-mono text-xs"
+          formatOnChange={formatPrompt}
+          spellCheck={false}
+        />
+      </FieldGroup>
     </>
   );
 }
@@ -661,6 +809,7 @@ function SectionsTab({
 }) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement>(null);
   const [showGroupsPanel, setShowGroupsPanel] = useState(false);
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
   const [dragReady, setDragReady] = useState<number | null>(null); // index of section ready to drag (grip held)
@@ -681,6 +830,25 @@ function SectionsTab({
       setLorebookWarningDismissed(false);
     }
   }, [presetId]);
+
+  useEffect(() => {
+    if (!showAddMenu) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && addMenuRef.current?.contains(target)) return;
+      setShowAddMenu(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowAddMenu(false);
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showAddMenu]);
 
   const dismissLorebookWarning = useCallback(() => {
     try {
@@ -799,6 +967,15 @@ function SectionsTab({
     setDropIdx(sections.length);
   };
 
+  const commitSectionReorder = useCallback(
+    (sourceIdx: number, target: number) => {
+      const ids = reorderIdsToGap(sections, sourceIdx, target);
+      if (!ids) return;
+      onReorderSections.mutate({ presetId, sectionIds: ids });
+    },
+    [onReorderSections, presetId, sections],
+  );
+
   const commitDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const sourceIdx = draggingIdx;
@@ -806,15 +983,7 @@ function SectionsTab({
     setDraggingIdx(null);
     setDropIdx(null);
     if (sourceIdx === null || target === null) return;
-    // Adjust for removal: if source is before target, target shifts down by 1
-    let insertAt = target;
-    if (sourceIdx < insertAt) insertAt--;
-    if (sourceIdx === insertAt) return;
-
-    const ids = sections.map((s: any) => s.id);
-    const [moved] = ids.splice(sourceIdx, 1);
-    ids.splice(insertAt, 0, moved);
-    onReorderSections.mutate({ presetId, sectionIds: ids });
+    commitSectionReorder(sourceIdx, target);
   };
 
   const handleDragEnd = () => {
@@ -827,6 +996,35 @@ function SectionsTab({
     if (!sectionIds) return;
     onReorderSections.mutate({ presetId, sectionIds });
   };
+
+  const { startTouchDrag: startSectionTouchDrag } = useTouchFolderDrag({
+    onActivate: (sectionId) => {
+      const idx = sections.findIndex((section: any) => section.id === sectionId);
+      if (idx < 0) return;
+      setDraggingIdx(idx);
+      setDragReady(idx);
+    },
+    onDrop: (sectionId, x, y) => {
+      const sourceIdx = sections.findIndex((section: any) => section.id === sectionId);
+      const targetIdx = getTouchReorderDropIndex({
+        x,
+        y,
+        itemSelector: '[data-touch-reorder-item="preset-section"]',
+        rootSelector: "[data-preset-section-root]",
+        itemCount: sections.length,
+      });
+      setDraggingIdx(null);
+      setDropIdx(null);
+      setDragReady(null);
+      if (sourceIdx < 0 || targetIdx === null) return;
+      commitSectionReorder(sourceIdx, targetIdx);
+    },
+    onCancel: () => {
+      setDraggingIdx(null);
+      setDropIdx(null);
+      setDragReady(null);
+    },
+  });
 
   const duplicateSection = async (section: any, idx: number) => {
     try {
@@ -860,82 +1058,78 @@ function SectionsTab({
   return (
     <>
       {/* ── Toolbar ── */}
-      <div className="flex items-center gap-2">
+      <div className="mari-editor-toolbar flex flex-wrap items-center gap-2 p-2">
         <HelpTooltip
           text="Everything we send to a model is just text. A prompt is a formatted, written instruction we send to the model. Each section below becomes part of the final prompt."
           side="right"
         />
-        <div className="relative">
+        <div ref={addMenuRef} className="relative">
           <button
             onClick={() => setShowAddMenu(!showAddMenu)}
-            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-purple-400 to-violet-500 px-3 py-2 text-xs font-medium text-white shadow-md transition-all hover:shadow-lg active:scale-[0.98]"
+            className="mari-editor-action mari-editor-action--primary inline-flex"
           >
             <Plus size="0.8125rem" /> Add Section
           </button>
           {showAddMenu && (
-            <>
-              {/* Backdrop to close menu */}
-              <div className="fixed inset-0 z-40" onClick={() => setShowAddMenu(false)} />
-              <div className="absolute left-0 top-full z-50 mt-1 w-56 max-h-80 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-1 shadow-xl">
-                <button
-                  onClick={() => handleAddSection()}
-                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--foreground)] hover:bg-[var(--accent)]"
-                >
-                  <MessageSquare size="0.8125rem" /> Prompt Block
-                </button>
-                <div className="my-1 border-t border-[var(--border)]" />
-                <p className="px-3 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">Markers</p>
-                {(Object.keys(MARKER_LABELS) as MarkerType[])
-                  .filter((t) => t !== "agent_data")
-                  .map((type) => (
+            <div className="mari-editor-panel absolute left-0 top-full z-50 mt-1 max-h-80 w-56 overflow-y-auto p-1 shadow-xl">
+              <button
+                onClick={() => handleAddSection()}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--marinara-editor-text)] hover:bg-[var(--marinara-editor-control-bg-hover)]"
+              >
+                <MessageSquare size="0.8125rem" /> Prompt Block
+              </button>
+              <div className="my-1 border-t border-[var(--border)]" />
+              <p className="px-3 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">Markers</p>
+              {(Object.keys(MARKER_LABELS) as MarkerType[])
+                .filter((t) => t !== "agent_data")
+                .map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => handleAddSection({ isMarker: true, markerType: type })}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--marinara-editor-text)] hover:bg-[var(--marinara-editor-control-bg-hover)]"
+                  >
+                    <Layers size="0.8125rem" className="mari-chrome-accent-icon mari-accent-animated" />{" "}
+                    {MARKER_LABELS[type]}
+                  </button>
+                ))}
+              {injectableAgents.length > 0 && (
+                <>
+                  <div className="my-1 border-t border-[var(--border)]" />
+                  <p className="px-3 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">Agent Sections</p>
+                  {injectableAgents.map((agent) => (
                     <button
-                      key={type}
-                      onClick={() => handleAddSection({ isMarker: true, markerType: type })}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--foreground)] hover:bg-[var(--accent)]"
+                      key={agent.id}
+                      onClick={() => handleAddSection({ agentType: agent.type, agentName: agent.name })}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--marinara-editor-text)] hover:bg-[var(--marinara-editor-control-bg-hover)]"
                     >
-                      <Layers size="0.8125rem" className="text-purple-400" /> {MARKER_LABELS[type]}
+                      <Sparkles size="0.8125rem" className="mari-chrome-accent-icon mari-accent-animated" />{" "}
+                      {agent.name} (Agent)
                     </button>
                   ))}
-                {injectableAgents.length > 0 && (
-                  <>
-                    <div className="my-1 border-t border-[var(--border)]" />
-                    <p className="px-3 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                      Agent Sections
-                    </p>
-                    {injectableAgents.map((agent) => (
-                      <button
-                        key={agent.id}
-                        onClick={() => handleAddSection({ agentType: agent.type, agentName: agent.name })}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--foreground)] hover:bg-[var(--accent)]"
-                      >
-                        <Sparkles size="0.8125rem" className="text-[var(--primary)]" /> {agent.name} (Agent)
-                      </button>
-                    ))}
-                  </>
-                )}
-              </div>
-            </>
+                </>
+              )}
+            </div>
           )}
         </div>
         <button
           onClick={() => setShowGroupsPanel(!showGroupsPanel)}
           className={cn(
-            "flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium ring-1 ring-[var(--border)] transition-all active:scale-[0.98]",
+            "flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium ring-1 transition-all active:scale-[0.98]",
             showGroupsPanel
-              ? "bg-sky-400/10 text-sky-400 ring-sky-400/30"
-              : "bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--accent)]",
+              ? "mari-chrome-accent-surface mari-accent-animated"
+              : "mari-editor-action text-[var(--marinara-editor-muted)]",
           )}
         >
           <FolderOpen size="0.8125rem" /> Groups ({groupMap.size})
         </button>
         {!hasLorebookMarker && parentChatHasLorebook && !lorebookWarningDismissed && (
-          <div className="flex items-center gap-1.5 rounded-lg bg-amber-400/10 px-2.5 py-1.5 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+          <div className="mari-editor-chip mari-editor-chip--warning shrink px-2.5 py-1.5 text-[0.6875rem]">
             <AlertTriangle size="0.75rem" className="shrink-0" />
             <span>Add a lorebook marker when this preset should receive active lorebook entries.</span>
             <button
               type="button"
               onClick={dismissLorebookWarning}
-              className="ml-0.5 rounded-md p-0.5 text-amber-200/75 transition-colors hover:bg-amber-400/15 hover:text-amber-100"
+              className="ml-0.5 rounded-md p-0.5 text-[var(--marinara-editor-muted)] transition-colors hover:bg-[var(--warning)]/15 hover:text-[var(--warning)]"
               title="Dismiss warning"
               aria-label="Dismiss warning"
             >
@@ -947,12 +1141,12 @@ function SectionsTab({
 
       {/* ── Groups Management Panel ── */}
       {showGroupsPanel && (
-        <div className="rounded-xl border border-sky-400/20 bg-sky-400/5 p-3 space-y-2">
+        <div className="mari-editor-panel space-y-2 p-3">
           <div className="flex items-center justify-between">
-            <h4 className="text-xs font-semibold text-sky-400">Groups</h4>
+            <h4 className="text-xs font-semibold text-[var(--marinara-editor-text)]">Groups</h4>
             <button
               onClick={handleAddGroup}
-              className="flex items-center gap-1 rounded-lg bg-sky-400/15 px-2 py-1 text-[0.625rem] font-medium text-sky-400 hover:bg-sky-400/25 active:scale-95"
+              className="mari-editor-action mari-editor-action--compact flex items-center gap-1 px-2 py-1 text-[0.625rem]"
             >
               <Plus size="0.625rem" /> New Group
             </button>
@@ -969,7 +1163,7 @@ function SectionsTab({
               {[...groupMap.values()].map((g: any) => (
                 <div
                   key={g.id}
-                  className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 ring-1 ring-[var(--border)]"
+                  className="mari-editor-panel mari-editor-panel--soft flex items-center gap-2 px-2.5 py-1.5"
                 >
                   {editingGroupId === g.id ? (
                     <input
@@ -985,7 +1179,7 @@ function SectionsTab({
                         if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                         if (e.key === "Escape") setEditingGroupId(null);
                       }}
-                      className="flex-1 rounded bg-[var(--background)] px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-[var(--ring)]"
+                      className="mari-editor-field flex-1 px-1.5 py-0.5 text-xs"
                       autoFocus
                     />
                   ) : (
@@ -1028,9 +1222,15 @@ function SectionsTab({
       )}
 
       {/* ── Section list with drag & drop ── */}
-      <div ref={containerRef} className="space-y-1" onDragOver={handleContainerDragOver} onDrop={commitDrop}>
+      <div
+        ref={containerRef}
+        data-preset-section-root
+        className="space-y-1"
+        onDragOver={handleContainerDragOver}
+        onDrop={commitDrop}
+      >
         {sections.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-10 text-center">
+          <div className="mari-editor-empty flex flex-col items-center gap-2 py-10 text-center">
             <Layers size="1.5rem" className="text-[var(--muted-foreground)]" />
             <p className="text-xs text-[var(--muted-foreground)]">No sections yet. Add one to get started.</p>
           </div>
@@ -1050,8 +1250,12 @@ function SectionsTab({
 
             return (
               <div key={section.id}>
-                {showDropBefore && <div className="mx-2 mb-1 h-0.5 rounded-full bg-purple-400" />}
+                {showDropBefore && (
+                  <div className="mari-chrome-accent-progress mari-accent-animated mx-2 mb-1 h-0.5 rounded-full" />
+                )}
                 <div
+                  data-touch-reorder-item="preset-section"
+                  data-touch-reorder-index={idx}
                   draggable={dragReady === idx}
                   onDragStart={(e) => handleDragStart(idx, e)}
                   onDragOver={(e) => {
@@ -1067,8 +1271,10 @@ function SectionsTab({
                     setDragReady(null);
                   }}
                   className={cn(
-                    "rounded-xl border transition-all",
-                    isEnabled ? "border-[var(--border)]" : "border-[var(--border)]/50 opacity-50",
+                    "mari-editor-panel transition-all",
+                    isEnabled
+                      ? "border-[var(--marinara-editor-border)]"
+                      : "border-[var(--marinara-editor-border)]/50 opacity-50",
                     draggingIdx === idx && "opacity-40",
                   )}
                 >
@@ -1080,6 +1286,15 @@ function SectionsTab({
                         title="Drag to reorder"
                         onMouseDown={() => setDragReady(idx)}
                         onMouseUp={() => setDragReady(null)}
+                        onTouchStart={(event) => {
+                          event.stopPropagation();
+                          startSectionTouchDrag(event, section.id, {
+                            allowInteractiveTarget: true,
+                            sourceElement: event.currentTarget.closest<HTMLElement>(
+                              '[data-touch-reorder-item="preset-section"]',
+                            ),
+                          });
+                        }}
                       >
                         <GripVertical size="0.875rem" className="text-[var(--muted-foreground)]" />
                       </div>
@@ -1123,15 +1338,11 @@ function SectionsTab({
                     </span>
 
                     {isMarker && (
-                      <span className="shrink-0 rounded bg-violet-400/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-violet-400">
+                      <span className="mari-chrome-accent-surface mari-accent-animated shrink-0 rounded px-1.5 py-0.5 text-[0.5625rem] font-medium">
                         MARKER
                       </span>
                     )}
-                    {group && (
-                      <span className="shrink-0 rounded bg-sky-400/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-sky-400">
-                        {group.name}
-                      </span>
-                    )}
+                    {group && <span className="mari-editor-chip px-1.5 py-0.5 text-[0.5625rem]">{group.name}</span>}
                     <span className="hidden shrink-0 text-[0.625rem] text-[var(--muted-foreground)] sm:inline">
                       {role}
                     </span>
@@ -1176,7 +1387,7 @@ function SectionsTab({
 
                   {/* Expanded content */}
                   {isExpanded && (
-                    <div className="space-y-3 border-t border-[var(--border)] px-3 py-3">
+                    <div className="space-y-3 border-t border-[var(--marinara-editor-divider)] px-3 py-3">
                       {/* Name & Role */}
                       <div className="flex gap-2">
                         <SectionNameInput
@@ -1198,7 +1409,7 @@ function SectionsTab({
                               role: e.target.value,
                             })
                           }
-                          className="rounded-lg bg-[var(--secondary)] px-2 py-1.5 text-xs ring-1 ring-[var(--border)] focus:outline-none"
+                          className="mari-editor-field px-2 py-1.5 text-xs"
                         >
                           <option value="system">System</option>
                           <option value="user">User</option>
@@ -1232,11 +1443,11 @@ function SectionsTab({
                           const isAgentMarker = mc.type === "agent_data";
                           return isAgentMarker ? (
                             <div className="space-y-2">
-                              <div className="rounded-lg bg-[var(--primary)]/5 p-3 text-xs text-[var(--primary)]">
+                              <div className="mari-editor-panel mari-editor-panel--soft p-3 text-xs text-[var(--marinara-editor-text)]">
                                 Agent section: <strong>{section.name}</strong>
                                 <p className="mt-1 text-[var(--muted-foreground)]">
                                   The{" "}
-                                  <code className="rounded bg-black/20 px-1 py-0.5 text-[0.625rem] font-mono text-pink-300">
+                                  <code className="rounded bg-black/20 px-1 py-0.5 text-[0.625rem] font-mono text-[var(--marinara-chat-chrome-panel-text)]">
                                     {"{{agent::" + (mc.agentType ?? "agent") + "}}"}
                                   </code>{" "}
                                   macro will be replaced with the latest output from the agent at assembly time. You can
@@ -1256,13 +1467,15 @@ function SectionsTab({
                               />
                             </div>
                           ) : (
-                            <div className="rounded-lg bg-violet-400/5 p-3 text-xs text-violet-300">
+                            <div className="mari-editor-panel mari-editor-panel--soft p-3 text-xs text-[var(--marinara-editor-text)]">
                               Marker type: <strong>{MARKER_LABELS[mc.type as MarkerType] ?? "Unknown"}</strong>
                               <p className="mt-1 text-[var(--muted-foreground)]">
-                                Content is auto-generated at assembly time from your characters, lorebooks, etc.
+                                {mc.type === "chat_summary"
+                                  ? "Renders the compiled Chat Summary for this chat, including enabled manual and automated summary entries."
+                                  : "Content is auto-generated at assembly time from your characters, lorebooks, etc."}
                               </p>
                               {["lorebook", "world_info_before", "world_info_after"].includes(mc.type) && (
-                                <p className="mt-1 text-amber-200">
+                                <p className="mt-1 text-[var(--warning)]">
                                   This is where active lorebook entries are inserted.
                                 </p>
                               )}
@@ -1282,7 +1495,7 @@ function SectionsTab({
                               injectionPosition: e.target.value,
                             })
                           }
-                          className="rounded-lg bg-[var(--secondary)] px-2 py-1 text-xs ring-1 ring-[var(--border)]"
+                          className="mari-editor-field px-2 py-1 text-xs"
                         >
                           <option value="ordered">Ordered (in sequence)</option>
                           <option value="depth">Depth (from end of chat)</option>
@@ -1301,7 +1514,7 @@ function SectionsTab({
                                   injectionDepth: nextValue,
                                 })
                               }
-                              className="w-16 rounded-lg bg-[var(--secondary)] px-2 py-1 text-xs ring-1 ring-[var(--border)]"
+                              className="mari-editor-field w-16 px-2 py-1 text-xs"
                             />
                             <span className="text-[var(--muted-foreground)]">(0 = after last message)</span>
                           </>
@@ -1320,7 +1533,7 @@ function SectionsTab({
                               groupId: e.target.value || null,
                             })
                           }
-                          className="rounded-lg bg-[var(--secondary)] px-2 py-1 text-xs ring-1 ring-[var(--border)]"
+                          className="mari-editor-field px-2 py-1 text-xs"
                         >
                           <option value="">No group</option>
                           {[...groupMap.values()].map((g: any) => (
@@ -1338,7 +1551,9 @@ function SectionsTab({
                     </div>
                   )}
                 </div>
-                {showDropAfter && <div className="mx-2 mt-1 h-0.5 rounded-full bg-purple-400" />}
+                {showDropAfter && (
+                  <div className="mari-chrome-accent-progress mari-accent-animated mx-2 mt-1 h-0.5 rounded-full" />
+                )}
               </div>
             );
           })
@@ -1410,6 +1625,15 @@ function PresetVariablesEditor({
     setDropIdx(variables.length);
   };
 
+  const commitVariableReorder = useCallback(
+    (sourceIdx: number, target: number) => {
+      const ids = reorderIdsToGap(variables, sourceIdx, target);
+      if (!ids) return;
+      onReorderVariables.mutate({ presetId, variableIds: ids });
+    },
+    [onReorderVariables, presetId, variables],
+  );
+
   const commitDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const sourceIdx = draggingIdx;
@@ -1417,13 +1641,7 @@ function PresetVariablesEditor({
     setDraggingIdx(null);
     setDropIdx(null);
     if (sourceIdx === null || target === null) return;
-    let insertAt = target;
-    if (sourceIdx < insertAt) insertAt--;
-    if (sourceIdx === insertAt) return;
-    const ids = variables.map((v: any) => v.id);
-    const [moved] = ids.splice(sourceIdx, 1);
-    ids.splice(insertAt, 0, moved);
-    onReorderVariables.mutate({ presetId, variableIds: ids });
+    commitVariableReorder(sourceIdx, target);
   };
 
   const handleDragEnd = () => {
@@ -1437,13 +1655,42 @@ function PresetVariablesEditor({
     onReorderVariables.mutate({ presetId, variableIds });
   };
 
+  const { startTouchDrag: startVariableTouchDrag } = useTouchFolderDrag({
+    onActivate: (variableId) => {
+      const idx = variables.findIndex((variable: any) => variable.id === variableId);
+      if (idx < 0) return;
+      setDraggingIdx(idx);
+      setDragReady(idx);
+    },
+    onDrop: (variableId, x, y) => {
+      const sourceIdx = variables.findIndex((variable: any) => variable.id === variableId);
+      const targetIdx = getTouchReorderDropIndex({
+        x,
+        y,
+        itemSelector: '[data-touch-reorder-item="preset-variable"]',
+        rootSelector: "[data-preset-variable-root]",
+        itemCount: variables.length,
+      });
+      setDraggingIdx(null);
+      setDropIdx(null);
+      setDragReady(null);
+      if (sourceIdx < 0 || targetIdx === null) return;
+      commitVariableReorder(sourceIdx, targetIdx);
+    },
+    onCancel: () => {
+      setDraggingIdx(null);
+      setDropIdx(null);
+      setDragReady(null);
+    },
+  });
+
   return (
-    <div className="mt-6 space-y-3">
+    <div className="mari-editor-panel mt-6 space-y-3 p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Hash size="0.875rem" className="text-amber-400" />
+          <Hash size="0.875rem" className="mari-chrome-accent-icon mari-accent-animated" />
           <span className="text-sm font-semibold">Preset Variables</span>
-          <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-amber-400">
+          <span className="mari-editor-chip mari-editor-chip--accent px-1.5 py-0.5 text-[0.5625rem]">
             {variables.length}
           </span>
         </div>
@@ -1459,7 +1706,7 @@ function PresetVariablesEditor({
               ],
             })
           }
-          className="flex items-center gap-1.5 rounded-lg bg-amber-400/10 px-2.5 py-1.5 text-[0.6875rem] font-medium text-amber-400 hover:bg-amber-400/20 active:scale-[0.98]"
+          className="mari-editor-action mari-editor-action--primary mari-editor-action--compact flex items-center gap-1.5 px-2.5 py-1.5 text-[0.6875rem]"
         >
           <Plus size="0.6875rem" /> Add Variable
         </button>
@@ -1467,19 +1714,21 @@ function PresetVariablesEditor({
 
       <p className="text-[0.625rem] text-[var(--muted-foreground)]">
         Define variables that users select when assigning this preset to a chat. Use{" "}
-        <code className="rounded bg-[var(--secondary)] px-1 text-amber-400">{"{{variable_name}}"}</code> in any section
-        to insert the selected value.
+        <code className="mari-editor-chip mari-editor-chip--accent rounded px-1 text-[0.625rem]">
+          {"{{variable_name}}"}
+        </code>{" "}
+        in any section to insert the selected value.
       </p>
 
       {variables.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-6 text-center">
+        <div className="mari-editor-empty flex flex-col items-center gap-2 py-6 text-center">
           <Hash size="1.25rem" className="text-[var(--muted-foreground)]" />
           <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
             No variables yet. Add one to let users customize prompts per chat.
           </p>
         </div>
       ) : (
-        <div className="space-y-2" onDragOver={handleContainerDragOver} onDrop={commitDrop}>
+        <div data-preset-variable-root className="space-y-2" onDragOver={handleContainerDragOver} onDrop={commitDrop}>
           {variables.map((variable: any, idx: number) => {
             const showDropBefore =
               dropIdx === idx && draggingIdx !== null && draggingIdx !== idx && draggingIdx !== idx - 1;
@@ -1490,8 +1739,12 @@ function PresetVariablesEditor({
               draggingIdx !== idx;
             return (
               <div key={variable.id}>
-                {showDropBefore && <div className="mx-2 mb-1 h-0.5 rounded-full bg-amber-400" />}
+                {showDropBefore && (
+                  <div className="mari-chrome-accent-progress mari-accent-animated mx-2 mb-1 h-0.5 rounded-full" />
+                )}
                 <div
+                  data-touch-reorder-item="preset-variable"
+                  data-touch-reorder-index={idx}
                   draggable={dragReady === idx}
                   onDragStart={(e) => handleDragStart(idx, e)}
                   onDragOver={(e) => {
@@ -1517,6 +1770,15 @@ function PresetVariablesEditor({
                     onDeleteVariable={onDeleteVariable}
                     onGripDown={() => setDragReady(idx)}
                     onGripUp={() => setDragReady(null)}
+                    onGripTouchStart={(event) => {
+                      event.stopPropagation();
+                      startVariableTouchDrag(event, variable.id, {
+                        allowInteractiveTarget: true,
+                        sourceElement: event.currentTarget.closest<HTMLElement>(
+                          '[data-touch-reorder-item="preset-variable"]',
+                        ),
+                      });
+                    }}
                     onMoveUp={() => moveVariableByOffset(idx, -1)}
                     onMoveDown={() => moveVariableByOffset(idx, 1)}
                     canMoveUp={idx > 0}
@@ -1524,7 +1786,9 @@ function PresetVariablesEditor({
                     isReordering={onReorderVariables.isPending}
                   />
                 </div>
-                {showDropAfter && <div className="mx-2 mt-1 h-0.5 rounded-full bg-amber-400" />}
+                {showDropAfter && (
+                  <div className="mari-chrome-accent-progress mari-accent-animated mx-2 mt-1 h-0.5 rounded-full" />
+                )}
               </div>
             );
           })}
@@ -1545,6 +1809,7 @@ function VariableCard({
   onDeleteVariable,
   onGripDown,
   onGripUp,
+  onGripTouchStart,
   onMoveUp,
   onMoveDown,
   canMoveUp,
@@ -1559,6 +1824,7 @@ function VariableCard({
   onDeleteVariable: any;
   onGripDown: () => void;
   onGripUp: () => void;
+  onGripTouchStart: (event: React.TouchEvent<HTMLElement>) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
   canMoveUp: boolean;
@@ -1566,32 +1832,122 @@ function VariableCard({
   isReordering: boolean;
 }) {
   // Parse options
-  let opts: Array<{ id: string; label: string; value: string }> = [];
-  try {
-    opts = typeof variable.options === "string" ? JSON.parse(variable.options) : (variable.options ?? []);
-  } catch {
-    /* empty */
-  }
+  const opts = useMemo<VariableOptionDraft[]>(() => {
+    try {
+      return typeof variable.options === "string" ? JSON.parse(variable.options) : (variable.options ?? []);
+    } catch {
+      return [];
+    }
+  }, [variable.options]);
 
   const varName = variable.variableName ?? variable.variable_name ?? "";
   const question = variable.question ?? "";
   const isMultiSelect = variable.multiSelect === "true" || variable.multiSelect === true;
   const isRandomPick = variable.randomPick === "true" || variable.randomPick === true;
   const separatorValue = variable.separator ?? ", ";
+  const displayMode = readChoiceDisplayMode(variable.displayMode ?? variable.display_mode);
+  const optionSort = readChoiceOptionSort(variable.optionSort ?? variable.option_sort);
+  const optionOrderIsAlphabetical = optionSort === "alphabetical";
 
-  // Track which option is expanded in the big editor (index or null)
-  const [expandedOptIdx, setExpandedOptIdx] = useState<number | null>(null);
+  // Track which option is expanded in the big editor.
+  const [expandedOptId, setExpandedOptId] = useState<string | null>(null);
+  const [draggingOptIdx, setDraggingOptIdx] = useState<number | null>(null);
+  const [dropOptIdx, setDropOptIdx] = useState<number | null>(null);
+  const [dragReadyOptIdx, setDragReadyOptIdx] = useState<number | null>(null);
+  const optsRef = useRef<VariableOptionDraft[]>(opts);
+  const expandedOpt = expandedOptId ? (opts.find((opt) => opt.id === expandedOptId) ?? null) : null;
+
+  useEffect(() => {
+    if (!onUpdateVariable.isPending) optsRef.current = opts;
+  }, [onUpdateVariable.isPending, opts]);
 
   const update = (data: Record<string, unknown>) => {
     onUpdateVariable.mutate({ presetId, variableId: variable.id, ...data });
   };
 
-  const updateOpts = (newOpts: typeof opts) => {
+  const updateOpts = (newOpts: VariableOptionDraft[]) => {
+    optsRef.current = newOpts;
     update({ options: newOpts });
   };
 
+  const currentOpts = () => (optsRef.current.length > 0 ? optsRef.current : opts);
+
+  const updateOptionField = (optionId: string, field: "label" | "value", value: string) => {
+    updateOpts(currentOpts().map((opt) => (opt.id === optionId ? { ...opt, [field]: value } : opt)));
+  };
+
+  const calcOptionDropIdx = (optionIdx: number, e: React.DragEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    return e.clientY < midY ? optionIdx : optionIdx + 1;
+  };
+
+  const handleOptionDragStart = (optionIdx: number, e: React.DragEvent) => {
+    if (optionOrderIsAlphabetical) return;
+    setDraggingOptIdx(optionIdx);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(optionIdx));
+  };
+
+  const handleOptionDragOver = (optionIdx: number, e: React.DragEvent) => {
+    if (optionOrderIsAlphabetical) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropOptIdx(calcOptionDropIdx(optionIdx, e));
+  };
+
+  const commitOptionDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const sourceIdx = draggingOptIdx;
+    const target = dropOptIdx;
+    setDraggingOptIdx(null);
+    setDropOptIdx(null);
+    setDragReadyOptIdx(null);
+    if (optionOrderIsAlphabetical || sourceIdx === null || target === null) return;
+    const next = reorderItemsToGap(currentOpts(), sourceIdx, target);
+    if (next) updateOpts(next);
+  };
+
+  const moveOptionByOffset = (optionIdx: number, offset: number) => {
+    if (optionOrderIsAlphabetical) return;
+    const next = reorderItems(opts, optionIdx, optionIdx + offset);
+    if (next) updateOpts(next);
+  };
+
+  const { startTouchDrag: startOptionTouchDrag } = useTouchFolderDrag({
+    onActivate: (optionId) => {
+      if (optionOrderIsAlphabetical) return;
+      const idx = currentOpts().findIndex((option) => option.id === optionId);
+      if (idx < 0) return;
+      setDraggingOptIdx(idx);
+      setDragReadyOptIdx(idx);
+    },
+    onDrop: (optionId, x, y) => {
+      const options = currentOpts();
+      const sourceIdx = options.findIndex((option) => option.id === optionId);
+      const targetIdx = getTouchReorderDropIndex({
+        x,
+        y,
+        itemSelector: `[data-touch-reorder-item="preset-variable-option-${variable.id}"]`,
+        rootSelector: `[data-preset-variable-option-root="${variable.id}"]`,
+        itemCount: options.length,
+      });
+      setDraggingOptIdx(null);
+      setDropOptIdx(null);
+      setDragReadyOptIdx(null);
+      if (optionOrderIsAlphabetical || sourceIdx < 0 || targetIdx === null) return;
+      const next = reorderItemsToGap(options, sourceIdx, targetIdx);
+      if (next) updateOpts(next);
+    },
+    onCancel: () => {
+      setDraggingOptIdx(null);
+      setDropOptIdx(null);
+      setDragReadyOptIdx(null);
+    },
+  });
+
   return (
-    <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 transition-all">
+    <div className="mari-editor-panel mari-editor-panel--soft transition-all">
       {/* Header */}
       <div className="flex min-w-0 items-center gap-2 px-3 py-2.5">
         <div className="flex shrink-0 items-center gap-0.5">
@@ -1600,6 +1956,7 @@ function VariableCard({
             title="Drag to reorder"
             onMouseDown={onGripDown}
             onMouseUp={onGripUp}
+            onTouchStart={onGripTouchStart}
           >
             <GripVertical size="0.875rem" className="text-[var(--muted-foreground)]" />
           </div>
@@ -1631,20 +1988,23 @@ function VariableCard({
             <ChevronRight size="0.875rem" className="text-[var(--muted-foreground)]" />
           )}
         </button>
-        <Hash size="0.875rem" className="shrink-0 text-amber-400" />
-        <span className="min-w-0 flex-1 cursor-pointer truncate text-sm font-medium text-amber-400" onClick={onToggle}>
+        <Hash size="0.875rem" className="mari-chrome-accent-icon mari-accent-animated shrink-0" />
+        <span
+          className="mari-chrome-accent-text mari-accent-animated min-w-0 flex-1 cursor-pointer truncate text-sm font-medium"
+          onClick={onToggle}
+        >
           {varName}
         </span>
-        <span className="shrink-0 rounded bg-amber-400/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-amber-400">
+        <span className="mari-editor-chip mari-editor-chip--accent shrink-0 px-1.5 py-0.5 text-[0.5625rem]">
           {opts.length} options
         </span>
         {opts.length === 1 && !isMultiSelect && (
-          <span className="shrink-0 rounded bg-purple-400/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-purple-400">
+          <span className="mari-chrome-accent-surface mari-accent-animated shrink-0 rounded px-1.5 py-0.5 text-[0.5625rem] font-medium">
             boolean
           </span>
         )}
         {isMultiSelect && (
-          <span className="shrink-0 rounded bg-purple-400/15 px-1.5 py-0.5 text-[0.5625rem] font-medium text-purple-400">
+          <span className="mari-chrome-accent-surface mari-accent-animated shrink-0 rounded px-1.5 py-0.5 text-[0.5625rem] font-medium">
             {isRandomPick ? "random" : "multi"}
           </span>
         )}
@@ -1671,14 +2031,14 @@ function VariableCard({
 
       {/* Expanded content */}
       {isExpanded && (
-        <div className="space-y-3 border-t border-amber-400/20 px-3 py-3">
+        <div className="space-y-3 border-t border-[var(--marinara-editor-divider)] px-3 py-3">
           {/* Variable Name */}
           <div className="space-y-1">
             <label className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Variable Name</label>
             <VariableNameInput value={varName} onCommit={(v) => update({ variableName: v })} />
             <p className="text-[0.5625rem] text-[var(--muted-foreground)]">
-              Use <code className="text-amber-400">{`{{${varName}}}`}</code> in any prompt section to insert the
-              selected value. Must be alphanumeric/underscores only.
+              Use <code className="mari-chrome-accent-text mari-accent-animated">{`{{${varName}}}`}</code> in any prompt
+              section to insert the selected value. Must be alphanumeric/underscores only.
             </p>
           </div>
 
@@ -1692,10 +2052,12 @@ function VariableCard({
 
           {/* Multi-Select & Random Pick (not shown for single-option/boolean variables) */}
           {opts.length === 1 && !isMultiSelect ? (
-            <div className="space-y-1.5 rounded-lg bg-[var(--secondary)] p-2.5 ring-1 ring-[var(--border)]">
+            <div className="mari-editor-panel mari-editor-panel--soft space-y-1.5 p-2.5">
               <div className="flex items-center gap-1.5">
-                <ToggleLeft size="0.75rem" className="text-purple-400" />
-                <span className="text-[0.625rem] font-medium text-purple-400">Boolean Toggle</span>
+                <ListChecks size="0.75rem" className="mari-chrome-accent-icon mari-accent-animated" />
+                <span className="mari-chrome-accent-text mari-accent-animated text-[0.625rem] font-medium">
+                  Boolean Toggle
+                </span>
               </div>
               <p className="text-[0.5625rem] text-[var(--muted-foreground)]">
                 This variable has only one option, so it behaves as a Boolean toggle. Users can switch it on or off in
@@ -1703,26 +2065,18 @@ function VariableCard({
               </p>
             </div>
           ) : (
-            <div className="space-y-2 rounded-lg bg-[var(--secondary)] p-2.5 ring-1 ring-[var(--border)]">
+            <div className="mari-editor-panel mari-editor-panel--soft space-y-2 p-2.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
-                  <ListChecks size="0.75rem" className="text-purple-400" />
+                  <ListChecks size="0.75rem" className="mari-chrome-accent-icon mari-accent-animated" />
                   <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Multi-Select</span>
                 </div>
-                <button
-                  onClick={() => update({ multiSelect: !isMultiSelect })}
-                  className={cn(
-                    "relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors",
-                    isMultiSelect ? "bg-purple-400" : "bg-[var(--border)]",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "pointer-events-none inline-block h-3 w-3 translate-y-0.5 rounded-full bg-white shadow transition-transform",
-                      isMultiSelect ? "translate-x-3.5" : "translate-x-0.5",
-                    )}
-                  />
-                </button>
+                <SettingsSwitch
+                  ariaLabel={isMultiSelect ? "Disable multi-select" : "Enable multi-select"}
+                  checked={isMultiSelect}
+                  onChange={(checked) => update({ multiSelect: checked })}
+                  className="p-0 hover:bg-transparent"
+                />
               </div>
               <p className="text-[0.5625rem] text-[var(--muted-foreground)]">
                 Allow users to select multiple options instead of just one.
@@ -1733,23 +2087,15 @@ function VariableCard({
                   {/* Random Pick Toggle */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                      <Shuffle size="0.75rem" className="text-amber-400" />
+                      <Shuffle size="0.75rem" className="mari-chrome-accent-icon mari-accent-animated" />
                       <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Random Pick</span>
                     </div>
-                    <button
-                      onClick={() => update({ randomPick: !isRandomPick })}
-                      className={cn(
-                        "relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors",
-                        isRandomPick ? "bg-amber-400" : "bg-[var(--border)]",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "pointer-events-none inline-block h-3 w-3 translate-y-0.5 rounded-full bg-white shadow transition-transform",
-                          isRandomPick ? "translate-x-3.5" : "translate-x-0.5",
-                        )}
-                      />
-                    </button>
+                    <SettingsSwitch
+                      ariaLabel={isRandomPick ? "Disable random pick" : "Enable random pick"}
+                      checked={isRandomPick}
+                      onChange={(checked) => update({ randomPick: checked })}
+                      className="p-0 hover:bg-transparent"
+                    />
                   </div>
                   <p className="text-[0.5625rem] text-[var(--muted-foreground)]">
                     {isRandomPick
@@ -1763,11 +2109,10 @@ function VariableCard({
                       <label className="shrink-0 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                         Separator
                       </label>
-                      <input
+                      <OptionFieldInput
                         value={separatorValue}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => update({ separator: e.target.value })}
-                        className="w-20 rounded bg-[var(--background)] px-1.5 py-0.5 text-center font-mono text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-1 focus:ring-purple-400/50"
+                        onCommit={(value) => update({ separator: value })}
+                        className="mari-editor-field w-20 px-1.5 py-0.5 text-center font-mono text-xs"
                         placeholder=", "
                       />
                       <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
@@ -1780,22 +2125,150 @@ function VariableCard({
             </div>
           )}
 
+          {/* Presentation */}
+          <div className="mari-editor-panel mari-editor-panel--soft space-y-2 p-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <ListChecks size="0.75rem" className="mari-chrome-accent-icon mari-accent-animated" />
+                <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Presentation</span>
+              </div>
+              <div className="mari-editor-field flex p-0.5">
+                {(
+                  [
+                    ["auto", "Auto"],
+                    ["buttons", isMultiSelect ? "Checkboxes" : "Radios"],
+                    ["listbox", isMultiSelect ? "Listbox" : "Dropdown"],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => update({ displayMode: mode })}
+                    className={cn(
+                      "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-colors",
+                      displayMode === mode
+                        ? "mari-chrome-accent-surface mari-accent-animated"
+                        : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t border-[var(--border)] pt-2">
+              <div className="min-w-0">
+                <p className="text-[0.625rem] font-medium text-[var(--foreground)]">Alphabetical option display</p>
+                <p className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                  Manual order is kept for editing and exports.
+                </p>
+              </div>
+              <SettingsSwitch
+                ariaLabel={
+                  optionOrderIsAlphabetical ? "Use manual option display order" : "Use alphabetical option display order"
+                }
+                checked={optionOrderIsAlphabetical}
+                onChange={(checked) => update({ optionSort: checked ? "alphabetical" : "manual" })}
+                className="p-0 hover:bg-transparent"
+              />
+            </div>
+          </div>
+
           {/* Options */}
-          <div className="space-y-1.5">
+          <div className="space-y-1.5" data-preset-variable-option-root={variable.id}>
             <label className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Options</label>
             {opts.map((opt, oi) => {
               const valueBlank = !opt.value || !opt.value.trim();
+              const showDropBefore =
+                dropOptIdx === oi && draggingOptIdx !== null && draggingOptIdx !== oi && draggingOptIdx !== oi - 1;
+              const showDropAfter =
+                oi === opts.length - 1 &&
+                dropOptIdx === opts.length &&
+                draggingOptIdx !== null &&
+                draggingOptIdx !== oi;
               return (
                 <div key={opt.id}>
+                  {showDropBefore && (
+                    <div className="mari-chrome-accent-progress mari-accent-animated mx-2 mb-1 h-0.5 rounded-full" />
+                  )}
                   <div
+                    data-touch-reorder-item={`preset-variable-option-${variable.id}`}
+                    data-touch-reorder-index={oi}
+                    draggable={dragReadyOptIdx === oi && !optionOrderIsAlphabetical}
+                    onDragStart={(e) => handleOptionDragStart(oi, e)}
+                    onDragOver={(e) => {
+                      e.stopPropagation();
+                      handleOptionDragOver(oi, e);
+                    }}
+                    onDrop={(e) => {
+                      e.stopPropagation();
+                      commitOptionDrop(e);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingOptIdx(null);
+                      setDropOptIdx(null);
+                      setDragReadyOptIdx(null);
+                    }}
                     className={cn(
                       "flex items-center gap-2 rounded-lg px-2.5 py-1.5 ring-1",
                       valueBlank
                         ? "bg-[var(--destructive)]/5 ring-[var(--destructive)]/30"
-                        : "bg-[var(--secondary)] ring-[var(--border)]",
+                        : "mari-editor-panel mari-editor-panel--soft",
+                      draggingOptIdx === oi && "opacity-40",
                     )}
                   >
-                    <span className="shrink-0 text-[0.625rem] font-medium text-amber-400">{oi + 1}.</span>
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <div
+                        className={cn(
+                          "rounded p-0.5",
+                          optionOrderIsAlphabetical
+                            ? "cursor-not-allowed opacity-30"
+                            : "cursor-grab hover:bg-[var(--accent)] active:cursor-grabbing",
+                        )}
+                        title={
+                          optionOrderIsAlphabetical ? "Disable alphabetical display to reorder" : "Drag to reorder"
+                        }
+                        onMouseDown={() => {
+                          if (!optionOrderIsAlphabetical) setDragReadyOptIdx(oi);
+                        }}
+                        onMouseUp={() => setDragReadyOptIdx(null)}
+                        onTouchStart={(event) => {
+                          event.stopPropagation();
+                          if (optionOrderIsAlphabetical) return;
+                          startOptionTouchDrag(event, opt.id, {
+                            allowInteractiveTarget: true,
+                            sourceElement: event.currentTarget.closest<HTMLElement>(
+                              `[data-touch-reorder-item="preset-variable-option-${variable.id}"]`,
+                            ),
+                          });
+                        }}
+                      >
+                        <GripVertical size="0.75rem" className="text-[var(--muted-foreground)]" />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => moveOptionByOffset(oi, -1)}
+                        disabled={optionOrderIsAlphabetical || oi === 0}
+                        className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-30"
+                        title="Move option up"
+                        aria-label={`Move ${opt.label || `option ${oi + 1}`} up`}
+                      >
+                        <ArrowUp size="0.625rem" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveOptionByOffset(oi, 1)}
+                        disabled={optionOrderIsAlphabetical || oi === opts.length - 1}
+                        className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-30"
+                        title="Move option down"
+                        aria-label={`Move ${opt.label || `option ${oi + 1}`} down`}
+                      >
+                        <ArrowDown size="0.625rem" />
+                      </button>
+                    </div>
+                    <span className="mari-chrome-accent-text mari-accent-animated shrink-0 text-[0.625rem] font-medium">
+                      {oi + 1}.
+                    </span>
                     <OptionFieldInput
                       value={opt.label}
                       onCommit={(v) => {
@@ -1803,26 +2276,22 @@ function VariableCard({
                         next[oi] = { ...next[oi], label: v };
                         updateOpts(next);
                       }}
-                      className="flex-1 rounded bg-[var(--background)] px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+                      className="mari-editor-field flex-1 px-1.5 py-0.5 text-xs"
                       placeholder="Label…"
                     />
                     <OptionFieldInput
                       value={opt.value}
-                      onCommit={(v) => {
-                        const next = [...opts];
-                        next[oi] = { ...next[oi], value: v };
-                        updateOpts(next);
-                      }}
+                      onCommit={(v) => updateOptionField(opt.id, "value", v)}
                       className={cn(
                         "flex-1 rounded px-1.5 py-0.5 font-mono text-xs focus:outline-none focus:ring-1",
                         valueBlank
                           ? "bg-[var(--destructive)]/10 ring-1 ring-[var(--destructive)]/30 placeholder:text-[var(--destructive)]/40"
-                          : "bg-[var(--background)] focus:ring-amber-400/50",
+                          : "mari-editor-field",
                       )}
                       placeholder="Value…"
                     />
                     <button
-                      onClick={() => setExpandedOptIdx(oi)}
+                      onClick={() => setExpandedOptId(opt.id)}
                       className="shrink-0 rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                       title="Expand value editor"
                     >
@@ -1830,8 +2299,8 @@ function VariableCard({
                     </button>
                     <button
                       onClick={() => {
-                        if (opts.length <= 1) return toast.error("A variable needs at least 1 option.");
-                        updateOpts(opts.filter((_, i) => i !== oi));
+                        if (currentOpts().length <= 1) return toast.error("A variable needs at least 1 option.");
+                        updateOpts(currentOpts().filter((option) => option.id !== opt.id));
                       }}
                       className="shrink-0 rounded p-0.5 hover:bg-[var(--destructive)]/15"
                       title="Remove option"
@@ -1842,6 +2311,9 @@ function VariableCard({
                   {valueBlank && (
                     <p className="mt-1 pl-6 text-[0.5625rem] text-[var(--destructive)]">Value cannot be empty.</p>
                   )}
+                  {showDropAfter && (
+                    <div className="mari-chrome-accent-progress mari-accent-animated mx-2 mt-1 h-0.5 rounded-full" />
+                  )}
                 </div>
               );
             })}
@@ -1849,28 +2321,24 @@ function VariableCard({
               onClick={() => {
                 const newOpt = {
                   id: `opt_${Date.now()}`,
-                  label: `Option ${String.fromCharCode(65 + opts.length)}`,
+                  label: `Option ${String.fromCharCode(65 + currentOpts().length)}`,
                   value: "",
                 };
-                updateOpts([...opts, newOpt]);
+                updateOpts([...currentOpts(), newOpt]);
               }}
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-[0.625rem] font-medium text-amber-400 hover:bg-amber-400/10 active:scale-[0.98]"
+              className="mari-editor-action mari-editor-action--compact flex items-center gap-1 px-2 py-1 text-[0.625rem]"
             >
               <Plus size="0.625rem" /> Add Option
             </button>
           </div>
 
           {/* Expanded value editor for a single option */}
-          {expandedOptIdx !== null && opts[expandedOptIdx] && (
+          {expandedOpt && (
             <ExpandedEditorModal
-              title={`Edit Value: ${opts[expandedOptIdx].label || `Option ${expandedOptIdx + 1}`}`}
-              value={opts[expandedOptIdx].value}
-              onChange={(v) => {
-                const next = [...opts];
-                next[expandedOptIdx] = { ...next[expandedOptIdx], value: v };
-                updateOpts(next);
-              }}
-              onClose={() => setExpandedOptIdx(null)}
+              title={`Edit Value: ${expandedOpt.label || "Option"}`}
+              value={expandedOpt.value}
+              onChange={(v) => updateOptionField(expandedOpt.id, "value", v)}
+              onClose={() => setExpandedOptId(null)}
             />
           )}
         </div>
@@ -1898,7 +2366,7 @@ function VariableNameInput({ value, onCommit }: { value: string; onCommit: (v: s
           (e.target as HTMLInputElement).blur();
         }
       }}
-      className="w-full rounded bg-[var(--background)] px-2 py-1 font-mono text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+      className="mari-editor-field w-full px-2 py-1 font-mono text-xs"
       placeholder="VARIABLE_NAME"
     />
   );
@@ -1983,7 +2451,7 @@ function VariableQuestionInput({ value, onCommit }: { value: string; onCommit: (
           (e.target as HTMLInputElement).blur();
         }
       }}
-      className="w-full rounded bg-[var(--background)] px-2 py-1 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+      className="mari-editor-field w-full px-2 py-1 text-xs"
       placeholder="What should the user choose?"
     />
   );
@@ -2000,11 +2468,10 @@ function SectionContentTextarea({
   onCommit: (v: string) => void;
 }) {
   const [local, setLocal] = useState(value);
-  const [expanded, setExpanded] = useState(false);
-  const [showMacroRef, setShowMacroRef] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedRef = useRef(false);
   const formatQuotes = useQuoteFormatter();
+  const quoteFormat = useUIStore((s) => s.quoteFormat);
 
   // Only sync from parent when not actively editing
   useEffect(() => {
@@ -2012,12 +2479,16 @@ function SectionContentTextarea({
   }, [value]);
 
   const commit = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
     if (local !== value) onCommit(local);
   }, [local, value, onCommit]);
 
   // Debounced auto-save while typing (800ms)
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const nextValue = formatQuotes(e.target.value);
+  const handleChange = (nextRawValue: string) => {
+    const nextValue = formatQuotes(nextRawValue);
     setLocal(nextValue);
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
@@ -2028,10 +2499,6 @@ function SectionContentTextarea({
   // Commit on blur immediately
   const handleBlur = () => {
     focusedRef.current = false;
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
     commit();
   };
 
@@ -2048,71 +2515,17 @@ function SectionContentTextarea({
   );
 
   return (
-    <>
-      <div className="relative">
-        <textarea
-          value={local}
-          onChange={handleChange}
-          onBlur={handleBlur}
-          onFocus={handleFocus}
-          onKeyDown={(e) =>
-            handleTextareaTab(
-              e,
-              local,
-              (v) => {
-                setLocal(v);
-                if (timeoutRef.current) clearTimeout(timeoutRef.current);
-                timeoutRef.current = setTimeout(() => {
-                  if (v !== value) onCommit(v);
-                }, 800);
-              },
-              formatQuotes,
-            )
-          }
-          className="min-h-[7.5rem] w-full rounded-lg bg-[var(--secondary)] p-2.5 pr-8 font-mono text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-          placeholder="Prompt content… (supports {{user}}, {{char}}, {{// comment}}, {{trim}} macros)"
-        />
-        <div className="absolute right-1.5 top-1.5 flex flex-col gap-0.5">
-          <button
-            onClick={() => setExpanded(true)}
-            className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Expand editor"
-          >
-            <Maximize2 size="0.75rem" />
-          </button>
-          <button
-            onClick={() => setShowMacroRef(true)}
-            className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Macros reference"
-          >
-            <BookOpen size="0.75rem" />
-          </button>
-        </div>
-      </div>
-
-      {/* Macros reference modal */}
-      {showMacroRef && <MacrosReferenceModal onClose={() => setShowMacroRef(false)} />}
-
-      {/* Expanded editor modal */}
-      {expanded && (
-        <ExpandedEditorModal
-          title={sectionName ? `Edit: ${sectionName}` : "Edit Prompt"}
-          value={local}
-          onChange={(v) => {
-            const nextValue = formatQuotes(v);
-            setLocal(nextValue);
-            if (timeoutRef.current) clearTimeout(timeoutRef.current);
-            timeoutRef.current = setTimeout(() => {
-              if (nextValue !== value) onCommit(nextValue);
-            }, 800);
-          }}
-          onClose={() => {
-            setExpanded(false);
-            if (local !== value) onCommit(local);
-          }}
-        />
-      )}
-    </>
+    <MacroTextarea
+      value={local}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      onFocus={handleFocus}
+      onExpandedClose={commit}
+      formatOnChange={(textarea) => applyTextareaQuoteFormat(textarea, quoteFormat)}
+      title={sectionName ? `Edit: ${sectionName}` : "Edit Prompt"}
+      className="mari-editor-field min-h-[7.5rem] w-full p-2.5 font-mono text-xs"
+      placeholder="Prompt content… (supports {{user}}, {{char}}, {{// comment}}, {{trim}} macros)"
+    />
   );
 }
 
@@ -2189,9 +2602,9 @@ function ExpandedEditorModal({
 
   return (
     <PresetModalPortal>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-6 max-md:pt-[max(1.5rem,env(safe-area-inset-top))]">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] sm:p-6">
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleClose} />
-        <div className="relative flex h-[80vh] w-full max-w-3xl flex-col rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl shadow-black/50">
+        <div className="mari-editor-shell mari-editor-legacy-bridge relative flex h-[80vh] max-h-[calc(100vh-1.5rem)] w-full max-w-3xl flex-col rounded-2xl border border-[var(--marinara-editor-border)] bg-[var(--marinara-editor-surface-bg)] shadow-2xl shadow-black/50 supports-[height:100dvh]:h-[80dvh] supports-[height:100dvh]:max-h-[calc(100dvh-1.5rem)]">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
             <h3 className="text-sm font-semibold">{title}</h3>
@@ -2220,7 +2633,7 @@ function ExpandedEditorModal({
                   formatQuotes,
                 )
               }
-              className="h-full w-full resize-none rounded-lg bg-[var(--secondary)] p-4 font-mono text-sm text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              className="mari-editor-field h-full w-full resize-none p-4 font-mono text-sm"
               placeholder="Prompt content… (supports macros like {{user}}, {{char}}, etc.)"
             />
           </div>
@@ -2229,109 +2642,9 @@ function ExpandedEditorModal({
             <p className="text-[0.625rem] text-[var(--muted-foreground)]">Changes auto-save. Press Escape to close.</p>
             <button
               onClick={handleClose}
-              className="rounded-xl bg-gradient-to-r from-purple-400 to-violet-500 px-4 py-1.5 text-xs font-medium text-white shadow-md hover:shadow-lg active:scale-[0.98]"
+              className="mari-editor-action mari-editor-action--primary mari-editor-action--compact inline-flex px-4 py-1.5"
             >
               Done
-            </button>
-          </div>
-        </div>
-      </div>
-    </PresetModalPortal>
-  );
-}
-
-// ── Macros reference data ──
-const MACRO_REFERENCE = Array.from(
-  SUPPORTED_MACROS.reduce((categories, macro) => {
-    const macros = categories.get(macro.category) ?? [];
-    macros.push({ macro: macro.syntax, desc: macro.description });
-    categories.set(macro.category, macros);
-    return categories;
-  }, new Map<string, Array<{ macro: string; desc: string }>>()),
-  ([category, macros]) => ({ category, macros }),
-);
-
-// ── Macros Reference Modal ──
-function MacrosReferenceModal({ onClose }: { onClose: () => void }) {
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
-
-  return (
-    <PresetModalPortal>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-6 max-md:pt-[max(1.5rem,env(safe-area-inset-top))]">
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-        <div className="relative flex max-h-[80vh] w-full max-w-lg flex-col rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl shadow-black/50">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-            <div className="flex items-center gap-2">
-              <BookOpen size="1rem" className="text-purple-400" />
-              <h3 className="text-sm font-semibold">Macros Reference</h3>
-            </div>
-            <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-[var(--accent)]">
-              <X size="1rem" />
-            </button>
-          </div>
-          {/* Content */}
-          <div className="flex-1 space-y-4 overflow-y-auto p-4">
-            <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-              Use these macros in your prompt sections. They will be replaced with actual values at generation time.
-            </p>
-            <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-              In group chats, a bracketed block containing character macros like <code>{"{{char}}"}</code> and{" "}
-              <code>{"{{description}}"}</code> repeats once per character.
-            </p>
-            <div className="space-y-2 border-y border-[var(--border)] py-3">
-              <div>
-                <h4 className="text-[0.6875rem] font-semibold text-purple-400">Conditional blocks</h4>
-                <p className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
-                  Use <code>{"{{#if ...}}"}</code>, optional <code>{"{{else}}"}</code>, and <code>{"{{/if}}"}</code> to
-                  switch prompt text by the active speaker, user, or a preset variable.
-                </p>
-              </div>
-              <pre className="overflow-x-auto rounded-lg bg-[var(--secondary)] px-3 py-2 text-[0.625rem] leading-relaxed text-amber-300">
-                <code>{`{{#if character == "Dottore"}}
-Write this for Dottore.
-{{else}}
-Write this for anyone else.
-{{/if}}`}</code>
-              </pre>
-              <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                Supported comparisons: <code>==</code>, <code>!=</code>, and <code>contains</code>. Character checks
-                also work with <code>char</code> or <code>speaker</code>, and group chats evaluate them for the speaking
-                character. Straight and typographic quotes both work.
-              </p>
-            </div>
-            {MACRO_REFERENCE.map((cat) => (
-              <div key={cat.category}>
-                <h4 className="mb-1.5 text-[0.6875rem] font-semibold text-purple-400">{cat.category}</h4>
-                <div className="space-y-1">
-                  {cat.macros.map((m) => (
-                    <div
-                      key={m.macro}
-                      className="flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-[var(--accent)]"
-                    >
-                      <code className="shrink-0 rounded bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] font-medium text-amber-400">
-                        {m.macro}
-                      </code>
-                      <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{m.desc}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-          {/* Footer */}
-          <div className="border-t border-[var(--border)] px-4 py-2.5 text-center">
-            <button
-              onClick={onClose}
-              className="rounded-xl px-4 py-1.5 text-xs font-medium text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
-            >
-              Close
             </button>
           </div>
         </div>
@@ -2367,94 +2680,9 @@ function SectionNameInput({ value, onCommit }: { value: string; onCommit: (v: st
           (e.target as HTMLInputElement).blur();
         }
       }}
-      className="flex-1 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+      className="mari-editor-field flex-1 px-2.5 py-1.5 text-xs"
       placeholder="Section name"
     />
-  );
-}
-
-// ═══════════════════════════════════════════════
-//  Review Tab (placeholder — wires to prompt reviewer)
-// ═══════════════════════════════════════════════
-
-function ReviewTab({ presetId }: { presetId: string }) {
-  const [reviewing, setReviewing] = useState(false);
-  const [reviewOutput, setReviewOutput] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const enableStreaming = useUIStore((s) => s.enableStreaming);
-
-  const startReview = async (connectionId: string) => {
-    setReviewing(true);
-    setReviewOutput("");
-    setError(null);
-
-    try {
-      const res = await fetch("/api/prompt-reviewer/review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          presetId,
-          connectionId,
-          streaming: enableStreaming,
-          focusAreas: ["clarity", "consistency", "coverage", "token_efficiency"],
-        }),
-      });
-
-      if (!res.ok) throw new Error("Failed to start review");
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No stream");
-
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        const lines = text.split("\n");
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(line.slice(6));
-            if (event.type === "token") {
-              setReviewOutput((prev) => prev + event.data);
-            } else if (event.type === "error") {
-              setError(event.data);
-            }
-          } catch {
-            /* skip */
-          }
-        }
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Review failed");
-    } finally {
-      setReviewing(false);
-    }
-  };
-
-  return (
-    <>
-      <FieldGroup label="AI Prompt Review">
-        <p className="mb-3 text-xs text-[var(--muted-foreground)]">
-          Have an AI analyze your prompt preset for clarity, consistency, coverage, and efficiency. This requires an
-          active API connection.
-        </p>
-        <ConnectionSelector
-          onSelect={(connId) => startReview(connId)}
-          disabled={reviewing}
-          label={reviewing ? "Reviewing…" : "Start Review"}
-        />
-      </FieldGroup>
-
-      {error && (
-        <div className="rounded-xl bg-[var(--destructive)]/10 p-3 text-xs text-[var(--destructive)]">{error}</div>
-      )}
-
-      {reviewOutput && (
-        <div className="rounded-xl bg-[var(--secondary)] p-4 ring-1 ring-[var(--border)]">
-          <pre className="whitespace-pre-wrap text-xs text-[var(--foreground)]">{reviewOutput}</pre>
-        </div>
-      )}
-    </>
   );
 }
 
@@ -2464,7 +2692,7 @@ function ReviewTab({ presetId }: { presetId: string }) {
 
 function FieldGroup({ label, help, children }: { label: string; help?: string; children: React.ReactNode }) {
   return (
-    <div>
+    <div className="mari-editor-panel space-y-2 p-3">
       <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[var(--muted-foreground)]">
         {label}
         {help && <HelpTooltip text={help} />}
@@ -2476,55 +2704,9 @@ function FieldGroup({ label, help, children }: { label: string; help?: string; c
 
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex flex-1 flex-col items-center rounded-xl bg-[var(--secondary)] p-3 ring-1 ring-[var(--border)]">
+    <div className="mari-editor-panel flex flex-1 flex-col items-center p-3">
       <span className="text-xl font-bold text-[var(--foreground)]">{value}</span>
       <span className="text-[0.625rem] text-[var(--muted-foreground)]">{label}</span>
-    </div>
-  );
-}
-
-/** Simple connection selector — queries the connections API */
-function ConnectionSelector({
-  onSelect,
-  disabled,
-  label,
-}: {
-  onSelect: (connectionId: string) => void;
-  disabled: boolean;
-  label: string;
-}) {
-  const [connId, setConnId] = useState("");
-
-  // Quick inline fetch of connections
-  const [connections, setConnections] = useState<Array<{ id: string; name: string }>>([]);
-  useEffect(() => {
-    fetch("/api/connections")
-      .then((r) => r.json())
-      .then((data) => setConnections(data))
-      .catch(() => {});
-  }, []);
-
-  return (
-    <div className="flex gap-2">
-      <select
-        value={connId}
-        onChange={(e) => setConnId(e.target.value)}
-        className="flex-1 rounded-xl bg-[var(--secondary)] px-2.5 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none"
-      >
-        <option value="">Select connection…</option>
-        {connections.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-          </option>
-        ))}
-      </select>
-      <button
-        disabled={disabled || !connId}
-        onClick={() => onSelect(connId)}
-        className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-purple-400 to-violet-500 px-4 py-2 text-xs font-medium text-white shadow-md transition-all hover:shadow-lg active:scale-[0.98] disabled:opacity-50"
-      >
-        <Sparkles size="0.8125rem" /> {label}
-      </button>
     </div>
   );
 }

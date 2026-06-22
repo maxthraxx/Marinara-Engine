@@ -7,7 +7,7 @@ import { createPromptsStorage } from "../storage/prompts.storage.js";
 import type { PromptVariableGroup } from "@marinara-engine/shared";
 import type { TimestampOverrides } from "./import-timestamps.js";
 
-const VALID_REASONING = new Set(["low", "medium", "high", "maximum"]);
+const VALID_REASONING = new Set(["low", "medium", "high", "xhigh", "maximum"]);
 
 /** Friendly display names for consolidated markers. */
 const MARKER_DISPLAY_NAMES: Partial<Record<string, string>> = {
@@ -26,10 +26,77 @@ function normalizeTopP(v: number | null | undefined) {
   const clamped = clamp(v ?? 1, 0, 1);
   return clamped <= 0 ? 1 : clamped;
 }
-function toReasoningEffort(v: unknown): "low" | "medium" | "high" | "maximum" | null {
+function toReasoningEffort(v: unknown): "low" | "medium" | "high" | "xhigh" | "maximum" | null {
+  if (typeof v === "string" && v === "min") return "low";
+  if (typeof v === "string" && v === "max") return "maximum";
   if (typeof v === "string" && v === "auto") return "maximum";
-  if (typeof v === "string" && VALID_REASONING.has(v)) return v as "low" | "medium" | "high" | "maximum";
+  if (typeof v === "string" && VALID_REASONING.has(v))
+    return v as "low" | "medium" | "high" | "xhigh" | "maximum";
   return null;
+}
+
+function toVerbosity(v: unknown): "low" | "medium" | "high" | null {
+  return v === "low" || v === "medium" || v === "high" ? v : null;
+}
+
+function parseStringArray(raw: unknown, parseJsonString: boolean): string[] {
+  if (Array.isArray(raw)) return raw.filter((item): item is string => typeof item === "string" && item.length > 0);
+  if (typeof raw !== "string") return [];
+  if (!parseJsonString) return raw ? [raw] : [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string" && item.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeStopSequences(preset: STPreset): string[] {
+  const seen = new Set<string>();
+  const stops = [
+    ...parseStringArray(preset.custom_stopping_strings, true),
+    ...parseStringArray(preset.stop, false),
+  ];
+  return stops.filter((stop) => {
+    if (seen.has(stop)) return false;
+    seen.add(stop);
+    return true;
+  });
+}
+
+function parseScalar(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return trimmed.replace(/^(['"])(.*)\1$/, "$2");
+  }
+}
+
+function parseCustomParameters(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw !== "string" || !raw.trim()) return {};
+
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    const out: Record<string, unknown> = {};
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const separator = trimmed.indexOf(":");
+      if (separator <= 0) continue;
+      const key = trimmed.slice(0, separator).trim();
+      if (!key) continue;
+      out[key] = parseScalar(trimmed.slice(separator + 1));
+    }
+    return out;
+  }
 }
 
 interface STPromptEntry {
@@ -99,14 +166,14 @@ export async function importSTPreset(
         frequencyPenalty: clamp(preset.frequency_penalty ?? 0, -2, 2),
         presencePenalty: clamp(preset.presence_penalty ?? 0, -2, 2),
         reasoningEffort: toReasoningEffort(preset.reasoning_effort),
-        verbosity: null,
+        verbosity: toVerbosity(preset.verbosity ?? preset.verbosity_level ?? preset.verbosity_levels),
         serviceTier: null,
-        assistantPrefill: "",
-        customParameters: {},
+        assistantPrefill: typeof preset.assistant_prefill === "string" ? preset.assistant_prefill : "",
+        customParameters: parseCustomParameters(preset.custom_include_body),
         squashSystemMessages: preset.squash_system_messages ?? true,
         showThoughts: preset.show_thoughts ?? true,
         useMaxContext: false,
-        stopSequences: [],
+        stopSequences: normalizeStopSequences(preset),
         strictRoleFormatting: true,
         singleUserMessage: false,
       },
@@ -119,6 +186,7 @@ export async function importSTPreset(
   // Determine the section order from prompt_order (prefer the custom 100001 ordering)
   const orderDef = preset.prompt_order?.find((o) => o.character_id === 100001) ?? preset.prompt_order?.[0];
   const orderMap = new Map(orderDef?.order?.map((o, i) => [o.identifier, { index: i, enabled: o.enabled }]) ?? []);
+  const chatHistoryIndex = orderMap.get("chatHistory")?.index ?? Number.MAX_SAFE_INTEGER;
 
   // Import each prompt entry as a section
   const prompts = preset.prompts ?? [];
@@ -164,14 +232,20 @@ export async function importSTPreset(
     if (entry.role === "assistant") role = "assistant";
 
     // Determine injection position
-    const injectionPosition = entry.injection_position === 1 ? ("depth" as const) : ("ordered" as const);
+    const entryOrderIndex = orderMap.get(entry.identifier)?.index ?? Number.MAX_SAFE_INTEGER;
+    const isPostHistoryEntry =
+      entryOrderIndex > chatHistoryIndex &&
+      /(?:jailbreak|post[_-]?history|posthistory)/i.test(`${entry.identifier} ${entry.name}`);
+    if (isPostHistoryEntry) role = "user";
+    const injectionPosition =
+      isPostHistoryEntry || entry.injection_position === 1 ? ("depth" as const) : ("ordered" as const);
 
     // Check override from prompt_order
     const orderInfo = orderMap.get(entry.identifier);
     const enabled = orderInfo?.enabled ?? entry.enabled ?? true;
 
     // Assign to group if the entry was between bracket markers
-    const groupId = groupIdMap.get(entry.identifier) ?? null;
+    const groupId = isPostHistoryEntry ? null : (groupIdMap.get(entry.identifier) ?? null);
 
     // Use friendly names for consolidated markers
     const sectionName = mappedMarkerConfig ? (MARKER_DISPLAY_NAMES[mappedMarkerConfig.type] ?? entry.name) : entry.name;
@@ -185,7 +259,7 @@ export async function importSTPreset(
       enabled,
       isMarker: !!mappedMarkerConfig,
       injectionPosition,
-      injectionDepth: entry.injection_depth ?? 0,
+      injectionDepth: isPostHistoryEntry ? 0 : (entry.injection_depth ?? 0),
       injectionOrder: entry.injection_order ?? 100,
       groupId,
       markerConfig: mappedMarkerConfig,

@@ -7,6 +7,10 @@ export const promptPresets = sqliteTable("prompt_presets", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
+  /** Conversation-mode system prompt template */
+  conversationPrompt: text("conversation_prompt").notNull().default(""),
+  /** Game-mode GM prompt template */
+  gamePrompt: text("game_prompt").notNull().default(""),
   /** JSON array of section IDs in order */
   sectionOrder: text("section_order").notNull().default("[]"),
   /** JSON array of group IDs in order */
@@ -87,6 +91,10 @@ export const choiceBlocks = sqliteTable("choice_blocks", {
   separator: text("separator").notNull().default(", "),
   /** If true, randomly pick one of the user's selected options each generation */
   randomPick: text("random_pick").notNull().default("false"),
+  /** UI presentation mode for the choice picker */
+  displayMode: text("display_mode").notNull().default("auto"),
+  /** Manual or alphabetic option presentation */
+  optionSort: text("option_sort").notNull().default("manual"),
   /** Sort order for display / question sequence */
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: text("created_at").notNull(),

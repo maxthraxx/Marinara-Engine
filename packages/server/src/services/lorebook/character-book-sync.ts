@@ -42,13 +42,15 @@ function asStringArray(value: unknown): string[] {
 /**
  * Map a standalone-lorebook entry row (post `parseEntryRow`) onto a V2
  * Character Book entry. Field mapping mirrors the inverse done by
- * `importSTLorebook`. Position 1 in the DB maps to "after_char"; anything
- * else collapses to "before_char" because the V2 spec only has those two
- * values.
+ * `importSTLorebook`. At-depth entries use ST's numeric @D position so a
+ * synced embedded book can round-trip through the standalone lorebook without
+ * losing depth placement.
  */
 function toCharacterBookEntry(entry: LoreEntryRow, index: number): CharacterBookEntry {
   const order = asNumber(entry.order, 100);
-  const position = entry.position === 1 ? "after_char" : "before_char";
+  const positionValue = asNumber(entry.position, 0);
+  const position = positionValue === 2 ? 4 : positionValue === 1 ? "after_char" : "before_char";
+  const role = entry.role === "user" ? 1 : entry.role === "assistant" ? 2 : 0;
   return {
     keys: asStringArray(entry.keys),
     content: asString(entry.content),
@@ -64,6 +66,8 @@ function toCharacterBookEntry(entry: LoreEntryRow, index: number): CharacterBook
     secondary_keys: asStringArray(entry.secondaryKeys),
     constant: entry.constant === true,
     position,
+    depth: asNumber(entry.depth, 4),
+    role,
   };
 }
 

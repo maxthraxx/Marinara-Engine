@@ -2,17 +2,36 @@
 // Import: Marinara Engine native format (.marinara.json)
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
-import { lorebookFilterModeSchema } from "@marinara-engine/shared";
+import {
+  getFolderImportEntries,
+  getFolderManifestConfig,
+  isJsonRecord,
+  lorebookFilterModeSchema,
+} from "@marinara-engine/shared";
 import type { ExportEnvelope, ExportType, LorebookFilterMode, LorebookMatchingSource } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createCharacterGalleryStorage } from "../storage/character-gallery.storage.js";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
 import { createPromptsStorage } from "../storage/prompts.storage.js";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "./import-timestamps.js";
+import { resolveLorebookEntryRole } from "./lorebook-role.js";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from "../../utils/security.js";
+
+function resolveNativeSelectiveLogic(value: unknown): "and" | "and_all" | "or" | "not" | "not_all" {
+  return value === "and_all" || value === "or" || value === "not" || value === "not_all" ? value : "and";
+}
+
+function resolveNativePosition(value: unknown): number {
+  if (typeof value === "string") {
+    if (value === "after_char") return 1;
+    if (value === "at_depth" || value === "depth") return 2;
+    return 0;
+  }
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2 ? value : 0;
+}
 
 // Decode a base64 data URL into validated image bytes. Returns null if the
 // payload is missing, malformed, or not a recognized image type — so callers
@@ -53,6 +72,16 @@ async function saveAvatarFromDataUrl(dataUrl: unknown, prefix: string, id: strin
   const filepath = assertInsideDir(avatarsDir, join(avatarsDir, filename));
   await writeFile(filepath, decoded.buffer);
   return `/api/avatars/file/${filename}`;
+}
+
+function readLorebookScope(value: unknown): { mode: "all" | "disabled" | "specific"; chatIds: string[] } {
+  if (!value || typeof value !== "object") return { mode: "all", chatIds: [] };
+  const raw = value as Record<string, unknown>;
+  const mode = raw.mode === "disabled" || raw.mode === "specific" ? raw.mode : "all";
+  const chatIds = Array.isArray(raw.chatIds)
+    ? raw.chatIds.filter((chatId): chatId is string => typeof chatId === "string" && chatId.trim().length > 0)
+    : [];
+  return { mode, chatIds: Array.from(new Set(chatIds)) };
 }
 
 // Restore sprites embedded as [{ filename, data }, ...] in a native export
@@ -182,22 +211,47 @@ export async function importMarinara(
   envelope: ExportEnvelope,
   db: DB,
 ): Promise<{ success: boolean; type: ExportType; id?: string; name?: string; error?: string }> {
-  if (!envelope || typeof envelope !== "object" || !envelope.type || envelope.version !== 1) {
+  const normalizedEnvelope = unwrapFolderManifestEnvelope(envelope) ?? envelope;
+  if (
+    !normalizedEnvelope ||
+    typeof normalizedEnvelope !== "object" ||
+    !normalizedEnvelope.type ||
+    normalizedEnvelope.version !== 1
+  ) {
     return { success: false, type: "marinara_character" as ExportType, error: "Invalid Marinara export file" };
   }
 
-  switch (envelope.type) {
+  switch (normalizedEnvelope.type) {
     case "marinara_character":
-      return importCharacter(envelope.data, db);
+      return importCharacter(normalizedEnvelope.data, db);
     case "marinara_persona":
-      return importPersona(envelope.data, db);
+      return importPersona(normalizedEnvelope.data, db);
     case "marinara_lorebook":
-      return importLorebook(envelope.data, db);
+      return importLorebook(normalizedEnvelope.data, db);
     case "marinara_preset":
-      return importPreset(envelope.data, db);
+      return importPreset(normalizedEnvelope.data, db);
     default:
-      return { success: false, type: envelope.type, error: `Unknown export type: ${envelope.type}` };
+      return {
+        success: false,
+        type: normalizedEnvelope.type,
+        error: `Unknown export type: ${normalizedEnvelope.type}`,
+      };
   }
+}
+
+function unwrapFolderManifestEnvelope(value: unknown): ExportEnvelope | null {
+  if (!isJsonRecord(value)) return null;
+  const looksLikeFolderManifest =
+    typeof value.kind === "string" || isJsonRecord(value.manifest) || Array.isArray(value.presets);
+  if (!looksLikeFolderManifest) return null;
+  const entries = getFolderImportEntries(value, ["presets"]);
+  for (const entry of entries) {
+    const config = getFolderManifestConfig(entry);
+    if (isJsonRecord(config) && typeof config.type === "string" && config.version === 1) {
+      return config as unknown as ExportEnvelope;
+    }
+  }
+  return null;
 }
 
 // ── Character ────────────────────────────────
@@ -298,12 +352,21 @@ async function importPersona(data: unknown, db: DB) {
     if (Array.isArray(value) || (value && typeof value === "object")) return JSON.stringify(value);
     return fallback;
   };
+  const firstStringField = (...values: unknown[]) => {
+    for (const value of values) {
+      if (typeof value === "string") return value;
+    }
+    return "";
+  };
   const result = await storage.createPersona(
     String(d.name ?? "Imported Persona"),
     String(d.description ?? ""),
     undefined,
     {
       comment: typeof d.comment === "string" ? d.comment : "",
+      creator: firstStringField(d.creator),
+      personaVersion: firstStringField(d.personaVersion, d.persona_version, d.character_version),
+      creatorNotes: firstStringField(d.creatorNotes, d.creator_notes),
       personality: String(d.personality ?? ""),
       scenario: String(d.scenario ?? ""),
       backstory: String(d.backstory ?? ""),
@@ -316,7 +379,6 @@ async function importPersona(data: unknown, db: DB) {
           ? d.trackerCardColors
           : JSON.stringify(d.trackerCardColors ?? { mode: "chat" }),
       personaStats: typeof d.personaStats === "string" ? d.personaStats : "",
-      altDescriptions: stringifyJsonField(d.altDescriptions, "[]"),
       tags: stringifyJsonField(d.tags, "[]"),
       savedStatusOptions: stringifyJsonField(d.savedStatusOptions, "[]"),
       // avatarCrop is stored as a JSON string in the DB; the export round-trips it
@@ -383,6 +445,7 @@ async function importLorebook(data: unknown, db: DB) {
       chatId: typeof lb.chatId === "string" ? lb.chatId : null,
       isGlobal: lb.isGlobal === true || lb.isGlobal === "true",
       enabled: lb.enabled !== false,
+      scope: readLorebookScope(lb.scope),
       tags: Array.isArray(lb.tags) ? lb.tags.map(String) : [],
       generatedBy: "import",
       sourceAgentId: typeof lb.sourceAgentId === "string" ? lb.sourceAgentId : null,
@@ -414,11 +477,11 @@ async function importLorebook(data: unknown, db: DB) {
       return {
         name: String(e.name ?? ""),
         content: String(e.content ?? ""),
-        // CodeRabbit-flagged: description, ephemeral, locked, and preventRecursion
+        // CodeRabbit-flagged: description, ephemeral, locked, and recursion flags
         // were absent from the previous map, so an exported lorebook would lose
         // these fields on re-import. Knowledge-router matching uses description,
         // ephemeral controls auto-disable countdown, locked protects entries
-        // from the Lorebook Keeper agent, and preventRecursion gates recursive
+        // from the Lorebook Keeper agent, and recursion flags gate recursive
         // scanning — all behaviors that should round-trip.
         description: String(e.description ?? ""),
         keys: Array.isArray(e.keys) ? e.keys.map(String) : [],
@@ -426,7 +489,7 @@ async function importLorebook(data: unknown, db: DB) {
         enabled: e.enabled !== false,
         constant: Boolean(e.constant),
         selective: Boolean(e.selective),
-        selectiveLogic: (e.selectiveLogic as any) ?? "and",
+        selectiveLogic: resolveNativeSelectiveLogic(e.selectiveLogic),
         probability: e.probability != null ? Number(e.probability) : null,
         scanDepth: e.scanDepth != null ? Number(e.scanDepth) : null,
         matchWholeWords: Boolean(e.matchWholeWords),
@@ -441,10 +504,10 @@ async function importLorebook(data: unknown, db: DB) {
           ? e.generationTriggerFilters.map(String)
           : [],
         additionalMatchingSources: readMatchingSources(e.additionalMatchingSources),
-        position: Number(e.position ?? 0),
+        position: resolveNativePosition(e.position),
         depth: Number(e.depth ?? 4),
         order: Number(e.order ?? 100),
-        role: (e.role as any) ?? "system",
+        role: resolveLorebookEntryRole(e.role),
         sticky: e.sticky != null ? Number(e.sticky) : null,
         cooldown: e.cooldown != null ? Number(e.cooldown) : null,
         delay: e.delay != null ? Number(e.delay) : null,
@@ -454,6 +517,8 @@ async function importLorebook(data: unknown, db: DB) {
         folderId: newFolderId,
         locked: Boolean(e.locked),
         preventRecursion: Boolean(e.preventRecursion),
+        excludeRecursion: Boolean(e.excludeRecursion),
+        delayUntilRecursion: Boolean(e.delayUntilRecursion),
         excludeFromVectorization: Boolean(e.excludeFromVectorization),
         tag: String(e.tag ?? ""),
         relationships: (e.relationships as any) ?? {},
@@ -493,6 +558,8 @@ async function importPreset(data: unknown, db: DB) {
     {
       name: String(p.name ?? "Imported Preset"),
       description: String(p.description ?? ""),
+      conversationPrompt: String(p.conversationPrompt ?? p.conversation_prompt ?? ""),
+      gamePrompt: String(p.gamePrompt ?? p.game_prompt ?? ""),
       variableGroups: safeParseJson(p.variableGroups, []),
       variableValues: safeParseJson(p.variableValues, {}),
       parameters: safeParseJson(p.parameters, {}),
@@ -566,6 +633,8 @@ async function importPreset(data: unknown, db: DB) {
         multiSelect: v.multiSelect === true || v.multiSelect === "true",
         separator: String(v.separator ?? ", "),
         randomPick: v.randomPick === true || v.randomPick === "true",
+        displayMode: v.displayMode === "buttons" || v.displayMode === "listbox" ? v.displayMode : "auto",
+        optionSort: v.optionSort === "alphabetical" ? "alphabetical" : "manual",
       });
     }
   }
