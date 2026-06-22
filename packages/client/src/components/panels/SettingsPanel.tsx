@@ -24,7 +24,13 @@ import {
 import { cn } from "../../lib/utils";
 import { useExtensions, useCreateExtension, useDeleteExtension, useUpdateExtension } from "../../hooks/use-extensions";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ADMIN_SECRET_STORAGE_KEY, ApiError, api, getAdminSecretHeader } from "../../lib/api-client";
+import {
+  ADMIN_SECRET_STORAGE_KEY,
+  ApiError,
+  api,
+  getAdminSecretHeader,
+  getPrivilegedActionErrorMessage,
+} from "../../lib/api-client";
 import { chatBackgroundUrlToMetadata } from "../../lib/backgrounds";
 import { normalizeThemeCss } from "../../lib/theme-css";
 import { forceRefreshSpa } from "@/lib/browser-runtime";
@@ -3908,19 +3914,27 @@ function ExtensionsSettings() {
       }
     }
     if (imported === 0 && failed === 0 && skipped === 0) throw new Error("No valid extensions found in file");
-    if (failed > 0 || skipped > 0) {
-      const issueCount = failed + skipped;
+    const skipNote = skipped > 0 ? ` (${skipped} skipped — no importable entry)` : "";
+    if (failed > 0) {
+      const more = failureMessages.length > 1 ? ` (+${failureMessages.length - 1} more)` : "";
+      toast.error(
+        imported > 0
+          ? `Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}; ${failed} failed — ${failureMessages[0]}${more}`
+          : `Failed to install ${failed} extension${failed === 1 ? "" : "s"}${skipNote} — ${failureMessages[0]}${more}`,
+        { duration: 12_000 },
+      );
+    } else if (skipped > 0) {
       toast.warning(
         imported > 0
-          ? `Installed ${imported} extension${imported === 1 ? "" : "s"} (${issueCount} issue${issueCount === 1 ? "" : "s"}).`
-          : `Failed to install extension${issueCount === 1 ? "" : "s"}.`,
+          ? `Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}.`
+          : `Skipped ${skipped} extension entr${skipped === 1 ? "y" : "ies"}.`,
         {
           description: failureMessages[0],
           duration: 12_000,
         },
       );
     } else {
-      toast.success(`Installed ${imported} extension${imported === 1 ? "" : "s"}`);
+      toast.success(`Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}`);
     }
   };
 
@@ -3984,7 +3998,7 @@ function ExtensionsSettings() {
         toast.error("Only .zip, .json, .css, and .js extension files are supported.");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to import extension.");
+      toast.error(getPrivilegedActionErrorMessage(err, "Failed to import extension."));
     }
     e.target.value = "";
   };
@@ -4004,7 +4018,7 @@ function ExtensionsSettings() {
         folderName,
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to import extension folder.");
+      toast.error(getPrivilegedActionErrorMessage(err, "Failed to import extension folder."));
     }
     e.target.value = "";
   };
