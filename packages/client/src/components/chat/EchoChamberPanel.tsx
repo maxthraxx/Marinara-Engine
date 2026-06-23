@@ -5,13 +5,14 @@
 // HUD widget position (top/left/right), and the top bar.
 // ──────────────────────────────────────────────
 import { useRef, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { X, Trash2 } from "lucide-react";
+import { X, Trash2, RefreshCw } from "lucide-react";
 import { useAgentStore } from "../../stores/agent.store";
 import { useUIStore } from "../../stores/ui.store";
 import type { EchoChamberSide } from "../../stores/ui.store";
 import { useAgentConfigs } from "../../hooks/use-agents";
 import { useChatStore } from "../../stores/chat.store";
 import { useChat } from "../../hooks/use-chats";
+import { useGenerate } from "../../hooks/use-generate";
 import { api } from "../../lib/api-client";
 import { cn } from "../../lib/utils";
 import { ROLEPLAY_POPOVER_SHELL } from "./roleplay-popover-styles";
@@ -146,11 +147,16 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
   const toggleEchoChamber = useUIStore((s) => s.toggleEchoChamber);
   const setEchoChamberSide = useUIStore((s) => s.setEchoChamberSide);
   const echoMessages = useAgentStore((s) => s.echoMessages);
+  const isAgentProcessing = useAgentStore((s) => s.isProcessing);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const activeChatId = useChatStore((s) => s.activeChatId);
+  const isStreaming = useChatStore((s) => s.isStreaming);
+  const streamingChatId = useChatStore((s) => s.streamingChatId);
   const { data: chat } = useChat(activeChatId);
   const { data: agentConfigs } = useAgentConfigs();
+  const { retryAgents } = useGenerate();
+  const echoRetryBusy = isAgentProcessing || (isStreaming && streamingChatId === activeChatId);
 
   // Mirror the enabledAgentTypes logic from ChatArea so per-chat overrides are respected
   const echoEnabled = useMemo(() => {
@@ -386,6 +392,17 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
           )}
         </span>
         <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              if (!activeChatId || echoRetryBusy) return;
+              void retryAgents(activeChatId, ["echo-chamber"]);
+            }}
+            disabled={echoRetryBusy}
+            title={echoRetryBusy ? "A reply or agent is already running" : "Re-run Echo Chamber"}
+            className="rounded p-0.5 text-[var(--marinara-chat-chrome-button-text)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <RefreshCw size="0.5625rem" className={echoRetryBusy ? "animate-spin" : ""} />
+          </button>
           {visibleMessages.length > 0 && (
             <button
               onClick={async () => {
