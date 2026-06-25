@@ -180,6 +180,37 @@ const cases: RegressionCase[] = [
       assert.match(promptText, /ROUTER_SURVIVOR_CONTEXT/);
     },
   },
+  {
+    name: "separate agent injections do not depend on a user-adjacent tail",
+    run() {
+      const messages: SimpleMessage[] = [{ role: "system", content: "Stable system prompt." }];
+      messages.push({
+        role: "user",
+        content: `old user anchor ${"x ".repeat(450)}`,
+        contextKind: "history",
+      });
+      for (let index = 0; index < 6; index += 1) {
+        messages.push({
+          role: "assistant",
+          content: `assistant history tail ${index} ${"x ".repeat(450)}`,
+          contextKind: "history",
+        });
+      }
+
+      appendSeparateAgentInjectionMessage(messages, "knowledge-router", "ROUTER_SURVIVOR_CONTEXT", "xml");
+      messages.push({ role: "assistant", content: "assistant prefill tail" });
+
+      const fitted = fitMessagesForModelAccess({
+        messages,
+        policy: { suppressModelParameters: false, effectiveMaxContext: 900 },
+        maxTokens: 128,
+      }).messages;
+      const promptText = fitted.map((message) => message.content).join("\n");
+
+      assert.equal(promptText.includes("old user anchor"), false);
+      assert.match(promptText, /ROUTER_SURVIVOR_CONTEXT/);
+    },
+  },
 ];
 
 let failed = 0;
