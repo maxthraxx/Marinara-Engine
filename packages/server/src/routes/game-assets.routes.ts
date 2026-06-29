@@ -707,6 +707,10 @@ export async function gameAssetsRoutes(app: FastifyInstance) {
       return reply.status(403).send({ error: "Cannot delete native assets" });
     }
 
+    if (isInsideNativeFolder(filePath)) {
+      return reply.status(403).send({ error: "Cannot delete native assets" });
+    }
+
     unlinkSync(filePath);
 
     // Rebuild manifest after deletion

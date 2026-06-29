@@ -82,10 +82,10 @@ const SPRITES_ROOT = join(DATA_DIR, "sprites");
 const ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
 const CLIENT_PUBLIC_DIR = resolve(ROUTE_DIR, "../../../client/public");
 const CLIENT_DIST_DIR = resolve(ROUTE_DIR, "../../../client/dist");
+const MAX_SPRITE_GRID_DIMENSION = 8;
 const SPRITE_FILE_RE = /\.(png|jpg|jpeg|gif|webp|avif|svg)$/i;
 const CLEANUP_INPUT_FILE_RE = /\.(png|jpg|jpeg|webp|avif)$/i;
 const SPRITE_EXPORT_NAME_RE = /[^a-z0-9._ -]+/gi;
-const MAX_SPRITE_GRID_DIMENSION = 8;
 
 type SpriteCleanupEngine = "auto" | "backgroundremover" | "builtin";
 type UsedSpriteCleanupEngine = "backgroundremover" | "builtin";
@@ -133,12 +133,9 @@ type SpriteGenerateSheetBody = {
 };
 
 function coerceSpriteGridDimension(raw: unknown, fallback: number): number {
-  if (raw === undefined || raw === null) return fallback;
-  const numeric = Number(raw);
-  if (!Number.isFinite(numeric)) return fallback;
-  const value = Math.trunc(numeric);
-  if (value < 1) return fallback;
-  return Math.min(MAX_SPRITE_GRID_DIMENSION, value);
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return fallback;
+  return Math.min(MAX_SPRITE_GRID_DIMENSION, n);
 }
 
 function isInvalidSpriteGridDimension(raw: unknown): boolean {
@@ -1606,6 +1603,9 @@ export async function spritesRoutes(app: FastifyInstance) {
     if (!body.expressions || body.expressions.length === 0) {
       return reply.status(400).send({ error: "At least one expression is required" });
     }
+    if (isInvalidSpriteGridDimension(body.cols) || isInvalidSpriteGridDimension(body.rows)) {
+      return reply.status(400).send({ error: "cols and rows must be positive integers (max 8)" });
+    }
 
     const connections = createConnectionsStorage(app.db);
     const conn = await connections.getWithKey(body.connectionId);
@@ -1617,6 +1617,9 @@ export async function spritesRoutes(app: FastifyInstance) {
     const imageDefaults = resolveConnectionImageDefaults(conn);
     const imageSettings = await loadImageGenerationUserSettings(app.db);
     const plan = await buildSpritePromptPlan(app, body, imgModel);
+    if (plan.expressions.length === 0) {
+      return reply.status(400).send({ error: "No expressions remain after applying the requested grid size" });
+    }
 
     if (plan.generateExpressionsIndividually) {
       const nativeTransparentPng = body.nativeTransparentPng === true;

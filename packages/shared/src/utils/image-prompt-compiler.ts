@@ -203,6 +203,10 @@ function splitPromptFragments(
 
   const normalized = text
     .replace(/\r\n?/g, "\n")
+    .replace(
+      /((?:^|[\n,])\s*(?:avoid|no|without|exclude|do not include|don't include)\s+[^,;\n]+),/gi,
+      "$1\n",
+    )
     .replace(/[.!?]\s+(?=(?:avoid|no|without|exclude|do not include|don't include)\b)/gi, "\n")
     .replace(/\b(?:avoid|negative prompt|undesired content)\s*:/gi, "\navoid ")
     .replace(/\b(?:positive prompt|tags?)\s*:/gi, "\n")
@@ -237,10 +241,11 @@ function distillTaggedPromptSource(value: string): string {
     if (!sentence) continue;
     const negative = extractNegativeFragment(sentence);
     if (negative) {
-      fragments.push(`avoid ${negative}`);
-      sentence = sentence
-        .replace(/^(?:avoid|no|without|exclude|do not include|don't include)\s+[^,;]+[,;]?\s*/i, "")
-        .trim();
+      for (const item of negative.split(/[,;]/g)) {
+        const cleanNegative = item.trim();
+        if (cleanNegative) fragments.push(`avoid ${cleanNegative}`);
+      }
+      sentence = stripLeadingNegativeClause(sentence);
       if (!sentence) continue;
     }
     if (hasAvoidInstructionPrefix(sentence)) continue;
@@ -597,6 +602,13 @@ function extractNegativeFragment(fragment: string): string | null {
     .trim();
   if (!negative || looksLikeNonImageNegativeFragment(negative)) return null;
   return negative;
+}
+
+function stripLeadingNegativeClause(fragment: string): string {
+  return fragment
+    .trim()
+    .replace(/^(?:avoid|no|without|exclude|do not include|don't include)\s+[^,;]+[,;]?\s*/i, "")
+    .trim();
 }
 
 function hasAvoidInstructionPrefix(fragment: string): boolean {

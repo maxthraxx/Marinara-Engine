@@ -231,8 +231,8 @@ function extractRunPodImage(status: RunPodStatusResponse, endpointId: string): I
         return decodeDataUrl(trimmed);
       }
       // Raw base64 (most common for RunPod)
-      const image = decodeRunPodRawBase64(trimmed);
-      if (image) return image;
+      const decoded = decodeRawRunPodImageBase64(trimmed);
+      if (decoded) return decoded;
     }
 
     // Also try "base64" or "image" keys (defensive fallback)
@@ -244,8 +244,8 @@ function extractRunPodImage(status: RunPodStatusResponse, endpointId: string): I
       if (trimmed.startsWith("data:")) {
         return decodeDataUrl(trimmed);
       }
-      const image = decodeRunPodRawBase64(trimmed);
-      if (image) return image;
+      const decoded = decodeRawRunPodImageBase64(trimmed);
+      if (decoded) return decoded;
       continue;
     }
   }
@@ -317,6 +317,10 @@ function runPodFetch(url: URL, request: ImageGenRequest, init: RequestInit): Pro
   });
 }
 
+function runPodAbortError(signal?: AbortSignal): Error {
+  return signal?.reason instanceof Error ? signal.reason : new Error("RunPod generation aborted");
+}
+
 function runPodFetchSignal(request: ImageGenRequest): AbortSignal {
   const timeout = AbortSignal.timeout(30_000);
   return request.signal ? AbortSignal.any([request.signal, timeout]) : timeout;
@@ -325,43 +329,28 @@ function runPodFetchSignal(request: ImageGenRequest): AbortSignal {
 function runPodSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(signal.reason instanceof Error ? signal.reason : new Error("RunPod generation aborted"));
+      reject(runPodAbortError(signal));
       return;
     }
 
-    const timer = setTimeout(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(runPodAbortError(signal));
+    };
+    timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
       resolve();
     }, ms);
-    timer.unref?.();
-
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(signal?.reason instanceof Error ? signal.reason : new Error("RunPod generation aborted"));
-    };
-
+    if (typeof timer === "object" && typeof timer.unref === "function") {
+      timer.unref();
+    }
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
-function decodeRunPodRawBase64(value: string): ImageGenResult | null {
-  const compact = value.replace(/\s+/g, "");
-  if (!compact || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) return null;
-
-  const buffer = Buffer.from(compact, "base64");
-  if (buffer.byteLength === 0) return null;
-
-  const base64 = buffer.toString("base64");
-  const mimeType = detectImageMimeType(base64);
-  if (!mimeType) return null;
-  return {
-    base64,
-    mimeType,
-    ext: imageExtensionFromMimeType(mimeType),
-  };
-}
-
-function detectImageMimeType(base64: string): string | null {
+function detectKnownImageMimeType(base64: string): string | null {
   const bytes = Buffer.from(base64.slice(0, 64), "base64");
   if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
@@ -392,6 +381,25 @@ function detectImageMimeType(base64: string): string | null {
   return null;
 }
 
+function decodeRawRunPodImageBase64(raw: string): ImageGenResult | null {
+  const compact = raw.trim().replace(/\s+/g, "");
+  const unpadded = compact.replace(/=+$/, "");
+  if (!unpadded || /[^A-Za-z0-9+/]/.test(unpadded) || unpadded.length % 4 === 1) return null;
+
+  const padded = `${unpadded}${"=".repeat(unpadded.length % 4 === 0 ? 0 : 4 - (unpadded.length % 4))}`;
+  const buffer = Buffer.from(padded, "base64");
+  if (buffer.byteLength === 0) return null;
+
+  const base64 = buffer.toString("base64");
+  const mimeType = detectKnownImageMimeType(base64);
+  if (!mimeType) return null;
+  return {
+    base64,
+    mimeType,
+    ext: imageExtensionFromMimeType(mimeType),
+  };
+}
+
 function imageExtensionFromMimeType(mimeType: string): string {
   if (mimeType.includes("jpeg") || mimeType.includes("jpg")) return "jpg";
   if (mimeType.includes("webp")) return "webp";
@@ -405,14 +413,10 @@ function decodeDataUrl(dataUrl: string): ImageGenResult {
   const match = dataUrl.trim().match(/^data:(image\/(?:png|jpe?g|webp|gif|avif|bmp));base64,([\s\S]+)$/i);
   if (!match) throw new Error("Invalid image data URL from RunPod output");
 
-  const declaredMimeType = match[1]!.toLowerCase().replace("image/jpg", "image/jpeg");
   const encoded = match[2]!.replace(/\s+/g, "");
-  const buffer = Buffer.from(encoded, "base64");
-  if (buffer.byteLength === 0) throw new Error("Empty image data from RunPod");
-
-  const base64 = buffer.toString("base64");
-  const mimeType = detectImageMimeType(base64) || declaredMimeType;
-  return { base64, mimeType, ext: imageExtensionFromMimeType(mimeType) };
+  const decoded = decodeRawRunPodImageBase64(encoded);
+  if (!decoded) throw new Error("Invalid image data from RunPod");
+  return decoded;
 }
 
 /** Escape a string for safe insertion into a JSON string value (backslash + quote escaping). */
